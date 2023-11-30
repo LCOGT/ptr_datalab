@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "datalab"
+version = "0.1.0"
+description = "The backend for the PhotonRanch (PTR) Datalab service"
+authors = ["Jon <jnation@lco.global>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+Django = "^4.2.7"
+djangorestframework = "^3.14.0"
+django-filter = "^23.3.0"
+drf-nested-routers = "^0.93.4"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
