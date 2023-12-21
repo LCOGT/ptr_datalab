@@ -44,23 +44,3 @@ class BaseDataOperation(ABC):
     @abstractmethod
     def operate(self, input_data):
         """ The method that performs the data operation. The data inputs are passed in in the format described from the wizard_description """
-
-
-class NoOperation(BaseDataOperation):
-    @staticmethod
-    def name():
-        return 'NoOp'
-    
-    @staticmethod
-    def description():
-        return 
-    '''
-    The NoOp just returns your input images as output without doing anything!
-    '''
-    
-    @staticmethod
-    def wizard_description():
-        return {}
-    
-    def operate(self, input_data):
-        pass

@@ -19,6 +19,7 @@ from django.urls import path, re_path, include
 from rest_framework_nested import routers
 
 from datalab.datalab_session.viewsets import DataSessionViewSet, DataOperationViewSet
+from datalab.datalab_session.views import OperationOptionsApiView
 
 router = routers.SimpleRouter()
 router.register(r'datasessions', DataSessionViewSet, 'datasessions')
@@ -33,4 +34,5 @@ api_urlpatterns = ([
 urlpatterns = [
     path('admin/', admin.site.urls),
     re_path(r'^api/', include(api_urlpatterns)),
+    path('api/available_operations/', OperationOptionsApiView.as_view(), name='available_operations'),
 ]
