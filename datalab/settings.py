@@ -10,7 +10,30 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+
+def str2bool(value):
+    '''Convert a string value to a boolean'''
+    value = value.lower()
+
+    if value in ('t', 'true', 'y', 'yes', '1', ):
+        return True
+
+    if value in ('f', 'false', 'n', 'no', '0', ):
+        return False
+
+    raise RuntimeError(f'Unable to parse {value} as a boolean value')
+
+
+def get_list_from_env(variable, default=None):
+    value_as_list = []
+    value = os.getenv(variable, default)
+    if value:
+        value_as_list = value.strip(', ').replace(' ', '').split(',')
+    return value_as_list
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,12 +42,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-1kxt0@g^p#x3ycs&6fo()(v944zp&(jw)!2r^a4-&r4tzzihwv'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-1kxt0@g^p#x3ycs&6fo()(v944zp&(jw)!2r^a4-&r4tzzihwv')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = str2bool(os.getenv('DEBUG', 'true'))
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = get_list_from_env('ALLOWED_HOSTS', '*')  # Comma delimited list of django allowed hosts
 
 
 # Application definition
@@ -41,6 +64,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'django_filters',
     'rest_framework.authtoken',
+    'ocs_authentication.auth_profile',
     'datalab.datalab_session',
 ]
 
@@ -81,11 +105,37 @@ WSGI_APPLICATION = 'datalab.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': os.getenv('DB_ENGINE', 'django.db.backends.sqlite3'),
+        'NAME': os.getenv('DB_NAME', BASE_DIR / 'db.sqlite3'),
+        'USER': os.getenv('DB_USER', 'postgres'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'postgres'),
+        'HOST': os.getenv('DB_HOST', '127.0.0.1'),
+        'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
 
+CACHES = {
+    'default': {
+        'BACKEND': os.getenv('CACHE_BACKEND', 'django.core.cache.backends.locmem.LocMemCache'),
+        'LOCATION': os.getenv('CACHE_LOCATION', 'main-cache')
+    }
+}
+
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'ocs_authentication.backends.OAuthUsernamePasswordBackend',
+]
+
+# This project now requires connection to an OAuth server for authenticating users to make changes
+# In the OCS, this would be the Observation Portal backend
+OCS_AUTHENTICATION = {
+    'OAUTH_TOKEN_URL': os.getenv('OAUTH_TOKEN_URL', 'https://observe.photonranch.org/o/token/'),
+    'OAUTH_PROFILE_URL': os.getenv('OAUTH_PROFILE_URL', 'https://observe.photonranch.org/api/profile/'),
+    'OAUTH_CLIENT_ID': os.getenv('OAUTH_CLIENT_ID', ''),
+    'OAUTH_CLIENT_SECRET': os.getenv('OAUTH_CLIENT_SECRET', ''),
+    'OAUTH_SERVER_KEY': os.getenv('OAUTH_SERVER_KEY', ''),
+    'REQUESTS_TIMEOUT_SECONDS': 60
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -111,8 +161,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_AUTHENTICATION_CLASSES': (
+        'ocs_authentication.backends.OCSTokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
-        'rest_framework.authentication.TokenAuthentication',
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 100,
@@ -133,7 +183,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = '/static/'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -142,4 +193,4 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ORIGIN_ALLOW_ALL = True
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = ['http://localhost:8080','http://127.0.0.1:8000','http://127.0.0.1:8001']
+CSRF_TRUSTED_ORIGINS = get_list_from_env('CSRF_TRUSTED_ORIGINS', 'http://localhost:8080,http://127.0.0.1:8000,http://127.0.0.1:8001')

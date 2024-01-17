@@ -19,17 +19,17 @@ INPUT_DATA_1 = [
     {
         'type': 'fitsfile',
         'source': 'archive',
-        'basename': 'mrc1-sq005mm-20231114-00010332'
+        'basename': 'elp1m008-fa16-20231227-0058-e91'
     },
     {
         'type': 'fitsfile',
         'source': 'archive',
-        'basename': 'mrc1-sq005mm-20231114-00010333'
+        'basename': 'elp1m008-fa16-20231225-0058-e91'
     },
     {
         'type': 'fitsfile',
         'source': 'archive',
-        'basename': 'mrc1-sq005mm-20231114-00010334'
+        'basename': 'ogg2m001-ep04-20231114-0229-e91'
     },
 ]
 
@@ -48,13 +48,13 @@ class Command(BaseCommand):
     def handle(self, *args: Any, **options: Any) -> str | None:
         try:
             user = User.objects.create_superuser(options['user'], '', TEST_PASSWORD)
+            # Create token only if the user is new. If existing, leave it alone.
+            token, _ = Token.objects.get_or_create(user=user)
+            token.delete()
+            Token.objects.create(user=user, key=TEST_TOKEN)
         except IntegrityError:
             logger.warning(f"User {options['user']} already exists")
             user = User.objects.get(username=options['user'])
-
-        token, _ = Token.objects.get_or_create(user=user)
-        token.delete()
-        Token.objects.create(user=user, key=TEST_TOKEN)
 
         # Create an new datasession with just input files
         DataSession.objects.create(user=user, name='Empty Data Session', input_data=INPUT_DATA_1)        
