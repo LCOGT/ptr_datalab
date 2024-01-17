@@ -16,7 +16,6 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, re_path, include
-from django.conf.urls import url
 from rest_framework_nested import routers
 import ocs_authentication.auth_profile.urls as authprofile_urls
 
@@ -37,5 +36,5 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     re_path(r'^api/', include(api_urlpatterns)),
     path('api/available_operations/', OperationOptionsApiView.as_view(), name='available_operations'),
-    url(r'^authprofile/', include(authprofile_urls))
+    re_path(r'^authprofile/', include(authprofile_urls)),
 ]
