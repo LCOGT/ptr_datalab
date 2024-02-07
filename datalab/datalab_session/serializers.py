@@ -13,6 +13,7 @@ class DataOperationSerializer(serializers.ModelSerializer):
         exclude = ('session',)
         read_only_fields = ('percent_complete', 'status', 'message')
 
+
 class DataSessionSerializer(serializers.ModelSerializer):
     operations = DataOperationSerializer(many=True, read_only=True)
     user = serializers.StringRelatedField(default=serializers.CurrentUserDefault(), read_only=True)
