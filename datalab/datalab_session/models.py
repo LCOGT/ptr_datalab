@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 
 class DataSession(models.Model):
@@ -42,6 +43,13 @@ class DataSession(models.Model):
 
 
 class DataOperation(models.Model):
+    STATUS_CHOICES = (
+        ('PENDING', 'PENDING'),
+        ('STARTED', 'STARTED'),
+        ('COMPLETED', 'COMPLETED'),
+        ('FAILED', 'FAILED')
+    )
+
     session = models.ForeignKey(
         DataSession, related_name='operations', on_delete=models.CASCADE,
         help_text='The DataSession to which this DataOperation belongs'
@@ -58,4 +66,18 @@ class DataOperation(models.Model):
     created = models.DateTimeField(
         auto_now_add=True,
         help_text='Time when this DataSession was created'
+    )
+
+    percent_complete = models.IntegerField(default=0,
+        help_text='Completion status (in percent) of this DataOperation',
+        validators=[MinValueValidator(0),
+                    MaxValueValidator(100)]
+    )
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING',
+        help_text='Status of this DataOperation'
+    )
+
+    message = models.CharField(max_length=200, default='', blank=True,
+        help_text = 'Contextual message related to this DataOperation'
     )

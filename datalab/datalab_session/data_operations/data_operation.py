@@ -42,5 +42,5 @@ class BaseDataOperation(ABC):
         """
 
     @abstractmethod
-    def operate(self, input_data):
+    def operate(self, input_data: dict, object_id: int):
         """ The method that performs the data operation. The data inputs are passed in in the format described from the wizard_description """

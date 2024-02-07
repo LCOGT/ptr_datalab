@@ -30,5 +30,5 @@ The output is a median image for the n input images. This operation is commonly 
             }
         }
     
-    def operate(self, input_data):
+    def operate(self, input_data: dict, object_id: int):
         pass

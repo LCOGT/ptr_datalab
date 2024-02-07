@@ -14,8 +14,8 @@ class DataOperationViewSet(viewsets.ModelViewSet):
         return DataOperation.objects.filter(session=self.kwargs['session_pk'])
     
     def perform_create(self, serializer):
-        execute_data_operation.send(serializer.validated_data['name'], serializer.validated_data['input_data'])
-        serializer.save(session_id=self.kwargs['session_pk'])
+        model_obj = serializer.save(session_id=self.kwargs['session_pk'])
+        execute_data_operation.send(serializer.validated_data['name'], serializer.validated_data['input_data'], model_obj.id)
 
 
 class DataSessionViewSet(viewsets.ModelViewSet):
