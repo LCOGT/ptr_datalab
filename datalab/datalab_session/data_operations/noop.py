@@ -41,4 +41,4 @@ class NoOperation(BaseDataOperation):
         }
     
     def operate(self, input_data):
-        pass
+        print("No-op triggered!")
