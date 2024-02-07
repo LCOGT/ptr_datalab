@@ -11,7 +11,7 @@ class DataOperationSerializer(serializers.ModelSerializer):
     class Meta:
         model = DataOperation
         exclude = ('session',)
-
+        read_only_fields = ('percent_complete', 'status', 'message')
 
 class DataSessionSerializer(serializers.ModelSerializer):
     operations = DataOperationSerializer(many=True, read_only=True)
