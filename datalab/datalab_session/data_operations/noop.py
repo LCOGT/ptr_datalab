@@ -52,4 +52,3 @@ class NoOperation(BaseDataOperation):
         model_object.status = 'COMPLETED'
         model_object.message = f'No-op completed for DataOperation ID {model_object.id}'
         model_object.save()
-
