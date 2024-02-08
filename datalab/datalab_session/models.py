@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.core.cache import cache
 
 
 class DataSession(models.Model):
@@ -59,3 +60,21 @@ class DataOperation(models.Model):
         auto_now_add=True,
         help_text='Time when this DataSession was created'
     )
+
+    cache_key = models.CharField(max_length=64, default='', blank=True, help_text='Cache key for this operation')
+
+    @property
+    def status(self):
+        return cache.get(f'operation_{self.cache_key}_status', 'PENDING')
+
+    @property
+    def percent_completion(self):
+        return cache.get(f'operation_{self.cache_key}_percent_completion', 0.0)
+
+    @property
+    def output(self):
+        return cache.get(f'operation_{self.cache_key}_output')
+
+    @property
+    def message(self):
+        return cache.get(f'operation_{self.cache_key}_message', '')
