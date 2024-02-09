@@ -2,7 +2,7 @@ from rest_framework.generics import RetrieveAPIView
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 
-from datalab.datalab_session.data_operations.data_operation import available_operations
+from datalab.datalab_session.data_operations.utils import available_operations
 
 
 class OperationOptionsApiView(RetrieveAPIView):

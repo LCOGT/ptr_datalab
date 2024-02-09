@@ -1,7 +1,7 @@
 from django import forms
 
 from datalab.datalab_session.models import DataOperation
-from datalab.datalab_session.data_operations.data_operation import available_operations_tuples
+from datalab.datalab_session.data_operations.utils import available_operations_tuples
 
 class DataOperationForm(forms.ModelForm):
     class Meta:

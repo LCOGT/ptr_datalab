@@ -6,6 +6,8 @@ from datalab.datalab_session.serializers import DataSessionSerializer, DataOpera
 from datalab.datalab_session.models import DataSession, DataOperation
 from datalab.datalab_session.filters import DataSessionFilterSet
 from datalab.datalab_session.tasks import execute_data_operation
+from datalab.datalab_session.data_operations.utils import available_operations
+
 
 class DataOperationViewSet(viewsets.ModelViewSet):
     serializer_class = DataOperationSerializer
@@ -14,8 +16,9 @@ class DataOperationViewSet(viewsets.ModelViewSet):
         return DataOperation.objects.filter(session=self.kwargs['session_pk'])
     
     def perform_create(self, serializer):
-        execute_data_operation.send(serializer.validated_data['name'], serializer.validated_data['input_data'])
-        serializer.save(session_id=self.kwargs['session_pk'])
+        operation = available_operations().get(serializer.validated_data['name'])(serializer.validated_data['input_data'])
+        serializer.save(session_id=self.kwargs['session_pk'], cache_key=operation.cache_key)
+        operation.perform_operation()
 
 
 class DataSessionViewSet(viewsets.ModelViewSet):
