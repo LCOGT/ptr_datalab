@@ -27,3 +27,16 @@ class DataSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = DataSession
         fields = '__all__'
+
+    def update(self, instance, validated_data):
+      input_data = validated_data.get('input_data', [])
+      
+			# Check for duplicates
+      existing_input_data = instance.input_data
+      new_input_data = []
+      for item in input_data:
+              if item not in existing_input_data:
+                      new_input_data.append(item)
+
+      validated_data['input_data'] = existing_input_data + new_input_data
+      return super().update(instance, validated_data)
