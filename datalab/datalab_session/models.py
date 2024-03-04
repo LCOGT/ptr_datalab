@@ -5,6 +5,9 @@ from django.core.cache import cache
 
 
 class DataSession(models.Model):
+    class Meta:
+        ordering = ['-modified']
+
     user = models.ForeignKey(
         User, on_delete=models.CASCADE,
         help_text='The user that this DataSession belongs too'
@@ -43,6 +46,9 @@ class DataSession(models.Model):
 
 
 class DataOperation(models.Model):
+    class Meta:
+        ordering = ['pk']
+
     session = models.ForeignKey(
         DataSession, related_name='operations', on_delete=models.CASCADE,
         help_text='The DataSession to which this DataOperation belongs'
