@@ -31,4 +31,26 @@ The output is a median image for the n input images. This operation is commonly 
         }
     
     def operate(self):
-        pass
+        num_files = len(self.input_data.get('input_files', []))
+
+        # fetch files and store in disk memory
+        for i, file in enumerate(self.input_data.get('input_files', [])):
+            print(f"Processing median operation on file {file.get('basename', 'No basename found')}")
+        
+        # Create median fitz result file based on median of all input files
+
+        # Loop on pixel n of each file
+            # find median of pixel n
+            # store median of pixel n at pixel n of new fitz
+
+        # Generate a basename for result using a helper function
+
+        # Store median fitz result file in S3 bitbucket
+        
+        # Get s3 bitbucket url
+        
+        # Return the output
+        output = {
+            'output_files': []
+        }
+        self.set_output(output)
