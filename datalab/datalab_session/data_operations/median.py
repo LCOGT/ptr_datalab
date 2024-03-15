@@ -1,5 +1,11 @@
+from io import BytesIO
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-
+from datalab.datalab_session.util import store_fits_output, find_fits
+import numpy as np
+from astropy.io import fits
+import logging
+log = logging.getLogger()
+log.setLevel(logging.INFO)
 
 class Median(BaseDataOperation):
     
@@ -31,26 +37,50 @@ The output is a median image for the n input images. This operation is commonly 
         }
     
     def operate(self):
-        num_files = len(self.input_data.get('input_files', []))
+        input_files = self.input_data.get('input_files', [])
+        completion_total = len(input_files)
+        image_data_list = []
 
-        # fetch files and store in disk memory
-        for i, file in enumerate(self.input_data.get('input_files', [])):
-            print(f"Processing median operation on file {file.get('basename', 'No basename found')}")
-        
-        # Create median fitz result file based on median of all input files
+        log.info(f'Executing median operation on {completion_total} files')
 
-        # Loop on pixel n of each file
-            # find median of pixel n
-            # store median of pixel n at pixel n of new fitz
+        # fetch fits for all input data
+        for index, file_info in enumerate(input_files):
+            basename = file_info.get('basename', 'No basename found')
+            
+            fits_file = find_fits(basename)
+            fits_url = fits_file[0].get('url', 'No URL found')
 
-        # Generate a basename for result using a helper function
+            with fits.open(fits_url, use_fsspec=True) as hdu_list:
+                data = hdu_list['SCI'].data
+                image_data_list.append(data)
+                self.set_percent_completion((index) / completion_total)
 
-        # Store median fitz result file in S3 bitbucket
-        
-        # Get s3 bitbucket url
-        
-        # Return the output
+        # Crop fits image data to be the same shape then stack 
+        min_shape = min(arr.shape for arr in image_data_list)
+        cropped_data_list = [arr[:min_shape[0], :min_shape[1]] for arr in image_data_list]
+        stacked_data = np.stack(cropped_data_list, axis=2)
+
+        # Calculate a Median along the z axis
+        median = np.median(stacked_data, axis=2)
+
+        # Create a new Fits File
+        cache_key = self.generate_cache_key()
+        hdr = fits.Header([('KEY', cache_key)])
+        primary_hdu = fits.PrimaryHDU(header=hdr)
+        image_hdu = fits.ImageHDU(median)
+        hdu_list = fits.HDUList([primary_hdu, image_hdu])
+
+        fits_buffer = BytesIO()
+        hdu_list.writeto(fits_buffer)
+        fits_buffer.seek(0)
+
+        # Write the HDU List to the output FITS file in bitbucket
+        response = store_fits_output(cache_key, fits_buffer)
+        log.info(f'AWS response: {response}')
+
+        # No output yet, need to build a thumbnail service
         output = {
             'output_files': []
         }
+        self.set_percent_completion(completion_total / completion_total)
         self.set_output(output)
