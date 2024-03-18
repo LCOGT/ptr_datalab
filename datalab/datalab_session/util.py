@@ -22,7 +22,6 @@ def find_fits(basename):
 
   if response.status_code != 204:
       image_data = response.json()
-      results = image_data.get('results', [])
-
-      if results:
-        return results
+      results = image_data.get('results', None)
+      
+      return results
