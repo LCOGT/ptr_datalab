@@ -1,11 +1,15 @@
 from io import BytesIO
-from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.util import store_fits_output, find_fits
+import logging
+
 import numpy as np
 from astropy.io import fits
-import logging
+
+from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
+from datalab.datalab_session.util import store_fits_output, get_archive_from_basename
+
 log = logging.getLogger()
 log.setLevel(logging.INFO)
+
 
 class Median(BaseDataOperation):
     
@@ -38,24 +42,31 @@ The output is a median image for the n input images. This operation is commonly 
     
     def operate(self):
         input_files = self.input_data.get('input_files', [])
-        completion_total = len(input_files)
+        file_count = len(input_files)
+
+        if file_count == 0:
+            return { 'output_files': [] }
+
+        log.info(f'Executing median operation on {file_count} files')
+
+         # fetch fits for all input data
         image_data_list = []
 
-        log.info(f'Executing median operation on {completion_total} files')
-
-        # fetch fits for all input data
         for index, file_info in enumerate(input_files):
             basename = file_info.get('basename', 'No basename found')
             
-            fits_file = find_fits(basename)
-            fits_url = fits_file[0].get('url', 'No URL found')
+            archive_record = get_archive_from_basename(basename)
+            try:
+                fits_url = archive_record[0].get('url', 'No URL found')
+            except IndexError:
+                continue
 
             with fits.open(fits_url, use_fsspec=True) as hdu_list:
                 data = hdu_list['SCI'].data
                 image_data_list.append(data)
-                self.set_percent_completion((index) / completion_total)
+                self.set_percent_completion((index) / file_count)
 
-        # Crop fits image data to be the same shape then stack 
+        # Crop fits image data to be the same shape then stack
         min_shape = min(arr.shape for arr in image_data_list)
         cropped_data_list = [arr[:min_shape[0], :min_shape[1]] for arr in image_data_list]
         stacked_data = np.stack(cropped_data_list, axis=2)
@@ -76,11 +87,10 @@ The output is a median image for the n input images. This operation is commonly 
 
         # Write the HDU List to the output FITS file in bitbucket
         response = store_fits_output(cache_key, fits_buffer)
-        log.info(f'AWS response: {response}')
 
-        # No output yet, need to build a thumbnail service
+        # TODO: No output yet, need to build a thumbnail service
         output = {
             'output_files': []
         }
-        self.set_percent_completion(completion_total / completion_total)
+        self.set_percent_completion(file_count / file_count)
         self.set_output(output)

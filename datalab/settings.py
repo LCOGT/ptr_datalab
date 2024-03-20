@@ -131,9 +131,10 @@ DRAMATIQ_RESULT_BACKEND = {
 DRAMATIQ_TASKS_DATABASE = 'default'
 
 # AWS S3 Bitbucket
-DATALAB_OPERATION_OUTPUT_BUCKET = os.getenv('DATALAB_OPERATION_OUTPUT_BUCKET' , 'datalab-operation-output-bucket')
-AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', '')
-AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', '')
+DATALAB_OPERATION_BUCKET = os.getenv('DATALAB_OPERATION_BUCKET', 'datalab-operation-output-bucket')
+
+# Datalab Archive
+ARCHIVE_API = os.getenv('ARCHIVE_API', 'https://datalab-archive.photonranch.org')
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
