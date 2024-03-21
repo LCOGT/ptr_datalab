@@ -8,7 +8,7 @@ from django.conf import settings
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
-def store_fits_output(item_key, fits_buffer):
+def store_fits_output(item_key: str, fits_buffer: object) -> object:
   """
   Stores a fits into the operation bucket in S3
 

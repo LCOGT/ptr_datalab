@@ -95,7 +95,7 @@ The output is a median image for the n input images. This operation is commonly 
             hdu_list.writeto(fits_buffer)
             fits_buffer.seek(0)
 
-            # Write the HDU List to the output FITS file in bitbucket
+            # Write the HDU List to the output FITS file in the bucket
             response = store_fits_output(cache_key, fits_buffer)
 
         # TODO: No output yet, need to build a thumbnail service
