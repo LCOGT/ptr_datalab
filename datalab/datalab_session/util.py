@@ -24,7 +24,7 @@ def store_fits_output(item_key, fits_buffer):
 
 def get_archive_from_basename(basename: str) -> dict:
   """
-  Querys and returns an archive file from the Archive
+  Queries and returns an archive file from the Archive
 
   Keyword Arguements:
   basename -- name to query
