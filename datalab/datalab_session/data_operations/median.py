@@ -1,14 +1,11 @@
-from io import BytesIO
 import logging
-import os
 import tempfile
 
 import numpy as np
-from astropy.io import fits
-from PIL import Image
+from fits2image.conversions import fits_to_jpg
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.util import add_file_to_bucket, get_archive_from_basename, numpy_to_thumbnails
+from datalab.datalab_session.util import add_file_to_bucket, create_fits, stack_arrays, load_image_data_from_fits_urls
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -43,73 +40,40 @@ The output is a median image for the n input images. This operation is commonly 
             }
         }
     
-    def operate(self):
-        input_files = self.input_data.get('input_files', [])
-        file_count = len(input_files)
-        cache_key = self.generate_cache_key()
+    def operate(self, input_files, cache_key):
 
-        # Operation validation
-        if file_count == 0:
-            log.warning(f'Tried to execute median operation on {file_count} files')
-            return { 'output_files': [] }
-        # If cache key is already in S3 we already ran this operation on these inputs
-        if False:
-            # TODO: add a bucket check for cache key and then return files
-            pass
+        log.info(f'Executing median operation on {len(input_files)} files')
 
-        log.info(f'Executing median operation on {file_count} files')
+        image_data_list = load_image_data_from_fits_urls(input_files)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            memmap_paths = []
+        self.set_percent_completion(0.4)
 
-            for index, file_info in enumerate(input_files):
-                basename = file_info.get('basename', 'No basename found')
-                archive_record = get_archive_from_basename(basename)
+        stacked_data = stack_arrays(image_data_list)
 
-                try:
-                    fits_url = archive_record[0].get('url', 'No URL found')
-                except IndexError:
-                    continue
+        median = np.median(stacked_data, axis=2)
 
-                with fits.open(fits_url) as hdu_list:
-                    data = hdu_list['SCI'].data
-                    memmap_path = os.path.join(temp_dir, f'memmap_{index}.dat')
-                    memmap_array = np.memmap(memmap_path, dtype=data.dtype, mode='w+', shape=data.shape)
-                    memmap_array[:] = data[:]
-                    memmap_paths.append(memmap_path)
+        hdu_list = create_fits(cache_key, median)
 
-                self.set_percent_completion(index / file_count)
+        # Create the output files to be stored in S3
+        fits_path           = tempfile.NamedTemporaryFile(suffix=f'{cache_key}.fits').name
+        large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-large.jpg').name
+        thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-small.jpg').name
+        
+        hdu_list.writeto(fits_path)
+        fits_to_jpg(fits_path, large_jpg_path, width=median.shape[0], height=median.shape[1])
+        fits_to_jpg(fits_path, thumbnail_jpg_path)
 
-            image_data_list = [
-                np.memmap(path, dtype=np.float32, mode='r', shape=memmap_array.shape)
-                for path in memmap_paths
-            ]
+        self.set_percent_completion(0.7)
 
-            # Crop fits image data to be the same shape then stack
-            min_shape = min(arr.shape for arr in image_data_list)
-            cropped_data_list = [arr[:min_shape[0], :min_shape[1]] for arr in image_data_list]
-            stacked_data = np.stack(cropped_data_list, axis=2)
+        # Save Fits and Thumbnails in S3 Buckets
+        fits_url            = add_file_to_bucket(f'{cache_key}/{cache_key}.fits', fits_path)
+        large_jpg_url       = add_file_to_bucket(f'{cache_key}/{cache_key}-large.jpg', large_jpg_path)
+        thumbnail_jpg_url   = add_file_to_bucket(f'{cache_key}/{cache_key}-small.jpg', thumbnail_jpg_path)
 
-            # Calculate a Median along the z axis
-            median = np.median(stacked_data, axis=2)
+        self.set_percent_completion(0.9)
 
-            # Create thumbnails
-            jpgs = numpy_to_thumbnails(median)
+        output = {'output_files': [large_jpg_url, thumbnail_jpg_url]}
 
-            # Create the Fits File
-            header = fits.Header([('KEY', cache_key)])
-            primary_hdu = fits.PrimaryHDU(header=header)
-            image_hdu = fits.ImageHDU(median)
-            hdu_list = fits.HDUList([primary_hdu, image_hdu])
-
-            # Save Fits and Thumbnails in S3 Buckets
-            add_file_to_bucket((cache_key + '/' + cache_key + '.fits'), hdu_list, 'FITS')
-            add_file_to_bucket((cache_key + '/' + cache_key + '-large.jpg'), jpgs['full'], 'JPEG')
-            add_file_to_bucket((cache_key + '/' + cache_key + '-small.jpg'), jpgs['thumbnail'], 'JPEG')
-
-            # TODO: Get presigned urls for the jpgs and add to output
-
-        # TODO: Return presigned urls as output
-        output = {'output_files': []}
-        self.set_percent_completion(file_count / file_count)
+        log.info(f'Median operation output: {output}')
+        self.set_percent_completion(1)
         self.set_output(output)
