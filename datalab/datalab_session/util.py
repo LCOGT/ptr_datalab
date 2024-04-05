@@ -1,7 +1,5 @@
 import requests
 import logging
-import tempfile
-import os
 
 import boto3
 from astropy.io import fits
@@ -120,37 +118,3 @@ def stack_arrays(array_list: list):
   stacked = np.stack(cropped_data_list, axis=2)
 
   return stacked
-
-def load_image_data_from_fits_urls(input_files: list[dict]) -> list[np.memmap]:
-  """
-  Load image data from FITS URLs and return a list of memory-mapped arrays.
-
-  Args:
-    input_files (list): A list of dictionaries containing file information.
-
-  Returns:
-    list: A list of memory-mapped arrays containing the image data.
-  """
-  memmap_paths = []
-
-  with tempfile.TemporaryDirectory() as temp_dir:
-    for index, file_info in enumerate(input_files):
-        basename = file_info.get('basename', 'No basename found')
-        archive_record = get_archive_from_basename(basename)
-
-        try:
-            fits_url = archive_record[0].get('url', 'No URL found')
-        except IndexError:
-            continue
-
-        with fits.open(fits_url) as hdu_list:
-            data = hdu_list['SCI'].data
-            memmap_path = os.path.join(temp_dir, f'memmap_{index}.dat')
-            memmap_array = np.memmap(memmap_path, dtype=data.dtype, mode='w+', shape=data.shape)
-            memmap_array[:] = data[:]
-            memmap_paths.append(memmap_path)
-
-    return [
-        np.memmap(path, dtype=np.float32, mode='r', shape=memmap_array.shape)
-        for path in memmap_paths
-    ]
