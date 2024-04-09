@@ -1,9 +1,16 @@
 from abc import ABC, abstractmethod
 import hashlib
 import json
+import os
+import tempfile
 from django.core.cache import cache
 
+from fits2image.conversions import fits_to_jpg
+from astropy.io import fits
+import numpy as np
+
 from datalab.datalab_session.tasks import execute_data_operation
+from datalab.datalab_session.util import add_file_to_bucket, get_archive_from_basename
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
@@ -88,3 +95,66 @@ class BaseDataOperation(ABC):
 
     def get_output(self) -> dict:
         return cache.get(f'operation_{self.cache_key}_output')
+
+    # percent lets you alocate a fraction of the operation that this takes up in time
+    # cur_percent is the current completion of the operation
+    def create_and_store_fits(self, hdu_list: fits.HDUList, percent=None, cur_percent=None) -> list:
+        if not type(hdu_list) == list:
+            hdu_list = [hdu_list]
+
+        output = []
+        total_files = len(hdu_list)
+
+        # Create temp file paths for storing the products
+        fits_path           = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}.fits').name
+        large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}-large.jpg').name
+        thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}-small.jpg').name
+
+        for index, hdu in enumerate(hdu_list, start=1):
+            height, width = hdu[1].shape
+
+            hdu.writeto(fits_path)
+            fits_to_jpg(fits_path, large_jpg_path, width=width, height=height)
+            fits_to_jpg(fits_path, thumbnail_jpg_path)
+
+            # Save Fits and Thumbnails in S3 Buckets
+            fits_url            = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}.fits', fits_path)
+            large_jpg_url       = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}-large.jpg', large_jpg_path)
+            thumbnail_jpg_url   = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}-small.jpg', thumbnail_jpg_path)
+            
+            output.append({'large_url': large_jpg_url, 'thumbnail_url': thumbnail_jpg_url})
+
+            if percent is not None and cur_percent is not None:
+                self.set_percent_completion(cur_percent + index/total_files * percent)
+        
+        return output
+
+    def get_fits_npdata(self, input_files: list[dict], percent=None, cur_percent=None) -> list[np.memmap]:
+        total_files = len(input_files)
+        memmap_paths = []
+
+        # get the fits urls, download their file, extract the image data, and store in a list
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for index, file_info in enumerate(input_files, start=1):
+                basename = file_info.get('basename', 'No basename found')
+                archive_record = get_archive_from_basename(basename)
+
+                try:
+                    fits_url = archive_record[0].get('url', 'No URL found')
+                except IndexError:
+                    continue
+
+                with fits.open(fits_url) as hdu_list:
+                    data = hdu_list['SCI'].data
+                    memmap_path = os.path.join(temp_dir, f'memmap_{index}.dat')
+                    memmap_array = np.memmap(memmap_path, dtype=data.dtype, mode='w+', shape=data.shape)
+                    memmap_array[:] = data[:]
+                    memmap_paths.append(memmap_path)
+                
+                if percent is not None and cur_percent is not None:
+                    self.set_percent_completion(cur_percent + index/total_files * percent)
+
+            return [
+                np.memmap(path, dtype=np.float32, mode='r', shape=memmap_array.shape)
+                for path in memmap_paths
+            ]
