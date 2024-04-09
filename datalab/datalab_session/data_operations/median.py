@@ -51,7 +51,7 @@ The output is a median image for the n input images. This operation is commonly 
 
         hdu_list = create_fits(cache_key, median)
 
-        output = self.create_add_thumbnails_to_bucket(hdu_list, percent=60.0, cur_percent=40.0)
+        output = self.create_and_store_fits(hdu_list, percent=60.0, cur_percent=40.0)
 
         output =  {'output_files': output}
 

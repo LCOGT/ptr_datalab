@@ -96,7 +96,9 @@ class BaseDataOperation(ABC):
     def get_output(self) -> dict:
         return cache.get(f'operation_{self.cache_key}_output')
 
-    def create_add_thumbnails_to_bucket(self, hdu_list: fits.HDUList, percent=None, cur_percent=None) -> list:
+    # percent lets you alocate a fraction of the operation that this takes up in time
+    # cur_percent is the current completion of the operation
+    def create_and_store_fits(self, hdu_list: fits.HDUList, percent=None, cur_percent=None) -> list:
         if not type(hdu_list) == list:
             hdu_list = [hdu_list]
 
