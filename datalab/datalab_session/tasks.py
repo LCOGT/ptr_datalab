@@ -19,4 +19,4 @@ def execute_data_operation(data_operation_name: str, input_data: dict):
         operation = operation_class(input_data)
         cache_key = operation.generate_cache_key()
 
-        operation.operate(input_data.get('input_files', []), cache_key)
+        operation.operate(cache_key, input_data.get('input_files', []))

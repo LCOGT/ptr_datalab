@@ -38,7 +38,7 @@ The output is a median image for the n input images. This operation is commonly 
             }
         }
     
-    def operate(self, input_files, cache_key):
+    def operate(self, cache_key, input_files):
 
         log.info(f'Executing median operation on {len(input_files)} files')
 
