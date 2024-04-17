@@ -40,7 +40,7 @@ class NoOperation(BaseDataOperation):
             }            
         }
     
-    def operate(self):
+    def operate(self, cache_key, input_files):
         print("No-op triggered!")
         output = {
             'output_files': self.input_data.get('input_files', [])
