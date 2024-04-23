@@ -36,7 +36,7 @@ class LongOperation(BaseDataOperation):
             }            
         }
     
-    def operate(self, cache_key, input_files):
+    def operate(self):
         num_files = len(self.input_data.get('input_files', []))
         per_image_timeout = ceil(float(self.input_data.get('duration', 60.0)) / num_files)
         for i, file in enumerate(self.input_data.get('input_files', [])):

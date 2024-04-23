@@ -38,23 +38,25 @@ The output is a median image for the n input images. This operation is commonly 
             }
         }
     
-    def operate(self, cache_key, input_files):
+    def operate(self):
 
-        log.info(f'Executing median operation on {len(input_files)} files')
+        input = self.input_data.get('input_files', [])
 
-        image_data_list = self.get_fits_npdata(input_files, percent=40.0, cur_percent=0.0)
+        log.info(f'Executing median operation on {len(input)} files')
+
+        image_data_list = self.get_fits_npdata(input, percent=0.4, cur_percent=0.0)
 
         stacked_data = stack_arrays(image_data_list)
 
         # using the numpy library's median method
         median = np.median(stacked_data, axis=2)
 
-        hdu_list = create_fits(cache_key, median)
+        hdu_list = create_fits(self.cache_key, median)
 
-        output = self.create_and_store_fits(hdu_list, percent=60.0, cur_percent=40.0)
+        output = self.create_and_store_fits(hdu_list, percent=0.6, cur_percent=0.4)
 
         output =  {'output_files': output}
 
         log.info(f'Median operation output: {output}')
-        self.set_percent_completion(1)
+        self.set_percent_completion(1.0)
         self.set_output(output)

@@ -50,7 +50,7 @@ class BaseDataOperation(ABC):
         """
 
     @abstractmethod
-    def operate(self, cache_key, input_files):
+    def operate(self):
         """ The method that performs the data operation.
             It should periodically update the percent completion during its operation.
             It should set the output and status into the cache when done.
