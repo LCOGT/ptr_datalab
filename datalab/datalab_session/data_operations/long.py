@@ -37,7 +37,7 @@ class LongOperation(BaseDataOperation):
         }
     
     def operate(self):
-        num_files = len(self.input_data.get('input_files', []))
+        num_files = max(len(self.input_data.get('input_files', [])), 1)
         per_image_timeout = ceil(float(self.input_data.get('duration', 60.0)) / num_files)
         for i, file in enumerate(self.input_data.get('input_files', [])):
             print(f"Processing long operation on file {file.get('basename', 'No basename found')}")
