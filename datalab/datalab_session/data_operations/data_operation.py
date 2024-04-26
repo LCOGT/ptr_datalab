@@ -122,7 +122,12 @@ class BaseDataOperation(ABC):
             large_jpg_url       = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}-large.jpg', large_jpg_path)
             thumbnail_jpg_url   = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}-small.jpg', thumbnail_jpg_path)
             
-            output.append({'large_url': large_jpg_url, 'thumbnail_url': thumbnail_jpg_url})
+            output.append({
+                'large_url': large_jpg_url,
+                'thumbnail_url': thumbnail_jpg_url,
+                'basename': f'{self.cache_key}-{index}',
+                'source': 'datalab'}
+            )
 
             if percent is not None and cur_percent is not None:
                 self.set_percent_completion(cur_percent + index/total_files * percent)
