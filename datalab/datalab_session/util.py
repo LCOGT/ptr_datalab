@@ -97,6 +97,36 @@ def get_archive_from_basename(basename: str) -> dict:
 
   return results
 
+def get_hdus(basenames) -> list[fits.HDUList]:
+  """
+  Returns a list of HDULists for the given basenames
+  Warning: this function returns an opened file that must be closed after use
+  """
+  if isinstance(basenames, str):
+    basenames = [basenames]
+
+  hdu_list = []
+
+  for basename in basenames:
+    basename = basename.replace('-large', '').replace('-small', '')
+
+    archive_record = get_archive_from_basename(basename)
+
+    try:
+      fits_url = archive_record[0].get('url', 'No URL found')
+    except IndexError:
+      RuntimeWarning(f"No image found with specified basename: {basename}")
+      continue
+
+    hdu = fits.open(fits_url)
+
+    hdu_list.append(hdu)
+
+  if len(hdu_list) == 1:
+    return hdu_list[0]
+  else:
+    return hdu_list
+
 def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
 
   header = fits.Header([('KEY', key)])
