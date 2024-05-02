@@ -4,7 +4,7 @@ from skimage.measure import profile_line
 # For creating an array of brightness along a user drawn line
 def line_profile(input, sci_hdu):
   """
-    Given a set of coordinates, return the line profile of the image
+    Creates an array of luminosity values and the length of the line in arcseconds
   """
   points = scale_points(input['width'], input['height'], sci_hdu.data, [(input["x1"], input["y1"]), (input["x2"], input["y2"])])
   line_profile = profile_line(sci_hdu.data, points[0], points[1], mode="constant", cval=-1)

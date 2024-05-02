@@ -20,7 +20,10 @@ class OperationOptionsApiView(RetrieveAPIView):
         return Response(operation_details)
 
 class AnalysisView(APIView):
-    """ View to handle analysis actions and return the results """
+    """ 
+        View to handle analysis actions and return the results
+        To add a new analysis action, add a case to the switch statement and create a new file in the analysis directory
+    """
     def post(self, request, action):
         input = request.data
 

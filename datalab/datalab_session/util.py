@@ -6,6 +6,7 @@ from astropy.io import fits
 import numpy as np
 
 from django.conf import settings
+from django.core.cache import cache
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -107,8 +108,13 @@ def get_hdus(basenames) -> list[fits.HDUList]:
 
   hdu_list = []
 
+  # use the basename to fetch and create a list of hdu objects
   for basename in basenames:
     basename = basename.replace('-large', '').replace('-small', '')
+
+    if cache.get(basename) is not None:
+      hdu_list.append(cache.get(basename))
+      continue
 
     archive_record = get_archive_from_basename(basename)
 
@@ -118,7 +124,8 @@ def get_hdus(basenames) -> list[fits.HDUList]:
       RuntimeWarning(f"No image found with specified basename: {basename}")
       continue
 
-    hdu = fits.open(fits_url)
+    hdu = fits.open(fits_url, use_fsspec=True)
+    cache.set(basename, hdu)
 
     hdu_list.append(hdu)
 
