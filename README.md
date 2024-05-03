@@ -26,6 +26,9 @@ If you want to start with some test data, run this management command one time a
 
     ./manage.py populate_test_data
 
+## Nix development
+If you like nix, run `nix develop --impure` to start your nix development environment
+
 ## API Structure
 The application has a REST API with the following endpoints you can use. You must pass your user's API token in the request header to access any of the endpoints - the headers looks like `{'Authorization': 'Token 123456789abcdefg'}` if you are using python's requests library.
 

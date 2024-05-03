@@ -1,0 +1,56 @@
+apiVersion: skaffold/v4beta8
+kind: Config
+metadata:
+  name: deps
+profiles:
+  - name: deps
+    deploy:
+      helm:
+        releases:
+          - name: redis
+            namespace: datalab-web-deps
+            createNamespace: true
+            repo: https://charts.bitnami.com/bitnami
+            remoteChart: redis
+            version: 18.12.1
+            setValues:
+              architecture: standalone
+              auth.enabled: false
+
+          - name: postgresql
+            namespace: datalab-web-deps
+            createNamespace: true
+            repo: https://charts.bitnami.com/bitnami
+            remoteChart: postgresql
+            version: 11.9.13
+            setValues:
+              auth.username: datalab
+              auth.password: changeme
+              auth.database: datalab
+              auth.postgresPassword: postgres
+
+apiVersion: skaffold/v4beta8
+kind: Config
+metadata:
+  name: datalab
+profiles:
+  - name: app
+    build:
+      tagPolicy:
+        gitCommit:
+          variant: Tags
+      local:
+        push: true
+      artifacts:
+        - image: datalab
+          custom:
+            buildCommand: skaffold-builder-buildx
+            dependencies:
+              dockerfile:
+                path: Dockerfile
+    manifests:
+      kustomize:
+        paths:
+          - k8s/envs/local/
+    deploy:
+      kubectl: {}
