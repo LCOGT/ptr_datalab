@@ -6,6 +6,7 @@ from astropy.io import fits
 import numpy as np
 
 from django.conf import settings
+from django.core.cache import cache
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -97,6 +98,29 @@ def get_archive_from_basename(basename: str) -> dict:
 
   return results
 
+def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
+  """
+  Returns a list of Sci HDUs for the given basenames
+  Warning: this function returns an opened file that must be closed after use
+  """
+
+  # use the basename to fetch and create a list of hdu objects
+  basename = basename.replace('-large', '').replace('-small', '')
+
+  if cache.get(f'{basename}-{extension}') is not None:
+    return cache.get(f'{basename}-{extension}')
+
+  archive_record = get_archive_from_basename(basename)
+
+  try:
+    fits_url = archive_record[0].get('url', 'No URL found')
+  except IndexError:
+    RuntimeWarning(f"No image found with specified basename: {basename}")
+
+  hdu = fits.open(fits_url, use_fsspec=True)
+  cache.set(f'{basename}-{extension}', hdu[extension])
+  return hdu[extension]
+
 def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
 
   header = fits.Header([('KEY', key)])
@@ -118,3 +142,23 @@ def stack_arrays(array_list: list):
   stacked = np.stack(cropped_data_list, axis=2)
 
   return stacked
+
+def scale_points(small_img_width: int, small_img_height: int, img_array: list, points: list[tuple[int, int]]):
+  """
+    Scale the coordinates from a smaller image to the full sized fits so we know the positions of the coords on the 2dnumpy array
+    Returns the list of tuple points with coords scaled for the numpy array
+  """
+
+  large_height, large_width = np.shape(img_array)
+
+  # If the aspect ratios don't match we can't be certain where the point was
+  if small_img_width / small_img_height != large_width / large_height:
+    raise ValueError("Aspect ratios of the two images must match")
+
+  width_scale = large_width / small_img_width
+  height_scale = large_height / small_img_height
+
+  points_array = np.array(points)
+  scaled_points = np.int_(points_array * [width_scale, height_scale])
+
+  return scaled_points
