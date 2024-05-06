@@ -5,7 +5,7 @@ from rest_framework.response import Response
 
 from datalab.datalab_session.data_operations.utils import available_operations
 from datalab.datalab_session.analysis.line_profile import line_profile
-from datalab.datalab_session.util import get_hdus
+from datalab.datalab_session.util import get_hdu
 
 
 class OperationOptionsApiView(RetrieveAPIView):
@@ -27,15 +27,12 @@ class AnalysisView(APIView):
     def post(self, request, action):
         input = request.data
 
-        hdu = get_hdus(input['basename'])
-        sci = hdu['SCI']
+        sci_hdu = get_hdu(input['basename'])
 
         match action:
             case 'line-profile':
-                output = line_profile(input, sci)
+                output = line_profile(input, sci_hdu)
             case _:
                 raise Exception(f'Analysis action {action} not found')
-        
-        hdu.close()
 
         return Response(output)
