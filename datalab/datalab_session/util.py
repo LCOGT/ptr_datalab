@@ -117,7 +117,6 @@ def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
   except IndexError:
     RuntimeWarning(f"No image found with specified basename: {basename}")
 
-  # not sure if HDU is ever being closed here?
   hdu = fits.open(fits_url, use_fsspec=True)
   cache.set(f'{basename}-{extension}', hdu[extension])
   return hdu[extension]
