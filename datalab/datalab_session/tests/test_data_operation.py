@@ -46,3 +46,5 @@ class TestMedianOperation:
     }
     assert normalized_data == expected_data
 
+  def test_name_is_median(self):
+    assert Median.name() == 'Median'
