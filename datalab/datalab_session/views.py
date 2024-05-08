@@ -1,5 +1,4 @@
 from rest_framework.generics import RetrieveAPIView
-from rest_framework.views import APIView
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 
@@ -19,7 +18,7 @@ class OperationOptionsApiView(RetrieveAPIView):
             operation_details[operation_clazz.name()] = operation_clazz.wizard_description()
         return Response(operation_details)
 
-class AnalysisView(APIView):
+class AnalysisView(RetrieveAPIView):
     """ 
         View to handle analysis actions and return the results
         To add a new analysis action, add a case to the switch statement and create a new file in the analysis directory
