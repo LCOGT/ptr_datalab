@@ -107,9 +107,6 @@ def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
   # use the basename to fetch and create a list of hdu objects
   basename = basename.replace('-large', '').replace('-small', '')
 
-  if cache.get(f'{basename}-{extension}') is not None:
-    return cache.get(f'{basename}-{extension}')
-
   archive_record = get_archive_from_basename(basename)
 
   try:
@@ -117,8 +114,7 @@ def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
   except IndexError:
     RuntimeWarning(f"No image found with specified basename: {basename}")
 
-  hdu = fits.open(fits_url, use_fsspec=True)
-  cache.set(f'{basename}-{extension}', hdu[extension])
+  hdu = fits.open(fits_url)
   return hdu[extension]
 
 def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
