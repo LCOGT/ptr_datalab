@@ -12,3 +12,9 @@ def line_profile(input: dict, sci_hdu: object):
   arcsec = len(line_profile) * sci_hdu.header["PIXSCALE"]
 
   return {"line_profile": line_profile, "arcsec": arcsec}
+
+def debug_point_on_sci_data(x, y, sci_hdu: object):
+  """
+    Debugging function to check a point (x,y) on the sci data has the same value as the point cross checked in DS9
+  """
+  print(f"data: {sci_hdu.data[y, x]}")

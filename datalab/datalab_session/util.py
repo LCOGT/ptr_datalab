@@ -144,8 +144,9 @@ def scale_points(small_img_width: int, small_img_height: int, img_array: list, p
     Scale the coordinates from a smaller image to the full sized fits so we know the positions of the coords on the 2dnumpy array
     Returns the list of tuple points with coords scaled for the numpy array
   """
-
+  print(f"small_img_width: {small_img_width}, small_img_height: {small_img_height}")
   large_height, large_width = np.shape(img_array)
+  print(f"large_height: {large_height}, large_width: {large_width}")
 
   # If the aspect ratios don't match we can't be certain where the point was
   if small_img_width / small_img_height != large_width / large_height:
@@ -153,8 +154,11 @@ def scale_points(small_img_width: int, small_img_height: int, img_array: list, p
 
   width_scale = large_width / small_img_width
   height_scale = large_height / small_img_height
+  print(f"width_scale: {width_scale}, height_scale: {height_scale}")
 
   points_array = np.array(points)
+  print(f"points_array: {points_array}")
   scaled_points = np.int_(points_array * [width_scale, height_scale])
+  print(f"scaled_points: {scaled_points}")
 
   return scaled_points
