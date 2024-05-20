@@ -13,7 +13,7 @@ class DataOperationViewSet(viewsets.ModelViewSet):
     serializer_class = DataOperationSerializer
     
     def get_queryset(self):
-        return DataOperation.objects.filter(session=self.kwargs['session_pk'])
+        return DataOperation.objects.filter(session=self.kwargs['session_pk'], session__user=self.request.user)
     
     def perform_create(self, serializer):
         operation = available_operations().get(serializer.validated_data['name'])(serializer.validated_data['input_data'])
@@ -30,7 +30,7 @@ class DataSessionViewSet(viewsets.ModelViewSet):
     ordering = ('created',)
     
     def get_queryset(self):
-        return DataSession.objects.all()
+        return DataSession.objects.filter(user=self.request.user).prefetch_related('operations')
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
