@@ -87,13 +87,17 @@ def get_archive_from_basename(basename: str) -> dict:
   """
   query_params = {'basename_exact': basename }
 
-  response = requests.get(settings.ARCHIVE_API + '/frames/', params=query_params)
+  headers = {
+    'Authorization': f'Token {settings.AUTH_TOKEN}'
+  }
+
+  response = requests.get(settings.ARCHIVE_API + '/frames/', params=query_params, headers=headers)
 
   try:
     image_data = response.json()
     results = image_data.get('results', None)
-  except IndexError:
-    log.error(f"No image found with specified basename: {basename}")
+  except Exception as e:
+    log.error(f"failed to fetch {basename} from archive, Error: {e}")
     raise FileNotFoundError
 
   return results
@@ -111,11 +115,10 @@ def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
 
   try:
     fits_url = archive_record[0].get('url', 'No URL found')
-  except IndexError:
-    RuntimeWarning(f"No image found with specified basename: {basename}")
-
-  hdu = fits.open(fits_url)
-  return hdu[extension]
+    hdu = fits.open(fits_url)
+    return hdu[extension]
+  except Exception as e:
+    raise FileNotFoundError(f"No image found with specified basename: {basename} Error: {e}")
 
 def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
 
@@ -139,14 +142,12 @@ def stack_arrays(array_list: list):
 
   return stacked
 
-def scale_points(small_img_width: int, small_img_height: int, img_array: list, points: list[tuple[int, int]]):
+def scale_flip_points(small_img_width: int, small_img_height: int, img_array: list, points: list[tuple[int, int]]):
   """
     Scale the coordinates from a smaller image to the full sized fits so we know the positions of the coords on the 2dnumpy array
     Returns the list of tuple points with coords scaled for the numpy array
   """
-  print(f"small_img_width: {small_img_width}, small_img_height: {small_img_height}")
   large_height, large_width = np.shape(img_array)
-  print(f"large_height: {large_height}, large_width: {large_width}")
 
   # If the aspect ratios don't match we can't be certain where the point was
   if small_img_width / small_img_height != large_width / large_height:
@@ -154,11 +155,10 @@ def scale_points(small_img_width: int, small_img_height: int, img_array: list, p
 
   width_scale = large_width / small_img_width
   height_scale = large_height / small_img_height
-  print(f"width_scale: {width_scale}, height_scale: {height_scale}")
 
   points_array = np.array(points)
-  print(f"points_array: {points_array}")
   scaled_points = np.int_(points_array * [width_scale, height_scale])
-  print(f"scaled_points: {scaled_points}")
+  # html origin is top left, numpy origin is bottom left, so we need to flip the y axis
+  scaled_points[:, 1] = large_height - scaled_points[:, 1]
 
   return scaled_points
