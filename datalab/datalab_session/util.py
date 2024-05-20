@@ -97,8 +97,7 @@ def get_archive_from_basename(basename: str) -> dict:
     image_data = response.json()
     results = image_data.get('results', None)
   except Exception as e:
-    log.error(f"failed to fetch {basename} from archive, Error: {e}")
-    raise FileNotFoundError
+    raise FileNotFoundError(f"Error fetching image data from archive: {e}")
 
   return results
 
