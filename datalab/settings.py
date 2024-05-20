@@ -135,7 +135,7 @@ DATALAB_OPERATION_BUCKET = os.getenv('DATALAB_OPERATION_BUCKET', 'datalab-operat
 
 # Datalab Archive
 ARCHIVE_API = os.getenv('ARCHIVE_API', 'https://archive-api.lco.global')
-AUTH_TOKEN = os.getenv('AUTH_TOKEN')
+ARCHIVE_API_TOKEN = os.getenv('ARCHIVE_API_TOKEN')
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases

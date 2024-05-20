@@ -88,7 +88,7 @@ def get_archive_from_basename(basename: str) -> dict:
   query_params = {'basename_exact': basename }
 
   headers = {
-    'Authorization': f'Token {settings.AUTH_TOKEN}'
+    'Authorization': f'Token {settings.ARCHIVE_API_TOKEN}'
   }
 
   response = requests.get(settings.ARCHIVE_API + '/frames/', params=query_params, headers=headers)
