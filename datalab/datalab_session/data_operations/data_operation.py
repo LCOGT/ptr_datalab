@@ -136,30 +136,23 @@ class BaseDataOperation(ABC):
 
     def get_fits_npdata(self, input_files: list[dict], percent=None, cur_percent=None) -> list[np.memmap]:
         total_files = len(input_files)
-        memmap_paths = []
+        image_data_list = []
 
-        # get the fits urls, download their file, extract the image data, and store in a list
-        with tempfile.TemporaryDirectory() as temp_dir:
-            for index, file_info in enumerate(input_files, start=1):
-                basename = file_info.get('basename', 'No basename found')
-                archive_record = get_archive_from_basename(basename)
+        # get the fits urls and extract the image data
+        for index, file_info in enumerate(input_files, start=1):
+            basename = file_info.get('basename', 'No basename found')
+            archive_record = get_archive_from_basename(basename)
 
-                try:
-                    fits_url = archive_record[0].get('url', 'No URL found')
-                except IndexError:
-                    continue
+            try:
+                fits_url = archive_record[0].get('url', 'No URL found')
+            except Exception as e:
+                raise FileNotFoundError(f"No image found with specified basename: {basename} Error: {e}")
 
-                with fits.open(fits_url) as hdu_list:
-                    data = hdu_list['SCI'].data
-                    memmap_path = os.path.join(temp_dir, f'memmap_{index}.dat')
-                    memmap_array = np.memmap(memmap_path, dtype=data.dtype, mode='w+', shape=data.shape)
-                    memmap_array[:] = data[:]
-                    memmap_paths.append(memmap_path)
-                
-                if percent is not None and cur_percent is not None:
-                    self.set_percent_completion(cur_percent + index/total_files * percent)
+            with fits.open(fits_url) as hdu_list:
+                data = hdu_list['SCI'].data
+                image_data_list.append(data)
+            
+            if percent is not None and cur_percent is not None:
+                self.set_percent_completion(cur_percent + index/total_files * percent)
 
-            return [
-                np.memmap(path, dtype=np.float32, mode='r', shape=memmap_array.shape)
-                for path in memmap_paths
-            ]
+        return image_data_list

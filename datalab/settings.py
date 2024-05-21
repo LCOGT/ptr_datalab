@@ -134,7 +134,8 @@ DRAMATIQ_TASKS_DATABASE = 'default'
 DATALAB_OPERATION_BUCKET = os.getenv('DATALAB_OPERATION_BUCKET', 'datalab-operation-output-bucket')
 
 # Datalab Archive
-ARCHIVE_API = os.getenv('ARCHIVE_API', 'https://datalab-archive.photonranch.org')
+ARCHIVE_API = os.getenv('ARCHIVE_API', 'https://archive-api.lco.global')
+ARCHIVE_API_TOKEN = os.getenv('ARCHIVE_API_TOKEN')
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
