@@ -141,23 +141,25 @@ def stack_arrays(array_list: list):
 
   return stacked
 
-def scale_flip_points(small_img_width: int, small_img_height: int, img_array: list, points: list[tuple[int, int]]):
+def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_points=[], y_points=[], flip_y = False, flip_x = False):
   """
-    Scale the coordinates from a smaller image to the full sized fits so we know the positions of the coords on the 2dnumpy array
-    Returns the list of tuple points with coords scaled for the numpy array
+    Scales x_points and y_points from img_1 height and width to img_2 height and width
+    Optionally flips the points on the x or y axis
   """
-  large_height, large_width = np.shape(img_array)
+  if height_1 == 0 or width_1 == 0 or height_2 == 0 or width_2 == 0:
+    raise ValueError("height and width must be non-zero")
 
-  # If the aspect ratios don't match we can't be certain where the point was
-  if small_img_width / small_img_height != large_width / large_height:
-    raise ValueError("Aspect ratios of the two images must match")
+  # normalize the points to be lists in case tuples or other are passed
+  x_points = np.array(x_points)
+  y_points = np.array(y_points)
 
-  width_scale = large_width / small_img_width
-  height_scale = large_height / small_img_height
+  x_points = (x_points / width_1 * width_2).astype(int)
+  y_points = (y_points / height_1 * height_2).astype(int)
 
-  points_array = np.array(points)
-  scaled_points = np.int_(points_array * [width_scale, height_scale])
-  # html origin is top left, numpy origin is bottom left, so we need to flip the y axis
-  scaled_points[:, 1] = large_height - scaled_points[:, 1]
+  if flip_y:
+    y_points = height_2 - y_points
 
-  return scaled_points
+  if flip_x:
+    x_points = width_2 - x_points
+
+  return x_points, y_points
