@@ -1,5 +1,7 @@
 import requests
 import logging
+import os
+import urllib.request
 
 import boto3
 from astropy.io import fits
@@ -103,21 +105,27 @@ def get_archive_from_basename(basename: str) -> dict:
 
 def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
   """
-  Returns a list of Sci HDUs for the given basenames
+  Returns a HDU for the given basename
+  Will download the file to a tmp directory so future calls can open it directly
   Warning: this function returns an opened file that must be closed after use
   """
 
   # use the basename to fetch and create a list of hdu objects
   basename = basename.replace('-large', '').replace('-small', '')
+  basename_file_path = os.path.join(settings.TMP_DIR, basename)
 
-  archive_record = get_archive_from_basename(basename)
+  if not os.path.isfile(basename_file_path):
 
-  try:
+    # create the tmp directory if it doesn't exist
+    if not os.path.exists(settings.TMP_DIR):
+      os.makedirs(settings.TMP_DIR)
+
+    archive_record = get_archive_from_basename(basename)
     fits_url = archive_record[0].get('url', 'No URL found')
-    hdu = fits.open(fits_url)
-    return hdu[extension]
-  except Exception as e:
-    raise FileNotFoundError(f"No image found with specified basename: {basename} Error: {e}")
+    urllib.request.urlretrieve(fits_url, basename_file_path)
+    
+  hdu = fits.open(basename_file_path)
+  return hdu[extension]
 
 def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
 
