@@ -31,7 +31,7 @@ def source_catalog(input: dict):
       "x": x_points[i],
       "y": y_points[i],
       "flux": flux[i].astype(int),
-      # truncate the ra and dec to 3 decimal places for readability
+      # truncate the ra and dec to 4 decimal places for readability
       "ra": '%.4f'%(ra[i]),
       "dec": '%.4f'%(dec[i])
     })
