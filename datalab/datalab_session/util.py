@@ -112,13 +112,13 @@ def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
 
   # use the basename to fetch and create a list of hdu objects
   basename = basename.replace('-large', '').replace('-small', '')
-  basename_file_path = os.path.join(settings.TMP_DIR, basename)
+  basename_file_path = os.path.join(settings.TEMP_FITS_DIR, basename)
 
   if not os.path.isfile(basename_file_path):
 
     # create the tmp directory if it doesn't exist
-    if not os.path.exists(settings.TMP_DIR):
-      os.makedirs(settings.TMP_DIR)
+    if not os.path.exists(settings.TEMP_FITS_DIR):
+      os.makedirs(settings.TEMP_FITS_DIR)
 
     archive_record = get_archive_from_basename(basename)
     fits_url = archive_record[0].get('url', 'No URL found')
@@ -154,7 +154,7 @@ def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_poi
     Scales x_points and y_points from img_1 height and width to img_2 height and width
     Optionally flips the points on the x or y axis
   """
-  if height_1 == 0 or width_1 == 0 or height_2 == 0 or width_2 == 0:
+  if any([dim == 0 for dim in [height_1, width_1, height_2, width_2]]):
     raise ValueError("height and width must be non-zero")
 
   # normalize the points to be lists in case tuples or other are passed
