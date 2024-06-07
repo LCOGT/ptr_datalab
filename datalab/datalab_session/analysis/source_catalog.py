@@ -17,6 +17,8 @@ def source_catalog(input: dict):
   x_points = cat_hdu.data["x"][:SOURCE_CATALOG_COUNT]
   y_points = cat_hdu.data["y"][:SOURCE_CATALOG_COUNT]
   flux = cat_hdu.data["flux"][:SOURCE_CATALOG_COUNT]
+  ra = cat_hdu.data["ra"][:SOURCE_CATALOG_COUNT]
+  dec = cat_hdu.data["dec"][:SOURCE_CATALOG_COUNT]
 
   # scale the x_points and y_points from the fits pixel coords to the jpg coords
   fits_height, fits_width = np.shape(sci_hdu.data)
@@ -28,7 +30,10 @@ def source_catalog(input: dict):
     source_catalog_data.append({
       "x": x_points[i],
       "y": y_points[i],
-      "flux": flux[i].astype(int)
+      "flux": flux[i].astype(int),
+      # truncate the ra and dec to 3 decimal places for readability
+      "ra": '%.3f'%(ra[i]),
+      "dec": '%.3f'%(dec[i])
     })
 
   return source_catalog_data
