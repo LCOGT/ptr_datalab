@@ -1,5 +1,7 @@
 import requests
 import logging
+import os
+import urllib.request
 
 import boto3
 from astropy.io import fits
@@ -103,21 +105,27 @@ def get_archive_from_basename(basename: str) -> dict:
 
 def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
   """
-  Returns a list of Sci HDUs for the given basenames
+  Returns a HDU for the given basename
+  Will download the file to a tmp directory so future calls can open it directly
   Warning: this function returns an opened file that must be closed after use
   """
 
   # use the basename to fetch and create a list of hdu objects
   basename = basename.replace('-large', '').replace('-small', '')
+  basename_file_path = os.path.join(settings.TEMP_FITS_DIR, basename)
 
-  archive_record = get_archive_from_basename(basename)
+  if not os.path.isfile(basename_file_path):
 
-  try:
+    # create the tmp directory if it doesn't exist
+    if not os.path.exists(settings.TEMP_FITS_DIR):
+      os.makedirs(settings.TEMP_FITS_DIR)
+
+    archive_record = get_archive_from_basename(basename)
     fits_url = archive_record[0].get('url', 'No URL found')
-    hdu = fits.open(fits_url)
-    return hdu[extension]
-  except Exception as e:
-    raise FileNotFoundError(f"No image found with specified basename: {basename} Error: {e}")
+    urllib.request.urlretrieve(fits_url, basename_file_path)
+    
+  hdu = fits.open(basename_file_path)
+  return hdu[extension]
 
 def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
 
@@ -141,23 +149,25 @@ def stack_arrays(array_list: list):
 
   return stacked
 
-def scale_flip_points(small_img_width: int, small_img_height: int, img_array: list, points: list[tuple[int, int]]):
+def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_points=[], y_points=[], flip_y = False, flip_x = False):
   """
-    Scale the coordinates from a smaller image to the full sized fits so we know the positions of the coords on the 2dnumpy array
-    Returns the list of tuple points with coords scaled for the numpy array
+    Scales x_points and y_points from img_1 height and width to img_2 height and width
+    Optionally flips the points on the x or y axis
   """
-  large_height, large_width = np.shape(img_array)
+  if any([dim == 0 for dim in [height_1, width_1, height_2, width_2]]):
+    raise ValueError("height and width must be non-zero")
 
-  # If the aspect ratios don't match we can't be certain where the point was
-  if small_img_width / small_img_height != large_width / large_height:
-    raise ValueError("Aspect ratios of the two images must match")
+  # normalize the points to be lists in case tuples or other are passed
+  x_points = np.array(x_points)
+  y_points = np.array(y_points)
 
-  width_scale = large_width / small_img_width
-  height_scale = large_height / small_img_height
+  x_points = (x_points / width_1 * width_2).astype(int)
+  y_points = (y_points / height_1 * height_2).astype(int)
 
-  points_array = np.array(points)
-  scaled_points = np.int_(points_array * [width_scale, height_scale])
-  # html origin is top left, numpy origin is bottom left, so we need to flip the y axis
-  scaled_points[:, 1] = large_height - scaled_points[:, 1]
+  if flip_y:
+    y_points = height_2 - y_points
 
-  return scaled_points
+  if flip_x:
+    x_points = width_2 - x_points
+
+  return x_points, y_points

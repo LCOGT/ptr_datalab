@@ -161,3 +161,7 @@ cython_debug/
 
 # vscode
 .vscode
+
+# temp files
+tmp/
+tmp/**/*

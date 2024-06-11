@@ -4,7 +4,7 @@ from rest_framework.response import Response
 
 from datalab.datalab_session.data_operations.utils import available_operations
 from datalab.datalab_session.analysis.line_profile import line_profile
-from datalab.datalab_session.util import get_hdu
+from datalab.datalab_session.analysis.source_catalog import source_catalog
 
 
 class OperationOptionsApiView(RetrieveAPIView):
@@ -26,11 +26,11 @@ class AnalysisView(RetrieveAPIView):
     def post(self, request, action):
         input = request.data
 
-        sci_hdu = get_hdu(input['basename'])
-
         match action:
             case 'line-profile':
-                output = line_profile(input, sci_hdu)
+                output = line_profile(input)
+            case 'source-catalog':
+                output = source_catalog(input)
             case _:
                 raise Exception(f'Analysis action {action} not found')
 
