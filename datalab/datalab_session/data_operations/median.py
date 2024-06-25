@@ -60,6 +60,6 @@ The output is a median image for the n input images. This operation is commonly 
         else:
             output = {'output_files': []}
 
-        log.info(f'Median operation output: {output}')
         self.set_percent_completion(1.0)
         self.set_output(output)
+        log.info(f'Median output: {self.get_output()}')

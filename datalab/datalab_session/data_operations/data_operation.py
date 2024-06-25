@@ -90,7 +90,7 @@ class BaseDataOperation(ABC):
 
     def set_output(self, output_data: dict):
         self.set_status('COMPLETED')
-        self.set_percent_completion(100.0)
+        self.set_percent_completion(1.0)
         cache.set(f'operation_{self.cache_key}_output', output_data, CACHE_DURATION)
 
     def get_output(self) -> dict:
@@ -145,7 +145,7 @@ class BaseDataOperation(ABC):
 
             try:
                 fits_url = archive_record[0].get('url', 'No URL found')
-            except Exception as e:
+            except IndexError as e:
                 raise FileNotFoundError(f"No image found with specified basename: {basename} Error: {e}")
 
             with fits.open(fits_url) as hdu_list:
