@@ -1,5 +1,6 @@
 from skimage.measure import profile_line
 from astropy.wcs import WCS
+from astropy.wcs import WcsError
 
 from datalab.datalab_session.util import scale_points
 from datalab.datalab_session.util import get_hdu
@@ -29,8 +30,8 @@ def line_profile(input: dict):
     start_coords = [start_sky_coord.ra.deg, start_sky_coord.dec.deg]
     end_coords = [end_sky_coord.ra.deg, end_sky_coord.dec.deg]
 
-  except Exception as e:
-    print(e)
+  except WcsError as e:
+    print(error, e)
     error = f'{input["basename"]} does not have a valid WCS header'
     # if theres no valid WCS solution then we default to using pixscale to calculate the angle, and no coordinates
     start_coords = None
@@ -38,4 +39,3 @@ def line_profile(input: dict):
     arcsec_angle = len(line_profile) * sci_hdu.header["PIXSCALE"]
 
   return {"line_profile": line_profile, "arcsec": arcsec_angle, "start_coords": start_coords, "end_coords": end_coords}
-  
