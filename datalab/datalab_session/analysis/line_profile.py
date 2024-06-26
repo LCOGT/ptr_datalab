@@ -31,8 +31,8 @@ def line_profile(input: dict):
     end_coords = [end_sky_coord.ra.deg, end_sky_coord.dec.deg]
 
   except WcsError as e:
-    print(error, e)
     error = f'{input["basename"]} does not have a valid WCS header'
+    print(error, e)
     # if theres no valid WCS solution then we default to using pixscale to calculate the angle, and no coordinates
     start_coords = None
     end_coords = None
