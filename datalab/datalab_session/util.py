@@ -8,7 +8,7 @@ from astropy.io import fits
 import numpy as np
 
 from django.conf import settings
-from django.core.cache import cache
+from botocore.exceptions import ClientError
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -27,11 +27,14 @@ def add_file_to_bucket(item_key: str, path: object) -> str:
   log.info(f'Adding {item_key} to {settings.DATALAB_OPERATION_BUCKET}')
 
   s3 = boto3.client('s3')
-  response = s3.upload_file(
-    path,
-    settings.DATALAB_OPERATION_BUCKET,
-    item_key
-  )
+  try:
+    response = s3.upload_file(
+      path,
+      settings.DATALAB_OPERATION_BUCKET,
+      item_key
+    )
+  except ClientError as e:
+    raise ClientError(f'Error uploading the operation output')
 
   return get_presigned_url(item_key)
 
@@ -56,9 +59,8 @@ def get_presigned_url(key: str) -> str:
         },
         ExpiresIn = 60 * 60 * 24 * 30 # URL will be valid for 30 days
     )
-  except:
-    log.error(f'File {key} not found in bucket')
-    return None
+  except ClientError as e:
+    raise ClientError(f'Could not find the image for {key}')
 
   return url
 
@@ -95,11 +97,11 @@ def get_archive_from_basename(basename: str) -> dict:
 
   response = requests.get(settings.ARCHIVE_API + '/frames/', params=query_params, headers=headers)
 
-  try:
-    image_data = response.json()
-    results = image_data.get('results', None)
-  except Exception as e:
-    raise FileNotFoundError(f"Error fetching image data from archive: {e}")
+  image_data = response.json()
+  results = image_data.get('results', None)
+  
+  if not results:
+    raise FileNotFoundError(f"Could not find {basename} in the archive")
 
   return results
 
@@ -125,7 +127,12 @@ def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
     urllib.request.urlretrieve(fits_url, basename_file_path)
     
   hdu = fits.open(basename_file_path)
-  return hdu[extension]
+  extension = hdu[extension]
+  
+  if not extension:
+    raise ValueError(f"{extension} Header not found in fits file {basename}")
+  
+  return extension
 
 def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
 

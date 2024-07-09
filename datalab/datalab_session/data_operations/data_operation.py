@@ -1,10 +1,9 @@
 from abc import ABC, abstractmethod
 import hashlib
 import json
-import os
 import tempfile
-from django.core.cache import cache
 
+from django.core.cache import cache
 from fits2image.conversions import fits_to_jpg
 from astropy.io import fits
 import numpy as np
@@ -95,8 +94,13 @@ class BaseDataOperation(ABC):
 
     def get_output(self) -> dict:
         return cache.get(f'operation_{self.cache_key}_output')
+    
+    def set_failed(self, message: str):
+        self.set_status('FAILED')
+        self.set_message(message)
+        self.set_percent_completion(1.0)
 
-    # percent lets you alocate a fraction of the operation that this takes up in time
+    # percent lets you allocate a fraction of the operation that this takes up in time
     # cur_percent is the current completion of the operation
     def create_and_store_fits(self, hdu_list: fits.HDUList, percent=None, cur_percent=None) -> list:
         if not type(hdu_list) == list:
