@@ -1,11 +1,9 @@
 from rest_framework import viewsets
-from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 
 from datalab.datalab_session.serializers import DataSessionSerializer, DataOperationSerializer
 from datalab.datalab_session.models import DataSession, DataOperation
 from datalab.datalab_session.filters import DataSessionFilterSet
-from datalab.datalab_session.tasks import execute_data_operation
 from datalab.datalab_session.data_operations.utils import available_operations
 
 
