@@ -98,7 +98,6 @@ class BaseDataOperation(ABC):
     def set_failed(self, message: str):
         self.set_status('FAILED')
         self.set_message(message)
-        self.set_percent_completion(1.0)
 
     # percent lets you allocate a fraction of the operation that this takes up in time
     # cur_percent is the current completion of the operation

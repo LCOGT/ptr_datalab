@@ -34,6 +34,7 @@ def add_file_to_bucket(item_key: str, path: object) -> str:
       item_key
     )
   except ClientError as e:
+    log.error(f'Error uploading the operation output: {e}')
     raise ClientError(f'Error uploading the operation output')
 
   return get_presigned_url(item_key)
@@ -60,6 +61,7 @@ def get_presigned_url(key: str) -> str:
         ExpiresIn = 60 * 60 * 24 * 30 # URL will be valid for 30 days
     )
   except ClientError as e:
+    log.error(f'Could not find the image for {key}: {e}')
     raise ClientError(f'Could not find the image for {key}')
 
   return url
@@ -97,8 +99,13 @@ def get_archive_from_basename(basename: str) -> dict:
 
   response = requests.get(settings.ARCHIVE_API + '/frames/', params=query_params, headers=headers)
 
-  image_data = response.json()
-  results = image_data.get('results', None)
+  try:
+    response.raise_for_status()
+    image_data = response.json()
+    results = image_data.get('results', None)
+  except requests.HTTPError as e:
+    log.error(f"Error fetching data from the archive: {e}")
+    raise requests.HTTPError(f"Error fetching data from the archive")
   
   if not results:
     raise FileNotFoundError(f"Could not find {basename} in the archive")
@@ -130,6 +137,7 @@ def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
   extension = hdu[extension]
   
   if not extension:
+    log.error(f"{extension} Header not found in fits file {basename}")
     raise ValueError(f"{extension} Header not found in fits file {basename}")
   
   return extension
