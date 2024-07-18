@@ -133,10 +133,6 @@ def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> l
       case 'archive':
         fits_url = get_archive_url(basename)
       case 'datalab':
-        # as of July 2024 we don't make any other headers for datalab outputs other than SCI
-        if extension != 'SCI':
-          raise ValueError(f"Extension {extension} not available for source {source}")
-
         s3_folder_path = f'{basename.split("-")[0]}/{basename}.fits'
         fits_url = get_s3_url(s3_folder_path)
       case _:
