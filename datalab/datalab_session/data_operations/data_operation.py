@@ -9,7 +9,7 @@ from astropy.io import fits
 import numpy as np
 
 from datalab.datalab_session.tasks import execute_data_operation
-from datalab.datalab_session.util import add_file_to_bucket, get_archive_from_basename
+from datalab.datalab_session.util import add_file_to_bucket, get_hdu
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
@@ -58,7 +58,7 @@ class BaseDataOperation(ABC):
     def perform_operation(self):
         """ The generic method to perform perform the operation if its not in progress """
         status = self.get_status()
-        if status == 'PENDING':
+        if status == 'PENDING' or status == 'FAILED':
             self.set_status('IN_PROGRESS')
             self.set_percent_completion(0.0)
             # This asynchronous task will call the operate() method on the proper operation
@@ -126,6 +126,7 @@ class BaseDataOperation(ABC):
             thumbnail_jpg_url   = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}-small.jpg', thumbnail_jpg_path)
             
             output.append({
+                'fits_url': fits_url,
                 'large_url': large_jpg_url,
                 'thumbnail_url': thumbnail_jpg_url,
                 'basename': f'{self.cache_key}-{index}',
@@ -144,16 +145,10 @@ class BaseDataOperation(ABC):
         # get the fits urls and extract the image data
         for index, file_info in enumerate(input_files, start=1):
             basename = file_info.get('basename', 'No basename found')
-            archive_record = get_archive_from_basename(basename)
+            source = file_info.get('source', 'No source found')
 
-            try:
-                fits_url = archive_record[0].get('url', 'No URL found')
-            except IndexError as e:
-                raise FileNotFoundError(f"No image found with specified basename: {basename} Error: {e}")
-
-            with fits.open(fits_url) as hdu_list:
-                data = hdu_list['SCI'].data
-                image_data_list.append(data)
+            sci_hdu = get_hdu(basename, 'SCI', source)
+            image_data_list.append(sci_hdu.data)
             
             if percent is not None and cur_percent is not None:
                 self.set_percent_completion(cur_percent + index/total_files * percent)

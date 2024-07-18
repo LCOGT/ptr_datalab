@@ -1,7 +1,11 @@
 import dramatiq
+import logging
 
 from datalab.datalab_session.data_operations.utils import available_operations
 from requests.exceptions import RequestException
+
+log = logging.getLogger()
+log.setLevel(logging.INFO)
 
 # Retry network connection errors 3 times, all other exceptions are not retried
 def should_retry(retries_so_far, exception):
@@ -16,4 +20,5 @@ def execute_data_operation(data_operation_name: str, input_data: dict):
         try:
             operation_class(input_data).operate()
         except Exception as e:
+            log.error(f"Error executing {data_operation_name}: {type(e).__name__}:{e}")
             operation_class(input_data).set_failed(str(e))
