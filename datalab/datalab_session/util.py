@@ -24,8 +24,6 @@ def add_file_to_bucket(item_key: str, path: object) -> str:
   Returns:
     A presigned url for the object just added to the bucket
   """
-  log.info(f'Adding {item_key} to {settings.DATALAB_OPERATION_BUCKET}')
-
   s3 = boto3.client('s3')
   try:
     response = s3.upload_file(
@@ -37,11 +35,11 @@ def add_file_to_bucket(item_key: str, path: object) -> str:
     log.error(f'Error uploading the operation output: {e}')
     raise ClientError(f'Error uploading the operation output')
 
-  return get_presigned_url(item_key)
+  return get_s3_url(item_key)
 
-def get_presigned_url(key: str) -> str:
+def get_s3_url(key: str, bucket: str = settings.DATALAB_OPERATION_BUCKET) -> str:
   """
-  Gets a presigned url from the operation bucket using the key
+  Gets a presigned url from the bucket using the key
 
   Args:
     item_key -- name to look up in the bucket
@@ -55,14 +53,14 @@ def get_presigned_url(key: str) -> str:
     url = s3.generate_presigned_url(
         ClientMethod='get_object',
         Params={
-            'Bucket': settings.DATALAB_OPERATION_BUCKET,
+            'Bucket': bucket,
             'Key': key
         },
         ExpiresIn = 60 * 60 * 24 * 30 # URL will be valid for 30 days
     )
   except ClientError as e:
-    log.error(f'Could not find the image for {key}: {e}')
-    raise ClientError(f'Could not find the image for {key}')
+    log.error(f'Could not generate url for {key}: {e}')
+    raise ClientError(f'Could not create url for {key}')
 
   return url
 
@@ -81,7 +79,7 @@ def key_exists(key: str) -> bool:
   response = s3.list_objects_v2(Bucket=settings.DATALAB_OPERATION_BUCKET, Prefix=key, MaxKeys=1)
   return 'Contents' in response
 
-def get_archive_from_basename(basename: str) -> dict:
+def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
   """
   Looks for the key as a prefix in the operations s3 bucket
 
@@ -97,7 +95,7 @@ def get_archive_from_basename(basename: str) -> dict:
     'Authorization': f'Token {settings.ARCHIVE_API_TOKEN}'
   }
 
-  response = requests.get(settings.ARCHIVE_API + '/frames/', params=query_params, headers=headers)
+  response = requests.get(archive + '/frames/', params=query_params, headers=headers)
 
   try:
     response.raise_for_status()
@@ -110,11 +108,12 @@ def get_archive_from_basename(basename: str) -> dict:
   if not results:
     raise FileNotFoundError(f"Could not find {basename} in the archive")
 
-  return results
+  fits_url = results[0].get('url', 'No URL found')
+  return fits_url
 
-def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
+def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> list[fits.HDUList]:
   """
-  Returns a HDU for the given basename
+  Returns a HDU for the given basename from the source
   Will download the file to a tmp directory so future calls can open it directly
   Warning: this function returns an opened file that must be closed after use
   """
@@ -123,22 +122,33 @@ def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
   basename = basename.replace('-large', '').replace('-small', '')
   basename_file_path = os.path.join(settings.TEMP_FITS_DIR, basename)
 
+  # download the file if it isn't already downloaded in our temp directory
   if not os.path.isfile(basename_file_path):
 
     # create the tmp directory if it doesn't exist
     if not os.path.exists(settings.TEMP_FITS_DIR):
       os.makedirs(settings.TEMP_FITS_DIR)
 
-    archive_record = get_archive_from_basename(basename)
-    fits_url = archive_record[0].get('url', 'No URL found')
+    match source:
+      case 'archive':
+        fits_url = get_archive_url(basename)
+      case 'datalab':
+        # as of July 2024 we don't make any other headers for datalab outputs other than SCI
+        if extension != 'SCI':
+          raise ValueError(f"Extension {extension} not available for source {source}")
+
+        s3_folder_path = f'{basename.split("-")[0]}/{basename}.fits'
+        fits_url = get_s3_url(s3_folder_path)
+      case _:
+        raise ValueError(f"Source {source} not recognized")
+
     urllib.request.urlretrieve(fits_url, basename_file_path)
-    
+
   hdu = fits.open(basename_file_path)
-  extension = hdu[extension]
-  
-  if not extension:
-    log.error(f"{extension} Header not found in fits file {basename}")
-    raise ValueError(f"{extension} Header not found in fits file {basename}")
+  try:
+    extension = hdu[extension]
+  except KeyError:
+    raise KeyError(f"{extension} Header not found in fits file {basename}")
   
   return extension
 
@@ -146,7 +156,7 @@ def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
 
   header = fits.Header([('KEY', key)])
   primary_hdu = fits.PrimaryHDU(header=header)
-  image_hdu = fits.ImageHDU(image_arr)
+  image_hdu = fits.ImageHDU(data=image_arr, name='SCI')
 
   hdu_list = fits.HDUList([primary_hdu, image_hdu])
 
