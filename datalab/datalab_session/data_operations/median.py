@@ -33,7 +33,7 @@ The output is a median image for the n input images. This operation is commonly 
                     'description': 'The input files to operate on',
                     'type': 'file',
                     'minimum': 1,
-                    'maxmimum': 999
+                    'maximum': 999
                 }
             }
         }
@@ -52,9 +52,9 @@ The output is a median image for the n input images. This operation is commonly 
             # using the numpy library's median method
             median = np.median(stacked_data, axis=2)
 
-            hdu_list = create_fits(self.cache_key, median)
+            fits_file = create_fits(self.cache_key, median)
 
-            output = self.create_and_store_fits(hdu_list, percent=0.6, cur_percent=0.4)
+            output = self.create_jpg_output(fits_file, percent=0.6, cur_percent=0.4)
 
             output =  {'output_files': output}
         else:

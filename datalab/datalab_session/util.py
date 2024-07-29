@@ -1,3 +1,4 @@
+import tempfile
 import requests
 import logging
 import os
@@ -111,14 +112,10 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
   fits_url = results[0].get('url', 'No URL found')
   return fits_url
 
-def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> list[fits.HDUList]:
+def get_fits(basename: str, source: str = 'archive'):
   """
-  Returns a HDU for the given basename from the source
-  Will download the file to a tmp directory so future calls can open it directly
-  Warning: this function returns an opened file that must be closed after use
+  Returns a Fits File for the given basename from the source
   """
-
-  # use the basename to fetch and create a list of hdu objects
   basename = basename.replace('-large', '').replace('-small', '')
   basename_file_path = os.path.join(settings.TEMP_FITS_DIR, basename)
 
@@ -139,6 +136,17 @@ def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> l
         raise ValueError(f"Source {source} not recognized")
 
     urllib.request.urlretrieve(fits_url, basename_file_path)
+  
+  return basename_file_path
+
+def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> list[fits.HDUList]:
+  """
+  Returns a HDU for the given basename from the source
+  Will download the file to a tmp directory so future calls can open it directly
+  Warning: this function returns an opened file that must be closed after use
+  """
+
+  basename_file_path = get_fits(basename, source)
 
   hdu = fits.open(basename_file_path)
   try:
@@ -148,15 +156,26 @@ def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> l
   
   return extension
 
+def fits_dimensions(fits_file) -> tuple:
+  hdu = fits.open(fits_file)
+  height, width = hdu[1].shape
+  return height, width
+
 def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
+  """
+  Creates a fits file with the given key and image array
+  Returns the HDUList and the dimensions of the image
+  """
 
   header = fits.Header([('KEY', key)])
   primary_hdu = fits.PrimaryHDU(header=header)
   image_hdu = fits.ImageHDU(data=image_arr, name='SCI')
 
   hdu_list = fits.HDUList([primary_hdu, image_hdu])
+  fits_path = tempfile.NamedTemporaryFile(suffix=f'{key}.fits').name
+  hdu_list.writeto(fits_path)
 
-  return hdu_list
+  return fits_path
 
 def stack_arrays(array_list: list):
   """

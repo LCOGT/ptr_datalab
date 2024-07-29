@@ -9,7 +9,7 @@ from astropy.io import fits
 import numpy as np
 
 from datalab.datalab_session.tasks import execute_data_operation
-from datalab.datalab_session.util import add_file_to_bucket, get_hdu
+from datalab.datalab_session.util import add_file_to_bucket, get_hdu, fits_dimensions, stack_arrays, create_fits
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
@@ -99,42 +99,54 @@ class BaseDataOperation(ABC):
         self.set_status('FAILED')
         self.set_message(message)
 
-    # percent lets you allocate a fraction of the operation that this takes up in time
-    # cur_percent is the current completion of the operation
-    def create_and_store_fits(self, hdu_list: fits.HDUList, percent=None, cur_percent=None) -> list:
-        if not type(hdu_list) == list:
-            hdu_list = [hdu_list]
+    def create_jpg_output(self, fits_paths, percent=None, cur_percent=None, color=False, index=None) -> list:
+        """
+        Create jpgs from fits files and save them to S3
+        If using the color option fits_paths need to be in order R, G, B
+        percent and cur_percent are used to update the progress of the operation
+        """
 
-        output = []
-        total_files = len(hdu_list)
+        if type(fits_paths) is not list:
+            fits_paths = [fits_paths]
 
-        # Create temp file paths for storing the products
-        fits_path           = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}.fits').name
+        # create the jpgs from the fits files
         large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}-large.jpg').name
         thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}-small.jpg').name
 
-        for index, hdu in enumerate(hdu_list, start=1):
-            height, width = hdu[1].shape
+        height, width = fits_dimensions(fits_paths[0])
 
-            hdu.writeto(fits_path)
-            fits_to_jpg(fits_path, large_jpg_path, width=width, height=height)
-            fits_to_jpg(fits_path, thumbnail_jpg_path)
+        fits_to_jpg(fits_paths, large_jpg_path, width=width, height=height, color=color)
+        fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color)
 
-            # Save Fits and Thumbnails in S3 Buckets
-            fits_url            = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}.fits', fits_path)
-            large_jpg_url       = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}-large.jpg', large_jpg_path)
-            thumbnail_jpg_url   = add_file_to_bucket(f'{self.cache_key}/{self.cache_key}-{index}-small.jpg', thumbnail_jpg_path)
-            
-            output.append({
-                'fits_url': fits_url,
-                'large_url': large_jpg_url,
-                'thumbnail_url': thumbnail_jpg_url,
-                'basename': f'{self.cache_key}-{index}',
-                'source': 'datalab'}
-            )
+        # color photos take three files, so we store it as one fits file with a 3d SCI ndarray
+        if color:
+            arrays = [fits.open(file)['SCI'].data for file in fits_paths]
+            stacked = stack_arrays(arrays)
+            fits_file = create_fits(self.cache_key, stacked)
+        else:
+            fits_file = fits_paths[0]
 
-            if percent is not None and cur_percent is not None:
-                self.set_percent_completion(cur_percent + index/total_files * percent)
+
+        # Save Fits and Thumbnails in S3 Buckets
+        bucket_key = f'{self.cache_key}/{self.cache_key}-{index}' if index else f'{self.cache_key}/{self.cache_key}'
+
+        fits_url            = add_file_to_bucket(f'{bucket_key}.fits', fits_file)
+        large_jpg_url       = add_file_to_bucket(f'{bucket_key}-large.jpg', large_jpg_path)
+        thumbnail_jpg_url   = add_file_to_bucket(f'{bucket_key}-small.jpg', thumbnail_jpg_path)
+        
+        output = []
+        output.append({
+            'fits_url': fits_url,
+            'large_url': large_jpg_url,
+            'thumbnail_url': thumbnail_jpg_url,
+            'basename': f'{self.cache_key}',
+            'source': 'datalab'}
+        )
+
+        if percent is not None and cur_percent is not None:
+            self.set_percent_completion(cur_percent + percent)
+        else:
+            self.set_percent_completion(0.9)
         
         return output
 

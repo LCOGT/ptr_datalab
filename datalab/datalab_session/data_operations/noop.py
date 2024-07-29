@@ -22,7 +22,7 @@ class NoOperation(BaseDataOperation):
                     'description': 'The input files to operate on',
                     'type': 'file',
                     'minimum': 1,
-                    'maxmimum': 999
+                    'maximum': 999
                 },
                 'scalar_parameter_1': {
                     'name': 'Scalar Parameter 1',
