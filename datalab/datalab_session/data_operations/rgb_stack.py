@@ -50,14 +50,6 @@ class RGB_Stack(BaseDataOperation):
                     'minimum': 1,
                     'maximum': 1,
                     'filter': ['B']
-                },
-                'random_seed': {
-                    'name': 'Seed',
-                    'description': 'so I can test this without it being cached',
-                    'type': 'number',
-                    'minimum': 0,
-                    'maximum': 99999.0,
-                    'default': 60.0
                 }
             }
         }
