@@ -156,15 +156,13 @@ def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> l
   
   return extension
 
-def fits_dimensions(fits_file) -> tuple:
-  hdu = fits.open(fits_file)
-  height, width = hdu[1].shape
-  return height, width
+def get_fits_dimensions(fits_file, extension: str = 'SCI') -> tuple:
+  return fits.open(fits_file)[extension].shape
 
-def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
+def create_fits(key: str, image_arr: np.ndarray) -> str:
   """
   Creates a fits file with the given key and image array
-  Returns the HDUList and the dimensions of the image
+  Returns the the path to the fits_file
   """
 
   header = fits.Header([('KEY', key)])

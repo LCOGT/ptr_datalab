@@ -63,6 +63,7 @@ class RGB_Stack(BaseDataOperation):
             fits_paths = []
             for file in rgb_input_list:
                 fits_paths.append(get_fits(file.get('basename')))
+                self.set_percent_completion(self.get_percent_completion() + 0.2)
             
             output = self.create_jpg_output(fits_paths, percent=0.9, cur_percent=0.0, color=True)
 

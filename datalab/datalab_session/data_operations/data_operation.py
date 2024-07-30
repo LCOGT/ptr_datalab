@@ -9,7 +9,7 @@ from astropy.io import fits
 import numpy as np
 
 from datalab.datalab_session.tasks import execute_data_operation
-from datalab.datalab_session.util import add_file_to_bucket, get_hdu, fits_dimensions, stack_arrays, create_fits
+from datalab.datalab_session.util import add_file_to_bucket, get_hdu, get_fits_dimensions, stack_arrays, create_fits
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
@@ -99,30 +99,30 @@ class BaseDataOperation(ABC):
         self.set_status('FAILED')
         self.set_message(message)
 
-    def create_jpg_output(self, fits_paths, percent=None, cur_percent=None, color=False, index=None) -> list:
+    def create_jpg_output(self, fits_paths: str, percent=None, cur_percent=None, color=False, index=None) -> list:
         """
         Create jpgs from fits files and save them to S3
         If using the color option fits_paths need to be in order R, G, B
         percent and cur_percent are used to update the progress of the operation
         """
 
-        if type(fits_paths) is not list:
+        if not isinstance(fits_paths, list):
             fits_paths = [fits_paths]
 
         # create the jpgs from the fits files
         large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}-large.jpg').name
         thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}-small.jpg').name
 
-        height, width = fits_dimensions(fits_paths[0])
+        max_height, max_width = max(get_fits_dimensions(path) for path in fits_paths)
 
-        fits_to_jpg(fits_paths, large_jpg_path, width=width, height=height, color=color)
+        fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color)
         fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color)
 
         # color photos take three files, so we store it as one fits file with a 3d SCI ndarray
         if color:
             arrays = [fits.open(file)['SCI'].data for file in fits_paths]
-            stacked = stack_arrays(arrays)
-            fits_file = create_fits(self.cache_key, stacked)
+            stacked_data = stack_arrays(arrays)
+            fits_file = create_fits(self.cache_key, stacked_data)
         else:
             fits_file = fits_paths[0]
 
