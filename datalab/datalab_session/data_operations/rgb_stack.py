@@ -41,7 +41,7 @@ class RGB_Stack(BaseDataOperation):
                     'type': 'file',
                     'minimum': 1,
                     'maximum': 1,
-                    'filter': ['V']
+                    'filter': ['V', 'gp']
                 },
                 'blue_input': {
                     'name': 'Blue Filter',
@@ -73,6 +73,8 @@ class RGB_Stack(BaseDataOperation):
                 fits_paths.append(get_fits(file.get('basename')))
             
             output = self.create_jpg_output(fits_paths, percent=0.9, cur_percent=0.0, color=True)
+
+            output =  {'output_files': output}
         else:
             output = {'output_files': []}
             raise ValueError('RGB Stack operation requires exactly 3 input files')
