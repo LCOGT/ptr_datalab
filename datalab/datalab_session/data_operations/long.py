@@ -23,7 +23,7 @@ class LongOperation(BaseDataOperation):
                     'description': 'The input files to operate on',
                     'type': 'file',
                     'minimum': 1,
-                    'maxmimum': 999
+                    'maximum': 999
                 },
                 'duration': {
                     'name': 'Duration',

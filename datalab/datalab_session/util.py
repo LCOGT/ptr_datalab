@@ -1,3 +1,4 @@
+import tempfile
 import requests
 import logging
 import os
@@ -6,9 +7,10 @@ import urllib.request
 import boto3
 from astropy.io import fits
 import numpy as np
+from botocore.exceptions import ClientError
 
 from django.conf import settings
-from botocore.exceptions import ClientError
+from fits2image.conversions import fits_to_jpg
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -111,14 +113,10 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
   fits_url = results[0].get('url', 'No URL found')
   return fits_url
 
-def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> list[fits.HDUList]:
+def get_fits(basename: str, source: str = 'archive'):
   """
-  Returns a HDU for the given basename from the source
-  Will download the file to a tmp directory so future calls can open it directly
-  Warning: this function returns an opened file that must be closed after use
+  Returns a Fits File for the given basename from the source
   """
-
-  # use the basename to fetch and create a list of hdu objects
   basename = basename.replace('-large', '').replace('-small', '')
   basename_file_path = os.path.join(settings.TEMP_FITS_DIR, basename)
 
@@ -139,6 +137,17 @@ def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> l
         raise ValueError(f"Source {source} not recognized")
 
     urllib.request.urlretrieve(fits_url, basename_file_path)
+  
+  return basename_file_path
+
+def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> list[fits.HDUList]:
+  """
+  Returns a HDU for the given basename from the source
+  Will download the file to a tmp directory so future calls can open it directly
+  Warning: this function returns an opened file that must be closed after use
+  """
+
+  basename_file_path = get_fits(basename, source)
 
   hdu = fits.open(basename_file_path)
   try:
@@ -148,15 +157,65 @@ def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> l
   
   return extension
 
-def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
+def get_fits_dimensions(fits_file, extension: str = 'SCI') -> tuple:
+  return fits.open(fits_file)[extension].shape
+
+def create_fits(key: str, image_arr: np.ndarray) -> str:
+  """
+  Creates a fits file with the given key and image array
+  Returns the the path to the fits_file
+  """
 
   header = fits.Header([('KEY', key)])
   primary_hdu = fits.PrimaryHDU(header=header)
   image_hdu = fits.ImageHDU(data=image_arr, name='SCI')
 
   hdu_list = fits.HDUList([primary_hdu, image_hdu])
+  fits_path = tempfile.NamedTemporaryFile(suffix=f'{key}.fits').name
+  hdu_list.writeto(fits_path)
 
-  return hdu_list
+  return fits_path
+
+def create_jpgs(cache_key, fits_paths: str, color=False) -> list:
+    """
+    Create jpgs from fits files and save them to S3
+    If using the color option fits_paths need to be in order R, G, B
+    percent and cur_percent are used to update the progress of the operation
+    """
+
+    if not isinstance(fits_paths, list):
+        fits_paths = [fits_paths]
+
+    # create the jpgs from the fits files
+    large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-large.jpg').name
+    thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-small.jpg').name
+
+    max_height, max_width = max(get_fits_dimensions(path) for path in fits_paths)
+
+    fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color)
+    fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color)
+
+    return large_jpg_path, thumbnail_jpg_path
+
+def save_fits_and_thumbnails(cache_key, fits_path, large_jpg_path, thumbnail_jpg_path, index=None):
+    """
+    Save Fits and Thumbnails in S3 Buckets, Returns the URLs in an output object
+    """
+    bucket_key = f'{cache_key}/{cache_key}-{index}' if index else f'{cache_key}/{cache_key}'
+
+    fits_url            = add_file_to_bucket(f'{bucket_key}.fits', fits_path)
+    large_jpg_url       = add_file_to_bucket(f'{bucket_key}-large.jpg', large_jpg_path)
+    thumbnail_jpg_url   = add_file_to_bucket(f'{bucket_key}-small.jpg', thumbnail_jpg_path)
+    
+    output_file = dict({
+        'fits_url': fits_url,
+        'large_url': large_jpg_url,
+        'thumbnail_url': thumbnail_jpg_url,
+        'basename': f'{cache_key}',
+        'source': 'datalab'}
+    )
+    
+    return output_file
 
 def stack_arrays(array_list: list):
   """
