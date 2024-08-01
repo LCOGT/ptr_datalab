@@ -1,10 +1,9 @@
 import logging
-import tempfile
 
-from fits2image.conversions import fits_to_jpg
+from astropy.io import fits
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.util import add_file_to_bucket, get_fits
+from datalab.datalab_session.util import get_fits, stack_arrays, create_fits, save_fits_and_thumbnails, create_jpgs
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -65,9 +64,16 @@ class RGB_Stack(BaseDataOperation):
                 fits_paths.append(get_fits(file.get('basename')))
                 self.set_percent_completion(self.get_percent_completion() + 0.2)
             
-            output = self.create_jpg_output(fits_paths, percent=0.9, cur_percent=0.0, color=True)
+            large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_paths, color=True)
 
-            output =  {'output_files': output}
+            # color photos take three files, so we store it as one fits file with a 3d SCI ndarray
+            arrays = [fits.open(file)['SCI'].data for file in fits_paths]
+            stacked_data = stack_arrays(arrays)
+            fits_file = create_fits(self.cache_key, stacked_data)
+
+            output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path)
+
+            output =  {'output_files': [output_file]}
         else:
             output = {'output_files': []}
             raise ValueError('RGB Stack operation requires exactly 3 input files')

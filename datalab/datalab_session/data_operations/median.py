@@ -3,7 +3,7 @@ import logging
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.util import create_fits, stack_arrays
+from datalab.datalab_session.util import create_fits, stack_arrays, create_jpgs, save_fits_and_thumbnails
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -54,9 +54,11 @@ The output is a median image for the n input images. This operation is commonly 
 
             fits_file = create_fits(self.cache_key, median)
 
-            output = self.create_jpg_output(fits_file, percent=0.6, cur_percent=0.4)
+            large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_file)
 
-            output =  {'output_files': output}
+            output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path)
+
+            output =  {'output_files': [output_file]}
         else:
             output = {'output_files': []}
 

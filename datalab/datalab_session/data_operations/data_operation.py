@@ -1,15 +1,12 @@
 from abc import ABC, abstractmethod
 import hashlib
 import json
-import tempfile
 
 from django.core.cache import cache
-from fits2image.conversions import fits_to_jpg
-from astropy.io import fits
 import numpy as np
 
 from datalab.datalab_session.tasks import execute_data_operation
-from datalab.datalab_session.util import add_file_to_bucket, get_hdu, get_fits_dimensions, stack_arrays, create_fits
+from datalab.datalab_session.util import get_hdu
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
@@ -98,57 +95,6 @@ class BaseDataOperation(ABC):
     def set_failed(self, message: str):
         self.set_status('FAILED')
         self.set_message(message)
-
-    def create_jpg_output(self, fits_paths: str, percent=None, cur_percent=None, color=False, index=None) -> list:
-        """
-        Create jpgs from fits files and save them to S3
-        If using the color option fits_paths need to be in order R, G, B
-        percent and cur_percent are used to update the progress of the operation
-        """
-
-        if not isinstance(fits_paths, list):
-            fits_paths = [fits_paths]
-
-        # create the jpgs from the fits files
-        large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}-large.jpg').name
-        thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{self.cache_key}-small.jpg').name
-
-        max_height, max_width = max(get_fits_dimensions(path) for path in fits_paths)
-
-        fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color)
-        fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color)
-
-        # color photos take three files, so we store it as one fits file with a 3d SCI ndarray
-        if color:
-            arrays = [fits.open(file)['SCI'].data for file in fits_paths]
-            stacked_data = stack_arrays(arrays)
-            fits_file = create_fits(self.cache_key, stacked_data)
-        else:
-            fits_file = fits_paths[0]
-
-
-        # Save Fits and Thumbnails in S3 Buckets
-        bucket_key = f'{self.cache_key}/{self.cache_key}-{index}' if index else f'{self.cache_key}/{self.cache_key}'
-
-        fits_url            = add_file_to_bucket(f'{bucket_key}.fits', fits_file)
-        large_jpg_url       = add_file_to_bucket(f'{bucket_key}-large.jpg', large_jpg_path)
-        thumbnail_jpg_url   = add_file_to_bucket(f'{bucket_key}-small.jpg', thumbnail_jpg_path)
-        
-        output = []
-        output.append({
-            'fits_url': fits_url,
-            'large_url': large_jpg_url,
-            'thumbnail_url': thumbnail_jpg_url,
-            'basename': f'{self.cache_key}',
-            'source': 'datalab'}
-        )
-
-        if percent is not None and cur_percent is not None:
-            self.set_percent_completion(cur_percent + percent)
-        else:
-            self.set_percent_completion(0.9)
-        
-        return output
 
     def get_fits_npdata(self, input_files: list[dict], percent=None, cur_percent=None) -> list[np.memmap]:
         total_files = len(input_files)
