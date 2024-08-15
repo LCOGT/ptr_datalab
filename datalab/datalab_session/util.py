@@ -10,7 +10,7 @@ import numpy as np
 from botocore.exceptions import ClientError
 
 from django.conf import settings
-from fits2image.conversions import fits_to_jpg
+from fits2image.conversions import fits_to_jpg, fits_to_tif
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -175,6 +175,16 @@ def create_fits(key: str, image_arr: np.ndarray) -> str:
   hdu_list.writeto(fits_path)
 
   return fits_path
+
+def create_tif(key: str, fits_path: np.ndarray) -> str:
+  """
+    Creates a full sized TIFF file from a FITs
+  """
+  height, width = get_fits_dimensions(fits_path)
+  tif_path = tempfile.NamedTemporaryFile(suffix=f'{key}.tif').name
+  fits_to_tif(fits_path, tif_path, width=width, height=height)
+
+  return tif_path
 
 def create_jpgs(cache_key, fits_paths: str, color=False) -> list:
     """
