@@ -9,6 +9,15 @@ from datalab.datalab_session.util import get_hdu
 def line_profile(input: dict):
   """
     Creates an array of luminosity values and the length of the line in arcseconds
+    input = {
+      basename (str): The name of the file to analyze
+      height (int): The height of the image
+      width (int): The width of the image
+      x1 (int): The x coordinate of the starting point
+      y1 (int): The y coordinate of the starting point
+      x2 (int): The x coordinate of the ending point
+      y2 (int): The y coordinate of the ending point
+    }
   """
   sci_hdu = get_hdu(input['basename'], 'SCI')
   
