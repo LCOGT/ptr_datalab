@@ -37,6 +37,7 @@ def get_list_from_env(variable, default=None):
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+TEMP_FITS_DIR = os.getenv('TEMP_FITS_DIR', os.path.join(BASE_DIR, 'tmp/fits/'))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
@@ -101,9 +102,9 @@ TEMPLATES = [
 WSGI_APPLICATION = 'datalab.wsgi.application'
 
 DRAMATIQ_BROKER = {
-    'BROKER': 'dramatiq.brokers.rabbitmq.RabbitmqBroker',
+    'BROKER': os.getenv('DRAMATIQ_BROKER', 'dramatiq.brokers.redis.RedisBroker'),
     'OPTIONS': {
-        'url': os.getenv('DRAMATIQ_BROKER', 'amqp://localhost:5672'),
+        'url': os.getenv('DRAMATIQ_BROKER_URL', 'redis://127.0.0.1:6379'),
     },
     'MIDDLEWARE': [
         'dramatiq.middleware.Prometheus',
@@ -117,9 +118,9 @@ DRAMATIQ_BROKER = {
 }
 
 DRAMATIQ_RESULT_BACKEND = {
-    'BACKEND': 'dramatiq.results.backends.redis.RedisBackend',
+    'BACKEND': os.getenv('DRAMATIQ_RESULT_BACKEND', 'dramatiq.results.backends.redis.RedisBackend'),
     'BACKEND_OPTIONS': {
-        'url': os.getenv('DRAMATIQ_RESULT_BACKEND', 'redis://localhost:6379'),
+        'url': os.getenv('DRAMATIQ_RESULT_BACKEND_URL', 'redis://localhost:6379'),
     },
     'MIDDLEWARE_OPTIONS': {
         'result_ttl': 1000 * 60 * 10
@@ -131,10 +132,14 @@ DRAMATIQ_RESULT_BACKEND = {
 DRAMATIQ_TASKS_DATABASE = 'default'
 
 # AWS S3 Bitbucket
-DATALAB_OPERATION_BUCKET = os.getenv('DATALAB_OPERATION_BUCKET', 'datalab-operation-output-bucket')
+DATALAB_OPERATION_BUCKET = os.getenv('DATALAB_OPERATION_BUCKET', 'datalab-operation-output-lco-global')
 
 # Datalab Archive
-ARCHIVE_API = os.getenv('ARCHIVE_API', 'https://datalab-archive.photonranch.org')
+ARCHIVE_API = os.getenv('ARCHIVE_API', 'https://archive-api.lco.global')
+ARCHIVE_API_TOKEN = os.getenv('ARCHIVE_API_TOKEN')
+if not ARCHIVE_API_TOKEN:
+    print("WARNING: ARCHIVE_API_TOKEN is missing from the environment.")
+    exit()
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
@@ -152,8 +157,8 @@ DATABASES = {
 
 CACHES = {
     'default': {
-        'BACKEND': os.getenv('CACHE_BACKEND', 'django.core.cache.backends.locmem.LocMemCache'),
-        'LOCATION': os.getenv('CACHE_LOCATION', 'main-cache')
+        'BACKEND': os.getenv('CACHE_BACKEND', 'django.core.cache.backends.redis.RedisCache'),
+        'LOCATION': os.getenv('CACHE_LOCATION', 'redis://127.0.0.1:6379')
     }
 }
 
@@ -165,8 +170,8 @@ AUTHENTICATION_BACKENDS = [
 # This project now requires connection to an OAuth server for authenticating users to make changes
 # In the OCS, this would be the Observation Portal backend
 OCS_AUTHENTICATION = {
-    'OAUTH_TOKEN_URL': os.getenv('OAUTH_TOKEN_URL', 'https://observe.photonranch.org/o/token/'),
-    'OAUTH_PROFILE_URL': os.getenv('OAUTH_PROFILE_URL', 'https://observe.photonranch.org/api/profile/'),
+    'OAUTH_TOKEN_URL': os.getenv('OAUTH_TOKEN_URL', 'http://observation-portal-dev.lco.gtn/o/token/'),
+    'OAUTH_PROFILE_URL': os.getenv('OAUTH_PROFILE_URL', 'http://observation-portal-dev.lco.gtn/api/profile/'),
     'OAUTH_CLIENT_ID': os.getenv('OAUTH_CLIENT_ID', ''),
     'OAUTH_CLIENT_SECRET': os.getenv('OAUTH_CLIENT_SECRET', ''),
     'OAUTH_SERVER_KEY': os.getenv('OAUTH_SERVER_KEY', ''),
@@ -229,4 +234,4 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ORIGIN_ALLOW_ALL = True
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = get_list_from_env('CSRF_TRUSTED_ORIGINS', 'http://localhost:8080,http://127.0.0.1:8000,http://127.0.0.1:8001')
+CSRF_TRUSTED_ORIGINS = get_list_from_env('CSRF_TRUSTED_ORIGINS', 'http://localhost:8080,http://127.0.0.1:8000,http://127.0.0.1:8001,http://localhost:8000,')

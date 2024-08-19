@@ -1,19 +1,24 @@
+import dramatiq
 import logging
 
-import dramatiq
-
 from datalab.datalab_session.data_operations.utils import available_operations
-from datalab.datalab_session.util import get_presigned_url, key_exists
+from requests.exceptions import RequestException
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
-#TODO: Perhaps define a pipeline that can take the output of one data operation and upload to a s3 bucket, indicate success, etc...
+# Retry network connection errors 3 times, all other exceptions are not retried
+def should_retry(retries_so_far, exception):
+    return retries_so_far < 3 and isinstance(exception, RequestException)
 
-@dramatiq.actor()
+@dramatiq.actor(retry_when=should_retry)
 def execute_data_operation(data_operation_name: str, input_data: dict):
     operation_class = available_operations().get(data_operation_name)
     if operation_class is None:
         raise NotImplementedError("Operation not implemented!")
     else:
-        operation_class(input_data).operate()
+        try:
+            operation_class(input_data).operate()
+        except Exception as e:
+            log.error(f"Error executing {data_operation_name}: {type(e).__name__}:{e}")
+            operation_class(input_data).set_failed(str(e))

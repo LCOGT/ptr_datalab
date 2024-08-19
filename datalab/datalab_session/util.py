@@ -1,12 +1,16 @@
+import tempfile
 import requests
 import logging
+import os
+import urllib.request
 
 import boto3
 from astropy.io import fits
 import numpy as np
+from botocore.exceptions import ClientError
 
 from django.conf import settings
-from django.core.cache import cache
+from fits2image.conversions import fits_to_jpg
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -22,20 +26,22 @@ def add_file_to_bucket(item_key: str, path: object) -> str:
   Returns:
     A presigned url for the object just added to the bucket
   """
-  log.info(f'Adding {item_key} to {settings.DATALAB_OPERATION_BUCKET}')
-
   s3 = boto3.client('s3')
-  response = s3.upload_file(
-    path,
-    settings.DATALAB_OPERATION_BUCKET,
-    item_key
-  )
+  try:
+    response = s3.upload_file(
+      path,
+      settings.DATALAB_OPERATION_BUCKET,
+      item_key
+    )
+  except ClientError as e:
+    log.error(f'Error uploading the operation output: {e}')
+    raise ClientError(f'Error uploading the operation output')
 
-  return get_presigned_url(item_key)
+  return get_s3_url(item_key)
 
-def get_presigned_url(key: str) -> str:
+def get_s3_url(key: str, bucket: str = settings.DATALAB_OPERATION_BUCKET) -> str:
   """
-  Gets a presigned url from the operation bucket using the key
+  Gets a presigned url from the bucket using the key
 
   Args:
     item_key -- name to look up in the bucket
@@ -49,14 +55,14 @@ def get_presigned_url(key: str) -> str:
     url = s3.generate_presigned_url(
         ClientMethod='get_object',
         Params={
-            'Bucket': settings.DATALAB_OPERATION_BUCKET,
+            'Bucket': bucket,
             'Key': key
         },
         ExpiresIn = 60 * 60 * 24 * 30 # URL will be valid for 30 days
     )
-  except:
-    log.error(f'File {key} not found in bucket')
-    return None
+  except ClientError as e:
+    log.error(f'Could not generate url for {key}: {e}')
+    raise ClientError(f'Could not create url for {key}')
 
   return url
 
@@ -75,7 +81,7 @@ def key_exists(key: str) -> bool:
   response = s3.list_objects_v2(Bucket=settings.DATALAB_OPERATION_BUCKET, Prefix=key, MaxKeys=1)
   return 'Contents' in response
 
-def get_archive_from_basename(basename: str) -> dict:
+def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
   """
   Looks for the key as a prefix in the operations s3 bucket
 
@@ -87,45 +93,129 @@ def get_archive_from_basename(basename: str) -> dict:
   """
   query_params = {'basename_exact': basename }
 
-  response = requests.get(settings.ARCHIVE_API + '/frames/', params=query_params)
+  headers = {
+    'Authorization': f'Token {settings.ARCHIVE_API_TOKEN}'
+  }
+
+  response = requests.get(archive + '/frames/', params=query_params, headers=headers)
 
   try:
+    response.raise_for_status()
     image_data = response.json()
     results = image_data.get('results', None)
-  except IndexError:
-    log.error(f"No image found with specified basename: {basename}")
-    raise FileNotFoundError
+  except requests.HTTPError as e:
+    log.error(f"Error fetching data from the archive: {e}")
+    raise requests.HTTPError(f"Error fetching data from the archive")
+  
+  if not results:
+    raise FileNotFoundError(f"Could not find {basename} in the archive")
 
-  return results
+  fits_url = results[0].get('url', 'No URL found')
+  return fits_url
 
-def get_hdu(basename: str, extension: str = 'SCI') -> list[fits.HDUList]:
+def get_fits(basename: str, source: str = 'archive'):
   """
-  Returns a list of Sci HDUs for the given basenames
+  Returns a Fits File for the given basename from the source
+  """
+  basename = basename.replace('-large', '').replace('-small', '')
+  basename_file_path = os.path.join(settings.TEMP_FITS_DIR, basename)
+
+  # download the file if it isn't already downloaded in our temp directory
+  if not os.path.isfile(basename_file_path):
+
+    # create the tmp directory if it doesn't exist
+    if not os.path.exists(settings.TEMP_FITS_DIR):
+      os.makedirs(settings.TEMP_FITS_DIR)
+
+    match source:
+      case 'archive':
+        fits_url = get_archive_url(basename)
+      case 'datalab':
+        s3_folder_path = f'{basename.split("-")[0]}/{basename}.fits'
+        fits_url = get_s3_url(s3_folder_path)
+      case _:
+        raise ValueError(f"Source {source} not recognized")
+
+    urllib.request.urlretrieve(fits_url, basename_file_path)
+  
+  return basename_file_path
+
+def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> list[fits.HDUList]:
+  """
+  Returns a HDU for the given basename from the source
+  Will download the file to a tmp directory so future calls can open it directly
   Warning: this function returns an opened file that must be closed after use
   """
 
-  # use the basename to fetch and create a list of hdu objects
-  basename = basename.replace('-large', '').replace('-small', '')
+  basename_file_path = get_fits(basename, source)
 
-  archive_record = get_archive_from_basename(basename)
-
+  hdu = fits.open(basename_file_path)
   try:
-    fits_url = archive_record[0].get('url', 'No URL found')
-  except IndexError:
-    RuntimeWarning(f"No image found with specified basename: {basename}")
+    extension = hdu[extension]
+  except KeyError:
+    raise KeyError(f"{extension} Header not found in fits file {basename}")
+  
+  return extension
 
-  hdu = fits.open(fits_url)
-  return hdu[extension]
+def get_fits_dimensions(fits_file, extension: str = 'SCI') -> tuple:
+  return fits.open(fits_file)[extension].shape
 
-def create_fits(key: str, image_arr: np.ndarray) -> fits.HDUList:
+def create_fits(key: str, image_arr: np.ndarray) -> str:
+  """
+  Creates a fits file with the given key and image array
+  Returns the the path to the fits_file
+  """
 
   header = fits.Header([('KEY', key)])
   primary_hdu = fits.PrimaryHDU(header=header)
-  image_hdu = fits.ImageHDU(image_arr)
+  image_hdu = fits.ImageHDU(data=image_arr, name='SCI')
 
   hdu_list = fits.HDUList([primary_hdu, image_hdu])
+  fits_path = tempfile.NamedTemporaryFile(suffix=f'{key}.fits').name
+  hdu_list.writeto(fits_path)
 
-  return hdu_list
+  return fits_path
+
+def create_jpgs(cache_key, fits_paths: str, color=False) -> list:
+    """
+    Create jpgs from fits files and save them to S3
+    If using the color option fits_paths need to be in order R, G, B
+    percent and cur_percent are used to update the progress of the operation
+    """
+
+    if not isinstance(fits_paths, list):
+        fits_paths = [fits_paths]
+
+    # create the jpgs from the fits files
+    large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-large.jpg').name
+    thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-small.jpg').name
+
+    max_height, max_width = max(get_fits_dimensions(path) for path in fits_paths)
+
+    fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color)
+    fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color)
+
+    return large_jpg_path, thumbnail_jpg_path
+
+def save_fits_and_thumbnails(cache_key, fits_path, large_jpg_path, thumbnail_jpg_path, index=None):
+    """
+    Save Fits and Thumbnails in S3 Buckets, Returns the URLs in an output object
+    """
+    bucket_key = f'{cache_key}/{cache_key}-{index}' if index else f'{cache_key}/{cache_key}'
+
+    fits_url            = add_file_to_bucket(f'{bucket_key}.fits', fits_path)
+    large_jpg_url       = add_file_to_bucket(f'{bucket_key}-large.jpg', large_jpg_path)
+    thumbnail_jpg_url   = add_file_to_bucket(f'{bucket_key}-small.jpg', thumbnail_jpg_path)
+    
+    output_file = dict({
+        'fits_url': fits_url,
+        'large_url': large_jpg_url,
+        'thumbnail_url': thumbnail_jpg_url,
+        'basename': f'{cache_key}',
+        'source': 'datalab'}
+    )
+    
+    return output_file
 
 def stack_arrays(array_list: list):
   """
@@ -139,22 +229,25 @@ def stack_arrays(array_list: list):
 
   return stacked
 
-def scale_points(small_img_width: int, small_img_height: int, img_array: list, points: list[tuple[int, int]]):
+def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_points=[], y_points=[], flip_y = False, flip_x = False):
   """
-    Scale the coordinates from a smaller image to the full sized fits so we know the positions of the coords on the 2dnumpy array
-    Returns the list of tuple points with coords scaled for the numpy array
+    Scales x_points and y_points from img_1 height and width to img_2 height and width
+    Optionally flips the points on the x or y axis
   """
+  if any([dim == 0 for dim in [height_1, width_1, height_2, width_2]]):
+    raise ValueError("height and width must be non-zero")
 
-  large_height, large_width = np.shape(img_array)
+  # normalize the points to be lists in case tuples or other are passed
+  x_points = np.array(x_points)
+  y_points = np.array(y_points)
 
-  # If the aspect ratios don't match we can't be certain where the point was
-  if small_img_width / small_img_height != large_width / large_height:
-    raise ValueError("Aspect ratios of the two images must match")
+  x_points = (x_points / width_1 * width_2).astype(int)
+  y_points = (y_points / height_1 * height_2).astype(int)
 
-  width_scale = large_width / small_img_width
-  height_scale = large_height / small_img_height
+  if flip_y:
+    y_points = height_2 - y_points
 
-  points_array = np.array(points)
-  scaled_points = np.int_(points_array * [width_scale, height_scale])
+  if flip_x:
+    x_points = width_2 - x_points
 
-  return scaled_points
+  return x_points, y_points

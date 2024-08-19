@@ -163,3 +163,8 @@ cython_debug/
 .vscode
 .devenv
 .pre-commit-config.yaml
+
+# temp files
+tmp/
+tmp/**/*
+dump.rdb
