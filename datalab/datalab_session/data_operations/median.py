@@ -3,7 +3,8 @@ import logging
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.util import create_fits, stack_arrays, create_jpgs, save_fits_and_thumbnails
+from datalab.datalab_session.file_utils import create_fits, stack_arrays, create_jpgs
+from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
