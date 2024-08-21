@@ -5,6 +5,7 @@ from astropy.io import fits
 import numpy as np
 from fits2image.conversions import fits_to_jpg, fits_to_tif
 
+from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.s3_utils import get_fits, add_file_to_bucket
 
 log = logging.getLogger()
@@ -23,7 +24,7 @@ def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> l
   try:
     extension = hdu[extension]
   except KeyError:
-    raise KeyError(f"{extension} Header not found in fits file {basename}")
+    raise ClientAlertException(f"{extension} Header not found in fits file {basename}")
   
   return extension
 

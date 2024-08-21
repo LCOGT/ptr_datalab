@@ -8,6 +8,8 @@ from botocore.exceptions import ClientError
 
 from django.conf import settings
 
+from datalab.datalab_session.exceptions import ClientAlertException
+
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
@@ -31,7 +33,7 @@ def add_file_to_bucket(item_key: str, path: object) -> str:
     )
   except ClientError as e:
     log.error(f'Error uploading the operation output: {e}')
-    raise ClientError(f'Error uploading the operation output')
+    raise ClientAlertException(f'Error uploading the operation output')
 
   return get_s3_url(item_key)
 
@@ -58,7 +60,7 @@ def get_s3_url(key: str, bucket: str = settings.DATALAB_OPERATION_BUCKET) -> str
     )
   except ClientError as e:
     log.error(f'Could not generate url for {key}: {e}')
-    raise ClientError(f'Could not create url for {key}')
+    raise ClientAlertException(f'Could not create url for {key}')
 
   return url
 
@@ -101,10 +103,10 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
     results = image_data.get('results', None)
   except requests.HTTPError as e:
     log.error(f"Error fetching data from the archive: {e}")
-    raise requests.HTTPError(f"Error fetching data from the archive")
+    raise ClientAlertException(f"Error fetching data from the archive")
   
   if not results:
-    raise FileNotFoundError(f"Could not find {basename} in the archive")
+    raise ClientAlertException(f"Could not find {basename} in the archive")
 
   fits_url = results[0].get('url', 'No URL found')
   return fits_url
@@ -130,7 +132,7 @@ def get_fits(basename: str, source: str = 'archive'):
         s3_folder_path = f'{basename.split("-")[0]}/{basename}.fits'
         fits_url = get_s3_url(s3_folder_path)
       case _:
-        raise ValueError(f"Source {source} not recognized")
+        raise ClientAlertException(f"Source {source} not recognized")
 
     urllib.request.urlretrieve(fits_url, basename_file_path)
   
