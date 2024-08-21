@@ -1,7 +1,6 @@
 import numpy as np
 
-from datalab.datalab_session.util import get_hdu, scale_points
-
+from datalab.datalab_session.file_utils import get_hdu, scale_points
 
 def source_catalog(input: dict):
   """
