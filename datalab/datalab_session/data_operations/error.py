@@ -3,6 +3,7 @@ import logging
 
 from requests.exceptions import RequestException
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
+from datalab.datalab_session.exceptions import ClientAlertException
 
 log=logging.getLogger()
 log.setLevel(logging.INFO)
@@ -47,6 +48,6 @@ class ErrorOperation(BaseDataOperation):
     error_type_name = self.input_data.get('Error Type')
     error_type = getattr(builtins, error_type_name, None)
     if not error_type or not issubclass(error_type, BaseException):
-      raise RequestException(f'Unknown Error Type: {error_type_name}')
+      raise ClientAlertException(f'Unknown Error Type: {error_type_name}')
     else:
       raise error_type(self.input_data.get('Error Message', 'No Error Message, Default Error Message!'))

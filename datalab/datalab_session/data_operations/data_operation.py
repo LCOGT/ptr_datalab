@@ -6,7 +6,7 @@ from django.core.cache import cache
 import numpy as np
 
 from datalab.datalab_session.tasks import execute_data_operation
-from datalab.datalab_session.util import get_hdu
+from datalab.datalab_session.file_utils import get_hdu
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
