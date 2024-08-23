@@ -2,8 +2,7 @@ from skimage.measure import profile_line
 from astropy.wcs import WCS
 from astropy.wcs import WcsError
 
-from datalab.datalab_session.util import scale_points
-from datalab.datalab_session.util import get_hdu
+from datalab.datalab_session.file_utils import scale_points, get_hdu
 
 # For creating an array of brightness along a user drawn line
 def line_profile(input: dict):

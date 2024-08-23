@@ -3,7 +3,9 @@ import logging
 from astropy.io import fits
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.util import get_fits, stack_arrays, create_fits, save_fits_and_thumbnails, create_jpgs
+from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.file_utils import get_fits, stack_arrays, create_fits, create_jpgs
+from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -76,7 +78,7 @@ class RGB_Stack(BaseDataOperation):
             output =  {'output_files': [output_file]}
         else:
             output = {'output_files': []}
-            raise ValueError('RGB Stack operation requires exactly 3 input files')
+            raise ClientAlertException('RGB Stack operation requires exactly 3 input files')
 
         self.set_percent_completion(1.0)
         self.set_output(output)

@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from datalab.datalab_session.data_operations.utils import available_operations
 from datalab.datalab_session.analysis.line_profile import line_profile
 from datalab.datalab_session.analysis.source_catalog import source_catalog
-
+from datalab.datalab_session.analysis.get_tif import get_tif
 
 class OperationOptionsApiView(RetrieveAPIView):
     """ View to retrieve the set of operations available, for the UI to use """
@@ -31,6 +31,8 @@ class AnalysisView(RetrieveAPIView):
                 output = line_profile(input)
             case 'source-catalog':
                 output = source_catalog(input)
+            case 'get-tif':
+                output = get_tif(input)
             case _:
                 raise Exception(f'Analysis action {action} not found')
 

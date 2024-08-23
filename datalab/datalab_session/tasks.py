@@ -4,6 +4,8 @@ import logging
 from datalab.datalab_session.data_operations.utils import available_operations
 from requests.exceptions import RequestException
 
+from datalab.datalab_session.exceptions import ClientAlertException
+
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
@@ -19,6 +21,9 @@ def execute_data_operation(data_operation_name: str, input_data: dict):
     else:
         try:
             operation_class(input_data).operate()
-        except Exception as e:
-            log.error(f"Error executing {data_operation_name}: {type(e).__name__}:{e}")
-            operation_class(input_data).set_failed(str(e))
+        except ClientAlertException as error:
+            log.error(f"Client Error executing {data_operation_name}: {error}")
+            operation_class(input_data).set_failed(str(error))
+        except Exception as error:
+            log.exception(error)
+            operation_class(input_data).set_failed("An unknown error ocurred, contact developers if this persists.")
