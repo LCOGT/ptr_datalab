@@ -16,11 +16,11 @@ spec:
         app.kubernetes.io/component: worker
     spec:
       securityContext:
-        fsGroup: 1
+        fsGroup: 1000
       volumes:
         - name: tmp
-          emptyDir:
-            sizeLimit: 128Mi
+          persistentVolumeClaim:
+            claimName: worker-tmp-pvc
       containers:
         - name: default
           image: datalab
@@ -48,3 +48,12 @@ spec:
             - name: tmp
               mountPath: /tmp
               readOnly: false
+          livenessProbe:
+            initialDelaySeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+            periodSeconds: 30
+            exec:
+              command:
+                - /bin/true

@@ -2,17 +2,20 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../../base/
+- ../../base/
+- ./ns.yaml
+
+namespace: datalab
 
 secretGenerator:
-  - name: env
-    type: Opaque
-    behavior: replace
-    envs:
-      - ./secrets.env
+- behavior: merge
+  envs:
+  - ./secrets.env
+  name: env
+  type: Opaque
 
 configMapGenerator:
-  - name: env
-    behavior: replace
-    envs:
-      - ./settings.env
+- behavior: merge
+  envs:
+  - ./settings.env
+  name: env
