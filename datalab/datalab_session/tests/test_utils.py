@@ -1,53 +1,39 @@
 import pathlib as pl
+from hashlib import md5
 
 from django.test import TestCase
-from PIL import Image
 
 from datalab.datalab_session.file_utils import *
 from datalab.datalab_session.s3_utils import *
-from django.conf import settings
 
-# extending the TestCase class to include a custom assertions
-class TestCaseCustom(TestCase):
+# extending the TestCase class to include a custom assertions for file operations
+class FileExtendedTestCase(TestCase):
     def assertIsFile(self, path):
         if not pl.Path(path).resolve().is_file():
             raise AssertionError("File does not exist: %s" % str(path))
     
-    def assert_images_equal(self, image_1: str, image_2: str):
-      img1 = Image.open(image_1)
-      img2 = Image.open(image_2)
+    def assertFilesEqual(self, image_1: str, image_2: str):
+        with open(image_1, 'rb') as file_1, open(image_2, 'rb') as file_2:
+            self.assertEqual(md5(file_1.read()).hexdigest(), md5(file_2.read()).hexdigest())
 
-      # Convert to same mode and size for comparison
-      img2 = img2.convert(img1.mode)
-      img2 = img2.resize(img1.size)
-
-      sum_sq_diff = np.sum((np.asarray(img1).astype('float') - np.asarray(img2).astype('float'))**2)
-
-      if sum_sq_diff == 0:
-          # Images are exactly the same
-          pass
-      else:
-          normalized_sum_sq_diff = sum_sq_diff / np.sqrt(sum_sq_diff)
-          assert normalized_sum_sq_diff < 0.001
-
-class FileUtilsTestClass(TestCaseCustom):
+class FileUtilsTestClass(FileExtendedTestCase):
 
   def test_get_fits_dimensions(self):
     fits_path = 'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
     self.assertEqual(get_fits_dimensions(fits_path), (100, 100))
 
-  # def test_create_fits(self):
-  #   test_2d_ndarray = np.zeros((10, 10))
-  #   path = create_fits('create_fits_test', test_2d_ndarray)
+  def test_create_fits(self):
+    test_2d_ndarray = np.zeros((10, 10))
+    path = create_fits('create_fits_test', test_2d_ndarray)
 
-  #   # test the file was written out to a path
-  #   self.assertIsInstance(path, str)
-  #   self.assertIsFile(path)
+    # test the file was written out to a path
+    self.assertIsInstance(path, str)
+    self.assertIsFile(path)
     
-  #   # test the file has the right data
-  #   hdu = fits.open(path)
-  #   self.assertEqual(hdu[0].header['KEY'], 'create_fits_test')
-  #   self.assertEqual(hdu[1].data.tolist(), test_2d_ndarray.tolist())
+    # test the file has the right data
+    hdu = fits.open(path)
+    self.assertEqual(hdu[0].header['KEY'], 'create_fits_test')
+    self.assertEqual(hdu[1].data.tolist(), test_2d_ndarray.tolist())
   
   def test_create_tif(self):
     fits_path = 'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
@@ -57,7 +43,7 @@ class FileUtilsTestClass(TestCaseCustom):
     self.assertIsInstance(tif_path, str)
     self.assertIsFile(tif_path)
 
-    self.assert_images_equal(tif_path, 'datalab/datalab_session/tests/test_files/tif_1.tif')
+    self.assertFilesEqual(tif_path, 'datalab/datalab_session/tests/test_files/tif_1.tif')
   
   def test_create_jpgs(self):
     fits_path = 'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
@@ -67,8 +53,8 @@ class FileUtilsTestClass(TestCaseCustom):
     self.assertEqual(len(jpg_paths), 2)
     self.assertIsFile(jpg_paths[0])
     self.assertIsFile(jpg_paths[1])
-    self.assert_images_equal(jpg_paths[0], 'datalab/datalab_session/tests/test_files/jpg_large_1.jpg')
-    self.assert_images_equal(jpg_paths[1], 'datalab/datalab_session/tests/test_files/jpg_small_1.jpg')
+    self.assertFilesEqual(jpg_paths[0], 'datalab/datalab_session/tests/test_files/jpg_large_1.jpg')
+    self.assertFilesEqual(jpg_paths[1], 'datalab/datalab_session/tests/test_files/jpg_small_1.jpg')
   
   def test_stack_arrays(self):
     test_array_1 = np.zeros((10, 20))

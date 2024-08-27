@@ -1,4 +1,5 @@
 from unittest import mock
+from hashlib import md5
 import os
 
 from django.test import TestCase
@@ -153,17 +154,23 @@ class TestDataOperation(TestCase):
         self.assertEqual(self.data_operation.get_message(), 'Test message')
 
 class TestMedianOperation(TestCase):
+    TEST_MEDIAN = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_files', 'median.fits')
 
+    def tearDown(self) -> None:
+        if os.path.exists(self.TEST_MEDIAN):
+            os.remove(self.TEST_MEDIAN)
+        return super().tearDown()
+
+    @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.file_utils.get_fits')
     @mock.patch('datalab.datalab_session.data_operations.median.save_fits_and_thumbnails')
-    def test_operate(self, mock_save_fits_and_thumbnails, mock_get_fits):
-        
-        def return_args(call_args):
-            print(f'ARGS: {call_args}')
-            return call_args[1]
+    @mock.patch('datalab.datalab_session.data_operations.median.create_jpgs')
+    def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
         mock_get_fits.side_effect = ['datalab/datalab_session/tests/test_files/fits_1.fits.fz', 'datalab/datalab_session/tests/test_files/fits_2.fits.fz']
-        mock_save_fits_and_thumbnails.side_effect = return_args(mock_save_fits_and_thumbnails.call_args)
+        mock_named_tempfile.return_value.name = self.TEST_MEDIAN
+        mock_save_fits_and_thumbnails.return_value = self.TEST_MEDIAN
+        mock_create_jpgs.return_value = ('test_path', 'test_path')
 
         input_data = {
             'input_files': [
@@ -180,11 +187,11 @@ class TestMedianOperation(TestCase):
 
         median = Median(input_data)
         median.operate()
+        output = median.get_output().get('output_files')
 
-        output = median.get_output()
-        print(output)
-        
         self.assertEqual(median.get_percent_completion(), 1.0)
+        self.assertTrue(os.path.exists(output[0]))
+        self.assertEqual(md5(open(self.TEST_MEDIAN, 'rb').read()).hexdigest(), md5(open(output[0], 'rb').read()).hexdigest())
 
     def test_not_enough_files(self):
         input_data = {
