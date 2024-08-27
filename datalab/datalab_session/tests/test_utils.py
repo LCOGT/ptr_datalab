@@ -18,8 +18,13 @@ class FileExtendedTestCase(TestCase):
 
 class FileUtilsTestClass(FileExtendedTestCase):
 
+  test_fits = 'datalab/datalab_session/tests/test_files/file_utils/fits_1.fits.fz'
+  test_tif = 'datalab/datalab_session/tests/test_files/file_utils/tif_1.tif'
+  test_small_jpg = 'datalab/datalab_session/tests/test_files/file_utils/jpg_small_1.jpg'
+  test_large_jpg = 'datalab/datalab_session/tests/test_files/file_utils/jpg_large_1.jpg'
+
   def test_get_fits_dimensions(self):
-    fits_path = 'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
+    fits_path = self.test_fits
     self.assertEqual(get_fits_dimensions(fits_path), (100, 100))
 
   def test_create_fits(self):
@@ -36,25 +41,25 @@ class FileUtilsTestClass(FileExtendedTestCase):
     self.assertEqual(hdu[1].data.tolist(), test_2d_ndarray.tolist())
   
   def test_create_tif(self):
-    fits_path = 'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
+    fits_path = self.test_fits
     tif_path = create_tif('create_tif_test', fits_path)
 
     # test the file was written out to a path
     self.assertIsInstance(tif_path, str)
     self.assertIsFile(tif_path)
 
-    self.assertFilesEqual(tif_path, 'datalab/datalab_session/tests/test_files/tif_1.tif')
+    self.assertFilesEqual(tif_path, self.test_tif)
   
   def test_create_jpgs(self):
-    fits_path = 'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
+    fits_path = self.test_fits
     jpg_paths = create_jpgs('create_jpgs_test', fits_path)
 
     # test the files were written out to a path
     self.assertEqual(len(jpg_paths), 2)
     self.assertIsFile(jpg_paths[0])
     self.assertIsFile(jpg_paths[1])
-    self.assertFilesEqual(jpg_paths[0], 'datalab/datalab_session/tests/test_files/jpg_large_1.jpg')
-    self.assertFilesEqual(jpg_paths[1], 'datalab/datalab_session/tests/test_files/jpg_small_1.jpg')
+    self.assertFilesEqual(jpg_paths[0], self.test_large_jpg)
+    self.assertFilesEqual(jpg_paths[1], self.test_small_jpg)
   
   def test_stack_arrays(self):
     test_array_1 = np.zeros((10, 20))

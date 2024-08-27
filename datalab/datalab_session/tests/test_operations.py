@@ -6,6 +6,7 @@ from django.test import TestCase
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 
+from datalab.datalab_session.data_operations.rgb_stack import RGB_Stack
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.data_operations.median import Median
 
@@ -154,11 +155,14 @@ class TestDataOperation(TestCase):
         self.assertEqual(self.data_operation.get_message(), 'Test message')
 
 class TestMedianOperation(TestCase):
-    TEST_MEDIAN = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_files', 'median.fits')
+    temp_median = 'datalab/datalab_session/tests/test_files/median/temp_median.fits'
+    test_median = 'datalab/datalab_session/tests/test_files/median/median_1_2.fits'
+    test_fits_1 = 'datalab/datalab_session/tests/test_files/median/fits_1.fits.fz'
+    test_fits_2 = 'datalab/datalab_session/tests/test_files/median/fits_2.fits.fz'
 
-    def tearDown(self) -> None:
-        if os.path.exists(self.TEST_MEDIAN):
-            os.remove(self.TEST_MEDIAN)
+    def tearDown(self):
+        if os.path.exists(self.temp_median):
+            os.remove(self.temp_median)
         return super().tearDown()
 
     @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
@@ -167,21 +171,15 @@ class TestMedianOperation(TestCase):
     @mock.patch('datalab.datalab_session.data_operations.median.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
-        mock_get_fits.side_effect = ['datalab/datalab_session/tests/test_files/fits_1.fits.fz', 'datalab/datalab_session/tests/test_files/fits_2.fits.fz']
-        mock_named_tempfile.return_value.name = self.TEST_MEDIAN
-        mock_save_fits_and_thumbnails.return_value = self.TEST_MEDIAN
+        mock_get_fits.side_effect = [self.test_fits_1, self.test_fits_2]
+        mock_named_tempfile.return_value.name = self.temp_median
         mock_create_jpgs.return_value = ('test_path', 'test_path')
+        mock_save_fits_and_thumbnails.return_value = self.temp_median
 
         input_data = {
             'input_files': [
-                {
-                    'basename': 'fits_1',
-                    'source': 'local'
-                },
-                {
-                    'basename': 'fits_2',
-                    'source': 'local'
-                }
+                {'basename': 'fits_1','source': 'local'},
+                {'basename': 'fits_2','source': 'local'}
             ]
         }
 
@@ -191,7 +189,7 @@ class TestMedianOperation(TestCase):
 
         self.assertEqual(median.get_percent_completion(), 1.0)
         self.assertTrue(os.path.exists(output[0]))
-        self.assertEqual(md5(open(self.TEST_MEDIAN, 'rb').read()).hexdigest(), md5(open(output[0], 'rb').read()).hexdigest())
+        self.assertEqual(md5(open(self.test_median, 'rb').read()).hexdigest(), md5(open(output[0], 'rb').read()).hexdigest())
 
     def test_not_enough_files(self):
         input_data = {
@@ -205,6 +203,38 @@ class TestMedianOperation(TestCase):
             median.operate()
 
 class TestRGBStackOperation(TestCase):
+    temp_rgb = 'datalab/datalab_session/tests/test_files/rgb_stack/temp_rgb.fits'
+    test_rgb = 'datalab/datalab_session/tests/test_files/rgb_stack/rgb_stack.fits'
+    test_red = 'datalab/datalab_session/tests/test_files/rgb_stack/red.fits'
+    test_green = 'datalab/datalab_session/tests/test_files/rgb_stack/green.fits'
+    test_blue = 'datalab/datalab_session/tests/test_files/rgb_stack/blue.fits'
+
+    def tearDown(self):
+        if os.path.exists(self.temp_rgb):
+            os.remove(self.temp_rgb)
+        return super().tearDown()
     
-    def testTrue(self):
-        self.assertTrue(True)
+    @mock.patch('datalab.datalab_session.data_operations.rgb_stack.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.rgb_stack.create_jpgs')
+    @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
+    @mock.patch('datalab.datalab_session.data_operations.rgb_stack.get_fits')
+    def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_fits_and_thumbnails):
+
+        mock_get_fits.side_effect = [self.test_red, self.test_green, self.test_blue]
+        mock_named_tempfile.return_value.name = self.temp_rgb
+        mock_create_jpgs.return_value = ('test_path', 'test_path')
+        mock_save_fits_and_thumbnails.return_value = self.temp_rgb
+
+        input_data = {
+            'red_input': [{'basename': 'red_fits', 'source': 'local'}],
+            'green_input': [{'basename': 'green_fits', 'source': 'local'}],
+            'blue_input': [{'basename': 'blue_fits', 'source': 'local'}]
+        }
+
+        rgb = RGB_Stack(input_data)
+        rgb.operate()
+        output = rgb.get_output().get('output_files')
+
+        self.assertEqual(rgb.get_percent_completion(), 1.0)
+        self.assertTrue(os.path.exists(output[0]))
+        self.assertEqual(md5(open(self.test_rgb, 'rb').read()).hexdigest(), md5(open(output[0], 'rb').read()).hexdigest())
