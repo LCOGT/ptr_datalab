@@ -1,22 +1,16 @@
+from unittest import mock
+import os
+
 from django.test import TestCase
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 
-class SampleDataOperation(BaseDataOperation):
-    
-    @staticmethod
-    def name():
-        return 'SampleDataOperation'
-    
-    @staticmethod
-    def description():
-        return 'Testing class for DataOperation'
-    
-    @staticmethod
-    def wizard_description():
-        return {
-            'name': SampleDataOperation.name(),
-            'description': SampleDataOperation.description(),
+from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.data_operations.median import Median
+
+wizard_description = {
+            'name': 'SampleDataOperation',
+            'description': 'Testing class for DataOperation',
             'category': 'test',
             'inputs': {
                 'input_files': {
@@ -42,6 +36,20 @@ class SampleDataOperation(BaseDataOperation):
                 }
             }
         }
+
+class SampleDataOperation(BaseDataOperation):
+    
+    @staticmethod
+    def name():
+        return 'SampleDataOperation'
+    
+    @staticmethod
+    def description():
+        return 'Testing class for DataOperation'
+    
+    @staticmethod
+    def wizard_description():
+        return wizard_description
     
     def operate(self):
         self.set_output({'output_files': []})
@@ -121,34 +129,6 @@ class TestDataOperation(TestCase):
         self.assertEqual(self.data_operation.description(), 'Testing class for DataOperation')
     
     def test_wizard_description(self):
-        wizard_description = {
-            'name': 'SampleDataOperation',
-            'description': 'Testing class for DataOperation',
-            'category': 'test',
-            'inputs': {
-                'input_files': {
-                    'name': 'Input Files',
-                    'description': 'The input files to operate on',
-                    'type': 'file',
-                    'minimum': 1,
-                    'maximum': 999
-                },
-                'input_number': {
-                    'name': 'Input Number',
-                    'description': 'The input number to operate on',
-                    'type': 'number',
-                    'minimum': 1,
-                    'maximum': 999
-                },
-                'input_string': {
-                    'name': 'Input String',
-                    'description': 'The input string to operate on',
-                    'type': 'string',
-                    'minimum': 1,
-                    'maximum': 999
-                }
-            }
-        }
         self.assertEqual(self.data_operation.wizard_description(), wizard_description)
     
     def test_operate(self):
@@ -158,21 +138,8 @@ class TestDataOperation(TestCase):
         self.assertEqual(self.data_operation.get_output(), {'output_files': []})
     
     def test_generate_cache_key(self):
-        cache_key = self.data_operation.generate_cache_key()
-        self.assertIsInstance(cache_key, str)
-        self.assertGreater(len(cache_key), 0)
-    
-    def test_set_get_status(self):
-        self.data_operation.set_status('COMPLETED')
-        self.assertEqual(self.data_operation.get_status(), 'COMPLETED')
-
-    def test_set_get_message(self):
-        self.data_operation.set_message('Test message')
-        self.assertEqual(self.data_operation.get_message(), 'Test message')
-    
-    def test_set_get_percent_completion(self):
-        self.data_operation.set_percent_completion(1.0)
-        self.assertEqual(self.data_operation.get_percent_completion(), 1.0)
+        pregenerated_cache_key = '9c8d4f7c82d357c95416c43560d0a1f66f1b2e3cb6a39c0c8a004ee162482ea7'
+        self.assertEqual(self.data_operation.generate_cache_key(), pregenerated_cache_key)
 
     def test_set_get_output(self):
         self.data_operation.set_output({'output_files': []})
@@ -186,9 +153,49 @@ class TestDataOperation(TestCase):
         self.assertEqual(self.data_operation.get_message(), 'Test message')
 
 class TestMedianOperation(TestCase):
-    
-    def testTrue(self):
-        self.assertTrue(True)
+
+    @mock.patch('datalab.datalab_session.file_utils.get_fits')
+    @mock.patch('datalab.datalab_session.data_operations.median.save_fits_and_thumbnails')
+    def test_operate(self, mock_save_fits_and_thumbnails, mock_get_fits):
+        
+        def return_args(call_args):
+            print(f'ARGS: {call_args}')
+            return call_args[1]
+
+        mock_get_fits.side_effect = ['datalab/datalab_session/tests/test_files/fits_1.fits.fz', 'datalab/datalab_session/tests/test_files/fits_2.fits.fz']
+        mock_save_fits_and_thumbnails.side_effect = return_args(mock_save_fits_and_thumbnails.call_args)
+
+        input_data = {
+            'input_files': [
+                {
+                    'basename': 'fits_1',
+                    'source': 'local'
+                },
+                {
+                    'basename': 'fits_2',
+                    'source': 'local'
+                }
+            ]
+        }
+
+        median = Median(input_data)
+        median.operate()
+
+        output = median.get_output()
+        print(output)
+        
+        self.assertEqual(median.get_percent_completion(), 1.0)
+
+    def test_not_enough_files(self):
+        input_data = {
+            'input_files': [
+                {'basename': 'sample_lco_fits_1'}
+            ]
+        }
+        median = Median(input_data)
+        
+        with self.assertRaises(ClientAlertException):
+            median.operate()
 
 class TestRGBStackOperation(TestCase):
     
