@@ -1,14 +1,11 @@
 from unittest import mock
-from hashlib import md5
 import os
 
-from django.test import TestCase
-
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-
 from datalab.datalab_session.data_operations.rgb_stack import RGB_Stack
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.data_operations.median import Median
+from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
 wizard_description = {
             'name': 'SampleDataOperation',
@@ -38,6 +35,7 @@ wizard_description = {
                 }
             }
         }
+test_path = 'datalab/datalab_session/tests/test_files/'
 
 class SampleDataOperation(BaseDataOperation):
     
@@ -56,7 +54,7 @@ class SampleDataOperation(BaseDataOperation):
     def operate(self):
         self.set_output({'output_files': []})
 
-class TestDataOperation(TestCase):
+class TestDataOperation(FileExtendedTestCase):
     def setUp(self):
         input_data = {
             'input_files': [],
@@ -154,15 +152,14 @@ class TestDataOperation(TestCase):
         self.assertEqual(self.data_operation.get_status(), 'FAILED')
         self.assertEqual(self.data_operation.get_message(), 'Test message')
 
-class TestMedianOperation(TestCase):
-    temp_median = 'datalab/datalab_session/tests/test_files/median/temp_median.fits'
-    test_median = 'datalab/datalab_session/tests/test_files/median/median_1_2.fits'
-    test_fits_1 = 'datalab/datalab_session/tests/test_files/median/fits_1.fits.fz'
-    test_fits_2 = 'datalab/datalab_session/tests/test_files/median/fits_2.fits.fz'
+class TestMedianOperation(FileExtendedTestCase):
+    temp_median_path = f'{test_path}temp_median.fits'
+    test_median_path = f'{test_path}median/median_1_2.fits'
+    test_fits_1_path = f'{test_path}median/fits_1.fits.fz'
+    test_fits_2_path = f'{test_path}median/fits_2.fits.fz'
 
     def tearDown(self):
-        if os.path.exists(self.temp_median):
-            os.remove(self.temp_median)
+        self.clean_test_dir()
         return super().tearDown()
 
     @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
@@ -171,10 +168,14 @@ class TestMedianOperation(TestCase):
     @mock.patch('datalab.datalab_session.data_operations.median.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
-        mock_get_fits.side_effect = [self.test_fits_1, self.test_fits_2]
-        mock_named_tempfile.return_value.name = self.temp_median
+        # return the test fits paths in order of the input_files instead of aws fetch
+        mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path]
+        # save temp output to a known path so we can test it
+        mock_named_tempfile.return_value.name = self.temp_median_path
+        # avoids overwriting our output
         mock_create_jpgs.return_value = ('test_path', 'test_path')
-        mock_save_fits_and_thumbnails.return_value = self.temp_median
+        # don't save to s3
+        mock_save_fits_and_thumbnails.return_value = self.temp_median_path
 
         input_data = {
             'input_files': [
@@ -189,7 +190,7 @@ class TestMedianOperation(TestCase):
 
         self.assertEqual(median.get_percent_completion(), 1.0)
         self.assertTrue(os.path.exists(output[0]))
-        self.assertEqual(md5(open(self.test_median, 'rb').read()).hexdigest(), md5(open(output[0], 'rb').read()).hexdigest())
+        self.assertFilesEqual(self.test_median_path, output[0])
 
     def test_not_enough_files(self):
         input_data = {
@@ -202,16 +203,15 @@ class TestMedianOperation(TestCase):
         with self.assertRaises(ClientAlertException):
             median.operate()
 
-class TestRGBStackOperation(TestCase):
-    temp_rgb = 'datalab/datalab_session/tests/test_files/rgb_stack/temp_rgb.fits'
-    test_rgb = 'datalab/datalab_session/tests/test_files/rgb_stack/rgb_stack.fits'
-    test_red = 'datalab/datalab_session/tests/test_files/rgb_stack/red.fits'
-    test_green = 'datalab/datalab_session/tests/test_files/rgb_stack/green.fits'
-    test_blue = 'datalab/datalab_session/tests/test_files/rgb_stack/blue.fits'
+class TestRGBStackOperation(FileExtendedTestCase):
+    temp_rgb_path = f'{test_path}temp_rgb.fits'
+    test_rgb_path = f'{test_path}rgb_stack/rgb_stack.fits'
+    test_red_path = f'{test_path}rgb_stack/red.fits'
+    test_green_path = f'{test_path}rgb_stack/green.fits'
+    test_blue_path = f'{test_path}rgb_stack/blue.fits'
 
     def tearDown(self):
-        if os.path.exists(self.temp_rgb):
-            os.remove(self.temp_rgb)
+        self.clean_test_dir()
         return super().tearDown()
     
     @mock.patch('datalab.datalab_session.data_operations.rgb_stack.save_fits_and_thumbnails')
@@ -220,10 +220,14 @@ class TestRGBStackOperation(TestCase):
     @mock.patch('datalab.datalab_session.data_operations.rgb_stack.get_fits')
     def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_fits_and_thumbnails):
 
-        mock_get_fits.side_effect = [self.test_red, self.test_green, self.test_blue]
-        mock_named_tempfile.return_value.name = self.temp_rgb
+        # return the test fits paths in order of the input_files instead of aws fetch
+        mock_get_fits.side_effect = [self.test_red_path, self.test_green_path, self.test_blue_path]
+        # save temp output to a known path so we can test
+        mock_named_tempfile.return_value.name = self.temp_rgb_path
+        # avoids overwriting our output
         mock_create_jpgs.return_value = ('test_path', 'test_path')
-        mock_save_fits_and_thumbnails.return_value = self.temp_rgb
+        # don't save to s3
+        mock_save_fits_and_thumbnails.return_value = self.temp_rgb_path
 
         input_data = {
             'red_input': [{'basename': 'red_fits', 'source': 'local'}],
@@ -237,4 +241,4 @@ class TestRGBStackOperation(TestCase):
 
         self.assertEqual(rgb.get_percent_completion(), 1.0)
         self.assertTrue(os.path.exists(output[0]))
-        self.assertEqual(md5(open(self.test_rgb, 'rb').read()).hexdigest(), md5(open(output[0], 'rb').read()).hexdigest())
+        self.assertFilesEqual(self.test_rgb_path, output[0])

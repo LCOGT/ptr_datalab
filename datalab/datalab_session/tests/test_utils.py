@@ -1,30 +1,18 @@
-import pathlib as pl
-from hashlib import md5
-
-from django.test import TestCase
-
 from datalab.datalab_session.file_utils import *
 from datalab.datalab_session.s3_utils import *
-
-# extending the TestCase class to include a custom assertions for file operations
-class FileExtendedTestCase(TestCase):
-    def assertIsFile(self, path):
-        if not pl.Path(path).resolve().is_file():
-            raise AssertionError("File does not exist: %s" % str(path))
-    
-    def assertFilesEqual(self, image_1: str, image_2: str):
-        with open(image_1, 'rb') as file_1, open(image_2, 'rb') as file_2:
-            self.assertEqual(md5(file_1.read()).hexdigest(), md5(file_2.read()).hexdigest())
+from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
 class FileUtilsTestClass(FileExtendedTestCase):
 
-  test_fits = 'datalab/datalab_session/tests/test_files/file_utils/fits_1.fits.fz'
-  test_tif = 'datalab/datalab_session/tests/test_files/file_utils/tif_1.tif'
-  test_small_jpg = 'datalab/datalab_session/tests/test_files/file_utils/jpg_small_1.jpg'
-  test_large_jpg = 'datalab/datalab_session/tests/test_files/file_utils/jpg_large_1.jpg'
+  util_test_path = 'datalab/datalab_session/tests/test_files/file_utils/'
+
+  test_fits_path = f'{util_test_path}fits_1.fits.fz'
+  test_tif_path = f'{util_test_path}tif_1.tif'
+  test_small_jpg_path = f'{util_test_path}jpg_small_1.jpg'
+  test_large_jpg_path = f'{util_test_path}jpg_large_1.jpg'
 
   def test_get_fits_dimensions(self):
-    fits_path = self.test_fits
+    fits_path = self.test_fits_path
     self.assertEqual(get_fits_dimensions(fits_path), (100, 100))
 
   def test_create_fits(self):
@@ -41,25 +29,25 @@ class FileUtilsTestClass(FileExtendedTestCase):
     self.assertEqual(hdu[1].data.tolist(), test_2d_ndarray.tolist())
   
   def test_create_tif(self):
-    fits_path = self.test_fits
+    fits_path = self.test_fits_path
     tif_path = create_tif('create_tif_test', fits_path)
 
     # test the file was written out to a path
     self.assertIsInstance(tif_path, str)
     self.assertIsFile(tif_path)
 
-    self.assertFilesEqual(tif_path, self.test_tif)
+    self.assertFilesEqual(tif_path, self.test_tif_path)
   
   def test_create_jpgs(self):
-    fits_path = self.test_fits
+    fits_path = self.test_fits_path
     jpg_paths = create_jpgs('create_jpgs_test', fits_path)
 
     # test the files were written out to a path
     self.assertEqual(len(jpg_paths), 2)
     self.assertIsFile(jpg_paths[0])
     self.assertIsFile(jpg_paths[1])
-    self.assertFilesEqual(jpg_paths[0], self.test_large_jpg)
-    self.assertFilesEqual(jpg_paths[1], self.test_small_jpg)
+    self.assertFilesEqual(jpg_paths[0], self.test_large_jpg_path)
+    self.assertFilesEqual(jpg_paths[1], self.test_small_jpg_path)
   
   def test_stack_arrays(self):
     test_array_1 = np.zeros((10, 20))
