@@ -30,6 +30,9 @@ def line_profile(input: dict):
   try: 
     wcs = WCS(sci_hdu.header)
 
+    if(wcs.get_axis_types()[0].get('coordinate_type') == None):
+      raise WcsError("No valid WCS solution")
+
     start_sky_coord = wcs.pixel_to_world(x_points[0], y_points[0])
     end_sky_coord = wcs.pixel_to_world(x_points[1], y_points[1])
 
@@ -37,13 +40,16 @@ def line_profile(input: dict):
 
     start_coords = [start_sky_coord.ra.deg, start_sky_coord.dec.deg]
     end_coords = [end_sky_coord.ra.deg, end_sky_coord.dec.deg]
-
-  except WcsError as e:
-    error = f'{input["basename"]} does not have a valid WCS header'
-    print(error, e)
-    # if theres no valid WCS solution then we default to using pixscale to calculate the angle, and no coordinates
+  except WcsError:
+    # no valid WCS solution
     start_coords = None
     end_coords = None
-    arcsec_angle = len(line_profile) * sci_hdu.header["PIXSCALE"]
+
+    try:
+      # attempt using pixscale to calculate the angle
+      arcsec_angle = len(line_profile) * sci_hdu.header["PIXSCALE"]
+    except KeyError as e:
+      # no valid WCS solution, and no pixscale
+      arcsec_angle = None
 
   return {"line_profile": line_profile, "arcsec": arcsec_angle, "start_coords": start_coords, "end_coords": end_coords}
