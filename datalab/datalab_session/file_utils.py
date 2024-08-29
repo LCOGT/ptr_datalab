@@ -81,15 +81,15 @@ def create_jpgs(cache_key, fits_paths: str, color=False) -> list:
 
 def stack_arrays(array_list: list):
   """
-  Takes a list of numpy arrays, crops them to an equal shape, and stacks them to be a 3d numpy array
-
+  Takes a list of numpy arrays from fits images and stacks them to be a 3d numpy array
+  cropped since fits images can be different sizes
   """
-  min_shape = min(arr.shape for arr in array_list)
-  cropped_data_list = [arr[:min_shape[0], :min_shape[1]] for arr in array_list]
+  min_x = min(arr.shape[0] for arr in array_list)
+  min_y = min(arr.shape[1] for arr in array_list)
 
-  stacked = np.stack(cropped_data_list, axis=2)
+  cropped_data_list = [arr[:min_x, :min_y] for arr in array_list]
 
-  return stacked
+  return np.stack(cropped_data_list, axis=2)
 
 def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_points=[], y_points=[], flip_y = False, flip_x = False):
   """
