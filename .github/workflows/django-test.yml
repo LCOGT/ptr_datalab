@@ -1,0 +1,23 @@
+name: Django Test
+
+on:
+  push:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v3
+    - name: Install Poetry
+      run: python -m pip install --user poetry
+    - name: Install Dependencies
+      run: poetry install --no-interaction --no-root
+    - name: Run Tests
+      run: python manage.py test
