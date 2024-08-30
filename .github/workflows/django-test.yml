@@ -21,7 +21,10 @@ jobs:
         source venv/bin/activate
     - name: Install Poetry
       run: |
-        python3 -m pip install --user poetry
+        python3 -m pip install poetry
+    - name: Install Django
+      run: |
+        python3 -m pip install django
     - name: Install Dependencies
       run: |
         poetry install --no-interaction --no-root
