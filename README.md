@@ -47,7 +47,7 @@ Then to develop, run these commands:
 -   `nix develop --impure` to start your nix development environment - **called anytime you use a new terminal**
 -   `ctlptl apply -f local-registry.yaml -f local-cluster.yaml` to start up the registry and cluster - **should only need to be called one time within the nix environment**
 -   `skaffold dev -m deps` to start the dependencies - **run this in a different tab to keep running during development or use 'run' instead of 'dev'**
--   configure the `./k8s/envs/local/secrets.env` values for connecting to the appropriate services.
+-   Copy `./k8s/envs/local/secrets.env.changeme` to a version without `.changeme` and fill in values for connecting to the appropriate services.
 -   `skaffold dev -m app --port-forward` to start the servers and worker. This will auto-redeploy as you make changes to the code.
 
 ### Connecting a frontend
