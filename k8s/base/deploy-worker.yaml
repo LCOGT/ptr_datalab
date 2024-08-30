@@ -19,8 +19,9 @@ spec:
         fsGroup: 1000
       volumes:
         - name: tmp
-          persistentVolumeClaim:
-            claimName: worker-tmp-pvc
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
       containers:
         - name: default
           image: datalab

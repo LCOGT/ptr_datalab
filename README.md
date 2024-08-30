@@ -42,14 +42,11 @@ Now start your server
 ### Nix development
 For this mode of development, you must install:
 -   nix with flakes support
--   kind
--   skaffold
 
 Then to develop, run these commands:
 -   `nix develop --impure` to start your nix development environment - **called anytime you use a new terminal**
--   `kind create cluster --config ./local-cluster.yaml` to create the cluster - **should only need to be called one time within the nix environment**
 -   `ctlptl apply -f local-registry.yaml -f local-cluster.yaml` to start up the registry and cluster - **should only need to be called one time within the nix environment**
--   `skaffold dev -m deps` to start the dependencies - **run this in a different tab to keep running during development**
+-   `skaffold dev -m deps` to start the dependencies - **run this in a different tab to keep running during development or use 'run' instead of 'dev'**
 -   configure the `./k8s/envs/local/secrets.env` values for connecting to the appropriate services.
 -   `skaffold dev -m app --port-forward` to start the servers and worker. This will auto-redeploy as you make changes to the code.
 

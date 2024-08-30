@@ -36,6 +36,9 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Local dev secrets
+k8s/envs/local/secrets.env
+
 # Unit test / coverage reports
 htmlcov/
 .tox/

@@ -6,8 +6,6 @@ resources:
   - ./svc-server.yaml
   - ./deploy-static.yaml
   - ./svc-static.yaml
-  - ./pv.yaml
-  - ./pvc.yaml
   - ./deploy-worker.yaml
 
 labels:
