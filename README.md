@@ -3,7 +3,7 @@
 This application is the backend server for the PhotonRanch Datalab. It is a django application with a REST API for communicating with the Datalab UI.
 
 ## Prerequisites
--   Python >= 3.9
+-   Python >= 3.11 <= 3.12 find_module() deprecated
 -   Django >= 4
 
 
