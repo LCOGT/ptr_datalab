@@ -23,6 +23,8 @@ jobs:
         python -m pip install poetry
         poetry env info
         poetry install
+    - name: actions-setup-redis
+      uses: shogo82148/actions-setup-redis@v1.35.1
     - name: Run Tests
       run: |
         poetry run python manage.py test
