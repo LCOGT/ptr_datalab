@@ -30,12 +30,12 @@ operations_router.register(r'operations', DataOperationViewSet, basename='datase
 api_urlpatterns = ([
     re_path(r'^', include(router.urls)),
     re_path(r'^', include(operations_router.urls)),
+    path(r'analysis/<slug:action>/', AnalysisView.as_view(), name='analysis'),
+    path('available_operations/', OperationOptionsApiView.as_view(), name='available_operations')
 ], 'api')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     re_path(r'^api/', include(api_urlpatterns)),
-    path(r'api/analysis/<slug:action>/', AnalysisView.as_view(), name='analysis'),
-    path('api/available_operations/', OperationOptionsApiView.as_view(), name='available_operations'),
     re_path(r'^authprofile/', include(authprofile_urls)),
 ]

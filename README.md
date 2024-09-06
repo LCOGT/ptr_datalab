@@ -21,10 +21,6 @@ The project is configured to use a local sqlite database. You can change that to
 ```
     ./manage.py migrate
 ```
-Get your auth token from the UI by signing in with your LCO credentials and checking your cookies for an auth-token. Once you have it export it to your dev enviorment like
-```
-    export ARCHIVE_API_TOKEN=<your-auth-token>
-```
 Start up a Redis Server that will faciliate caching as well as the rabbitmq queue. To do this make sure you have Redis installed and then start a server at port 6379
 ```
     redis-server

@@ -7,7 +7,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from django.conf import settings
-
+from django.core.cache import cache
 from datalab.datalab_session.exceptions import ClientAlertException
 
 log = logging.getLogger()
@@ -92,7 +92,7 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
   query_params = {'basename_exact': basename }
 
   headers = {
-    'Authorization': f'Token {settings.ARCHIVE_API_TOKEN}'
+    'Authorization': cache.get('archive_token'),
   }
 
   response = requests.get(archive + '/frames/', params=query_params, headers=headers)
