@@ -171,3 +171,4 @@ cython_debug/
 tmp/
 tmp/**/*
 dump.rdb
+local-kubeconfig
