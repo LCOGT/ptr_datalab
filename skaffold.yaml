@@ -1,0 +1,64 @@
+apiVersion: skaffold/v4beta10
+kind: Config
+metadata:
+  name: deps
+deploy:
+  helm:
+    releases:
+      - name: redis
+        remoteChart: oci://registry-1.docker.io/bitnamicharts/redis
+        version: 19.1.0
+        namespace: datalab-web-deps
+        createNamespace: true
+        setValues:
+          architecture: standalone
+          auth.enabled: false
+          master.persistence.enabled: false
+
+      - name: postgresql
+        remoteChart: oci://registry-1.docker.io/bitnamicharts/postgresql
+        version: 12.12.10
+        namespace: datalab-web-deps
+        createNamespace: true
+        setValues:
+          architecture: standalone
+          primary.persistence.size: 2Gi
+          auth:
+            database: datalab
+            username: datalab
+            password: changeme
+---
+
+apiVersion: skaffold/v4beta10
+kind: Config
+metadata:
+  name: app
+requires:
+  - configs:
+    - app-image
+manifests:
+  kustomize:
+    paths:
+      - k8s/envs/local/
+deploy:
+  kubectl: {}
+  logs:
+    prefix: podAndContainer
+
+---
+
+apiVersion: skaffold/v4beta10
+kind: Config
+metadata:
+  name: app-image
+build:
+  tagPolicy:
+    gitCommit:
+      variant: Tags
+  artifacts:
+    - image: datalab
+      custom:
+        buildCommand: skaffold-builder-buildx
+        dependencies:
+          dockerfile:
+            path: Dockerfile

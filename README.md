@@ -8,6 +8,7 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
 
 
 ## Local Development
+### Bare Metal
 Start by creating a virtualenv for this project and entering it: 
 ```
     python -m venv /path/to/my/virtualenv
@@ -37,6 +38,23 @@ Now start your server
 ```
     ./manage.py runserver
 ```
+
+### Nix development
+For this mode of development, you must install:
+-   nix with flakes support
+
+Then to develop, run these commands:
+-   `nix develop --impure` to start your nix development environment - **called anytime you use a new terminal**
+-   `ctlptl apply -f local-registry.yaml -f local-cluster.yaml` to start up the registry and cluster - **should only need to be called one time within the nix environment**
+-   `skaffold dev -m deps` to start the dependencies - **run this in a different tab to keep running during development or use 'run' instead of 'dev'**
+-   Copy `./k8s/envs/local/secrets.env.changeme` to a version without `.changeme` and fill in values for connecting to the appropriate services.
+-   `skaffold dev -m app --port-forward` to start the servers and worker. This will auto-redeploy as you make changes to the code.
+
+### Connecting a frontend
+You can also run a local [datalab-ui](https://github.com/LCOGT/datalab-ui) to connect to your datalab. Assuming you've cloned that repo:
+-   Change the `./public/config/config.json` "datalabApiBaseUrl" to be `http://127.0.0.1:8080/api/` or wherever your backend is deployed to
+-   `npm install` to install the libraries
+-   `npm run serve` to run the server at `http://127.0.0.1:8081` assuming your backend was already running (otherwise it will try to be :8080)
 
 ## API Structure
 The application has a REST API with the following endpoints you can use. You must pass your user's API token in the request header to access any of the endpoints - the headers looks like `{'Authorization': 'Token 123456789abcdefg'}` if you are using python's requests library.
@@ -105,9 +123,4 @@ Available Operations are introspected from the `data_operations` directory and m
 `DELETE /api/datasessions/datasession_id/operations/operation_id/`
 
 ## ROADMAP
-* Come up with operation `wizard_description` format and add endpoint to get them for all available operations so the frontend can auto-create UI wizards for new operations.
-* Figure out user accounts between PTR and datalab - datalab needs user accounts for permissions to gate access to only your own sessions.
-* Implement operations to actually do something when they are added to a session
-    * Figure out caching and storage of intermediate results
-    * Figure out asynchronous task queue or temporal for executing operations
-    * Add in operation results/status to the serialized operations output (maybe to the model too as needed)
+* TBD

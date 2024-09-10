@@ -15,6 +15,8 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
+from django.conf import settings
 from django.urls import path, re_path, include
 from rest_framework_nested import routers
 import ocs_authentication.auth_profile.urls as authprofile_urls
@@ -39,3 +41,6 @@ urlpatterns = [
     path('api/available_operations/', OperationOptionsApiView.as_view(), name='available_operations'),
     re_path(r'^authprofile/', include(authprofile_urls)),
 ]
+
+if settings.DEBUG:
+    urlpatterns += staticfiles_urlpatterns()
