@@ -47,6 +47,7 @@ def line_profile(input: dict):
     # no valid WCS solution
     start_coords = None
     end_coords = None
+    position_angle = None
 
     try:
       # attempt using pixscale to calculate the angle
