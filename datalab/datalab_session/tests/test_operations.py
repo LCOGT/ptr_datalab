@@ -335,7 +335,6 @@ class TestStackOperation(FileExtendedTestCase):
 
         # test that the output file (self.temp_stacked_path) is a blank image
         output_hdul = fits.open(self.temp_stacked_path)
-        print(output_hdul['SCI'].data)
         self.assertTrue(np.sum(output_hdul['SCI'].data == 0))
 
     def test_not_enough_files(self):
