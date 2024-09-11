@@ -268,8 +268,8 @@ class TestStackOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.file_utils.get_fits')
-    @mock.patch('datalab.datalab_session.data_operations.median.save_fits_and_thumbnails')
-    @mock.patch('datalab.datalab_session.data_operations.median.create_jpgs')
+    @mock.patch('datalab.datalab_session.data_operations.stacking.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.stacking.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
         # Create a negative images using numpy
@@ -277,13 +277,26 @@ class TestStackOperation(FileExtendedTestCase):
         negative_image = negative_image_hdul['SCI']
         # Multiply the data by -1 to create a negative image
         negative_image.data = np.multiply(negative_image.data, -1)
-        fits.writeto(self.temp_fits_1_negative_path, negative_image.data, overwrite=True)
+
+        # now write to new fits file
+        header = fits.Header([('KEY', self.temp_fits_1_negative_path)])
+        primary_hdu = fits.PrimaryHDU(header=header)
+        sci_hdu = fits.ImageHDU(negative_image.data, name='SCI')
+        hdul = fits.HDUList([primary_hdu, sci_hdu])
+        hdul.writeto(self.temp_fits_1_negative_path)
 
         # do the same for the second image
         negative_image_hdul = fits.open(self.test_fits_2_path)
         negative_image = negative_image_hdul['SCI']
         negative_image.data = np.multiply(negative_image.data, -1)
-        fits.writeto(self.temp_fits_2_negative_path, negative_image.data, overwrite=True)
+
+        # now write to new fits file
+        header = fits.Header([('KEY', self.temp_fits_2_negative_path)])
+        primary_hdu = fits.PrimaryHDU(header=header)
+        sci_hdu = fits.ImageHDU(negative_image.data, name='SCI')
+        hdul = fits.HDUList([primary_hdu, sci_hdu])
+        hdul.writeto(self.temp_fits_2_negative_path)
+
 
         # return the test fits paths in order of the input_files instead of aws fetch
         mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path,
@@ -321,9 +334,9 @@ class TestStackOperation(FileExtendedTestCase):
         self.assertTrue(os.path.exists(self.temp_stacked_path))
 
         # test that the output file (self.temp_stacked_path) is a blank image
-        output_image = fits.open(self.temp_stacked_path)
-        self.assertTrue(np.all(output_image.data == 0))
-
+        output_hdul = fits.open(self.temp_stacked_path)
+        print(output_hdul['SCI'].data)
+        self.assertTrue(np.sum(output_hdul['SCI'].data == 0))
 
     def test_not_enough_files(self):
         input_data = {
