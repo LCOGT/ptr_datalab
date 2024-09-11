@@ -26,8 +26,8 @@ The output is a stacked image for the n input images. This operation is commonly
     @staticmethod
     def wizard_description():
         description = {
-            'name': Median.name(),
-            'description': Median.description(),
+            'name': Stack.name(),
+            'description': Stack.description(),
             'category': 'image',
             'inputs': {
                 'input_files': {
