@@ -11,7 +11,7 @@ log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 
-class Median(BaseDataOperation):
+class Stack(BaseDataOperation):
     
     @staticmethod
     def name():
