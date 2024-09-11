@@ -68,11 +68,11 @@ class Subtraction(BaseDataOperation):
         self.set_percent_completion(.10)
 
         outputs = []
-        for x in input_image_data_list:
-            o = np.subtract(x, subtraction_image)
+        for index, input_image in enumerate(input_image_data_list):
+            o = np.subtract(input_image, subtraction_image)
             fits_file = create_fits(self.cache_key, o)
             large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_file)
-            output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path)
+            output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path, index)
             outputs.append(output_file)
 
 
