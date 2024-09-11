@@ -274,11 +274,12 @@ class TestStackOperation(FileExtendedTestCase):
 
         # Create a negative images using numpy
         negative_image = fits.open(self.test_fits_1_path)
-        negative_image.data = np.mult(negative_image.data, -1)
+        # Multiply the data by -1 to create a negative image
+        negative_image.data = np.multiply(negative_image.data, -1)
         fits.writeto(self.temp_fits_1_negative_path, negative_image, overwrite=True)
 
         negative_image = fits.open(self.test_fits_2_path)
-        negative_image.data = np.mult(negative_image.data, -1)
+        negative_image.data = np.multiply(negative_image.data, -1)
         fits.writeto(self.temp_fits_2_negative_path, negative_image, overwrite=True)
 
         # return the test fits paths in order of the input_files instead of aws fetch
