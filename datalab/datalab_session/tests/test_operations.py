@@ -273,14 +273,17 @@ class TestStackOperation(FileExtendedTestCase):
     def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
         # Create a negative images using numpy
-        negative_image = fits.open(self.test_fits_1_path)
+        negative_image_hdul = fits.open(self.test_fits_1_path)
+        negative_image = negative_image_hdul['SCI']
         # Multiply the data by -1 to create a negative image
         negative_image.data = np.multiply(negative_image.data, -1)
-        fits.writeto(self.temp_fits_1_negative_path, negative_image, overwrite=True)
+        fits.writeto(self.temp_fits_1_negative_path, negative_image.data, overwrite=True)
 
-        negative_image = fits.open(self.test_fits_2_path)
+        # do the same for the second image
+        negative_image_hdul = fits.open(self.test_fits_2_path)
+        negative_image = negative_image_hdul['SCI']
         negative_image.data = np.multiply(negative_image.data, -1)
-        fits.writeto(self.temp_fits_2_negative_path, negative_image, overwrite=True)
+        fits.writeto(self.temp_fits_2_negative_path, negative_image.data, overwrite=True)
 
         # return the test fits paths in order of the input_files instead of aws fetch
         mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path,
