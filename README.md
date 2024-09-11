@@ -49,6 +49,7 @@ Then to develop, run these commands:
 -   `skaffold dev -m deps` to start the dependencies - **run this in a different tab to keep running during development or use 'run' instead of 'dev'**
 -   Copy `./k8s/envs/local/secrets.env.changeme` to a version without `.changeme` and fill in values for connecting to the appropriate services.
 -   `skaffold dev -m app --port-forward` to start the servers and worker. This will auto-redeploy as you make changes to the code.
+-   Once running you will need to initialize your account with the server before using the API - the easiest way to do this is to login one time to the admin interface at `http://127.0.0.1:8080/admin`
 
 ### Connecting a frontend
 You can also run a local [datalab-ui](https://github.com/LCOGT/datalab-ui) to connect to your datalab. Assuming you've cloned that repo:
