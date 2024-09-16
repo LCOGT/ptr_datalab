@@ -1,6 +1,7 @@
 from skimage.measure import profile_line
 from astropy.wcs import WCS
 from astropy.wcs import WcsError
+from astropy import coordinates
 
 from datalab.datalab_session.file_utils import scale_points, get_hdu
 
@@ -19,15 +20,15 @@ def line_profile(input: dict):
     }
   """
   sci_hdu = get_hdu(input['basename'], 'SCI')
-  
+
   x_points, y_points = scale_points(input["height"], input["width"], sci_hdu.data.shape[0], sci_hdu.data.shape[1], x_points=[input["x1"], input["x2"]], y_points=[input["y1"], input["y2"]])
-  
+
   # Line profile and distance in arcseconds
   line_profile = profile_line(sci_hdu.data, (x_points[0], y_points[0]), (x_points[1], y_points[1]), mode="constant", cval=-1)
-  
 
-  # Calculations for coordinates and angular distance
-  try: 
+
+  # Calculates for coordinates, angular distance, and position angle
+  try:
     wcs = WCS(sci_hdu.header)
 
     if(wcs.get_axis_types()[0].get('coordinate_type') == None):
@@ -36,14 +37,21 @@ def line_profile(input: dict):
     start_sky_coord = wcs.pixel_to_world(x_points[0], y_points[0])
     end_sky_coord = wcs.pixel_to_world(x_points[1], y_points[1])
 
+    # Angular distance
     arcsec_angle = start_sky_coord.separation(end_sky_coord).arcsecond
 
+    # Coordinates
     start_coords = [start_sky_coord.ra.deg, start_sky_coord.dec.deg]
     end_coords = [end_sky_coord.ra.deg, end_sky_coord.dec.deg]
+
+    # Position angle
+    position_angle = coordinates.position_angle(start_sky_coord.ra, start_sky_coord.dec,
+                                                end_sky_coord.ra, end_sky_coord.dec).deg
   except WcsError:
     # no valid WCS solution
     start_coords = None
     end_coords = None
+    position_angle = None
 
     try:
       # attempt using pixscale to calculate the angle
@@ -52,4 +60,4 @@ def line_profile(input: dict):
       # no valid WCS solution, and no pixscale
       arcsec_angle = None
 
-  return {"line_profile": line_profile, "arcsec": arcsec_angle, "start_coords": start_coords, "end_coords": end_coords}
+  return {"line_profile": line_profile, "arcsec": arcsec_angle, "start_coords": start_coords, "end_coords": end_coords, "position_angle": position_angle}
