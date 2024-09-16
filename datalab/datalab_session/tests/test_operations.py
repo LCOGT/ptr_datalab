@@ -1,10 +1,7 @@
 from unittest import mock
 import os
 
-import astropy.io
-
 from astropy.io import fits
-
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
@@ -164,8 +161,8 @@ class TestDataOperation(FileExtendedTestCase):
 class TestMedianOperation(FileExtendedTestCase):
     temp_median_path = f'{test_path}temp_median.fits'
     test_median_path = f'{test_path}median/median_1_2.fits'
-    test_fits_1_path = f'{test_path}median/fits_1.fits.fz'
-    test_fits_2_path = f'{test_path}median/fits_2.fits.fz'
+    test_fits_1_path = f'{test_path}fits_1.fits.fz'
+    test_fits_2_path = f'{test_path}fits_2.fits.fz'
 
     def tearDown(self):
         self.clean_test_dir()
@@ -212,6 +209,7 @@ class TestMedianOperation(FileExtendedTestCase):
         with self.assertRaises(ClientAlertException):
             median.operate()
 
+
 class TestRGBStackOperation(FileExtendedTestCase):
     temp_rgb_path = f'{test_path}temp_rgb.fits'
     test_rgb_path = f'{test_path}rgb_stack/rgb_stack.fits'
@@ -255,8 +253,8 @@ class TestRGBStackOperation(FileExtendedTestCase):
 
 class TestStackOperation(FileExtendedTestCase):
     # this test should work on any fits files, so we just grab from what's there already
-    test_fits_1_path = f'{test_path}median/fits_1.fits.fz'
-    test_fits_2_path = f'{test_path}median/fits_2.fits.fz'
+    test_fits_1_path = f'{test_path}fits_1.fits.fz'
+    test_fits_2_path = f'{test_path}fits_2.fits.fz'
 
     temp_stacked_path = f'{test_path}temp_stacked.fits'  # temp output path
     temp_fits_1_negative_path = f'{test_path}temp_fits_1_negative.fits'

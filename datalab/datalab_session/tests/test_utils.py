@@ -6,7 +6,7 @@ class FileUtilsTestClass(FileExtendedTestCase):
 
   util_test_path = 'datalab/datalab_session/tests/test_files/file_utils/'
 
-  test_fits_path = f'{util_test_path}fits_1.fits.fz'
+  test_fits_path = f'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
   test_tif_path = f'{util_test_path}tif_1.tif'
   test_small_jpg_path = f'{util_test_path}jpg_small_1.jpg'
   test_large_jpg_path = f'{util_test_path}jpg_large_1.jpg'
