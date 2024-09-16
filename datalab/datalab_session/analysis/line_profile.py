@@ -27,7 +27,7 @@ def line_profile(input: dict):
   line_profile = profile_line(sci_hdu.data, (x_points[0], y_points[0]), (x_points[1], y_points[1]), mode="constant", cval=-1)
 
 
-  # Calculations for coordinates and angular distance
+  # Calculates for coordinates, angular distance, and position angle
   try:
     wcs = WCS(sci_hdu.header)
 
@@ -37,10 +37,14 @@ def line_profile(input: dict):
     start_sky_coord = wcs.pixel_to_world(x_points[0], y_points[0])
     end_sky_coord = wcs.pixel_to_world(x_points[1], y_points[1])
 
+    # Angular distance
     arcsec_angle = start_sky_coord.separation(end_sky_coord).arcsecond
 
+    # Coordinates
     start_coords = [start_sky_coord.ra.deg, start_sky_coord.dec.deg]
     end_coords = [end_sky_coord.ra.deg, end_sky_coord.dec.deg]
+
+    # Position angle
     position_angle = coordinates.position_angle(start_sky_coord.ra, start_sky_coord.dec,
                                                 end_sky_coord.ra, end_sky_coord.dec).deg
   except WcsError:
