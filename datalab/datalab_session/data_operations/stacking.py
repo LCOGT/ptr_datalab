@@ -4,7 +4,7 @@ import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.file_utils import create_fits, stack_arrays, create_jpgs
+from datalab.datalab_session.file_utils import create_fits, crop_arrays, create_jpgs
 from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
 
 log = logging.getLogger()
@@ -54,7 +54,8 @@ The output is a stacked image for the n input images. This operation is commonly
 
         self.set_percent_completion(0.4)
 
-        stacked_data = stack_arrays(image_data_list)
+        cropped_data = crop_arrays(image_data_list)
+        stacked_data = np.stack(cropped_data, axis=2)
 
         self.set_percent_completion(0.6)
 
