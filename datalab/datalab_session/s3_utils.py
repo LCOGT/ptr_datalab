@@ -152,7 +152,7 @@ def save_fits_and_thumbnails(cache_key, fits_path, large_jpg_path, thumbnail_jpg
         'fits_url': fits_url,
         'large_url': large_jpg_url,
         'thumbnail_url': thumbnail_jpg_url,
-        'basename': f'{cache_key}',
+        'basename': f'{cache_key}-{index}' if index else cache_key,
         'source': 'datalab'}
     )
     
