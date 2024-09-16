@@ -1,10 +1,11 @@
 import logging
 
 from astropy.io import fits
+import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.file_utils import get_fits, stack_arrays, create_fits, create_jpgs
+from datalab.datalab_session.file_utils import get_fits, crop_arrays, create_fits, create_jpgs
 from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
 
 log = logging.getLogger()
@@ -70,7 +71,9 @@ class RGB_Stack(BaseDataOperation):
 
             # color photos take three files, so we store it as one fits file with a 3d SCI ndarray
             arrays = [fits.open(file)['SCI'].data for file in fits_paths]
-            stacked_data = stack_arrays(arrays)
+            cropped_data_list = crop_arrays(arrays)
+            stacked_data = np.stack(cropped_data_list, axis=2)
+            
             fits_file = create_fits(self.cache_key, stacked_data)
 
             output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path)
