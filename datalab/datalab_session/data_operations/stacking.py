@@ -50,12 +50,18 @@ The output is a stacked image for the n input images. This operation is commonly
 
         log.info(f'Executing stacking operation on {len(input_files)} files')
 
-        image_data_list = self.get_fits_npdata(input_files, percent=0.4, cur_percent=0.0)
+        image_data_list = self.get_fits_npdata(input_files)
+
+        self.set_percent_completion(0.4)
 
         stacked_data = stack_arrays(image_data_list)
 
+        self.set_percent_completion(0.6)
+
         # using the numpy library's sum method
         stacked_sum = np.sum(stacked_data, axis=2)
+        
+        self.set_percent_completion(0.8)
 
         fits_file = create_fits(self.cache_key, stacked_sum)
 
@@ -65,6 +71,5 @@ The output is a stacked image for the n input images. This operation is commonly
 
         output =  {'output_files': [output_file]}
 
-        self.set_percent_completion(1.0)
         self.set_output(output)
         log.info(f'Stacked output: {self.get_output()}')
