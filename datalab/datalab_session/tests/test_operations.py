@@ -1,10 +1,14 @@
 from unittest import mock
 import os
 
+from astropy.io import fits
+import numpy as np
+
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.data_operations.rgb_stack import RGB_Stack
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.data_operations.median import Median
+from datalab.datalab_session.data_operations.stacking import Stack
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
 wizard_description = {
@@ -53,6 +57,7 @@ class SampleDataOperation(BaseDataOperation):
     
     def operate(self):
         self.set_output({'output_files': []})
+
 
 class TestDataOperation(FileExtendedTestCase):
     def setUp(self):
@@ -152,11 +157,12 @@ class TestDataOperation(FileExtendedTestCase):
         self.assertEqual(self.data_operation.get_status(), 'FAILED')
         self.assertEqual(self.data_operation.get_message(), 'Test message')
 
+
 class TestMedianOperation(FileExtendedTestCase):
     temp_median_path = f'{test_path}temp_median.fits'
     test_median_path = f'{test_path}median/median_1_2.fits'
-    test_fits_1_path = f'{test_path}median/fits_1.fits.fz'
-    test_fits_2_path = f'{test_path}median/fits_2.fits.fz'
+    test_fits_1_path = f'{test_path}fits_1.fits.fz'
+    test_fits_2_path = f'{test_path}fits_2.fits.fz'
 
     def tearDown(self):
         self.clean_test_dir()
@@ -203,6 +209,7 @@ class TestMedianOperation(FileExtendedTestCase):
         with self.assertRaises(ClientAlertException):
             median.operate()
 
+
 class TestRGBStackOperation(FileExtendedTestCase):
     temp_rgb_path = f'{test_path}temp_rgb.fits'
     test_rgb_path = f'{test_path}rgb_stack/rgb_stack.fits'
@@ -242,3 +249,99 @@ class TestRGBStackOperation(FileExtendedTestCase):
         self.assertEqual(rgb.get_percent_completion(), 1.0)
         self.assertTrue(os.path.exists(output[0]))
         self.assertFilesEqual(self.test_rgb_path, output[0])
+
+
+class TestStackOperation(FileExtendedTestCase):
+    # this test should work on any fits files, so we just grab from what's there already
+    test_fits_1_path = f'{test_path}fits_1.fits.fz'
+    test_fits_2_path = f'{test_path}fits_2.fits.fz'
+
+    temp_stacked_path = f'{test_path}temp_stacked.fits'  # temp output path
+    temp_fits_1_negative_path = f'{test_path}temp_fits_1_negative.fits'
+    temp_fits_2_negative_path = f'{test_path}temp_fits_2_negative.fits'
+
+    def tearDown(self):
+        self.clean_test_dir()
+        return super().tearDown()
+
+    @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
+    @mock.patch('datalab.datalab_session.file_utils.get_fits')
+    @mock.patch('datalab.datalab_session.data_operations.stacking.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.stacking.create_jpgs')
+    def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
+
+        # Create a negative images using numpy
+        negative_image_hdul = fits.open(self.test_fits_1_path)
+        negative_image = negative_image_hdul['SCI']
+        # Multiply the data by -1 to create a negative image
+        negative_image.data = np.multiply(negative_image.data, -1)
+
+        # now write to new fits file
+        header = fits.Header([('KEY', self.temp_fits_1_negative_path)])
+        primary_hdu = fits.PrimaryHDU(header=header)
+        sci_hdu = fits.ImageHDU(negative_image.data, name='SCI')
+        hdul = fits.HDUList([primary_hdu, sci_hdu])
+        hdul.writeto(self.temp_fits_1_negative_path)
+
+        # do the same for the second image
+        negative_image_hdul = fits.open(self.test_fits_2_path)
+        negative_image = negative_image_hdul['SCI']
+        negative_image.data = np.multiply(negative_image.data, -1)
+
+        # now write to new fits file
+        header = fits.Header([('KEY', self.temp_fits_2_negative_path)])
+        primary_hdu = fits.PrimaryHDU(header=header)
+        sci_hdu = fits.ImageHDU(negative_image.data, name='SCI')
+        hdul = fits.HDUList([primary_hdu, sci_hdu])
+        hdul.writeto(self.temp_fits_2_negative_path)
+
+
+        # return the test fits paths in order of the input_files instead of aws fetch
+        mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path,
+                                     self.temp_fits_1_negative_path, self.temp_fits_2_negative_path]
+        # save temp output to a known path so we can test it
+        mock_named_tempfile.return_value.name = self.temp_stacked_path
+        # avoids overwriting our output
+        mock_create_jpgs.return_value = ('test_path', 'test_path')
+        # don't save to s3
+        mock_save_fits_and_thumbnails.return_value = self.temp_stacked_path
+
+        input_data = {
+            # input_data satisfies the Stack operation argument check, but the data comes from the mock_get_fits (above)
+            'input_files': [
+                {'basename': 'fits_1', 'source': 'local'},
+                {'basename': 'fits_2', 'source': 'local'},
+                {'basename': 'fits_1', 'source': 'local'},
+                {'basename': 'fits_2', 'source': 'local'},
+            ]
+        }
+
+        # Stack the original images and the negative images.
+        # The result should be a blank image.  (x + -x = 0)
+        stack = Stack(input_data)
+        stack.operate()
+        output = stack.get_output().get('output_files')
+
+        # 100% completion
+        self.assertEqual(stack.get_percent_completion(), 1.0)
+
+        # test that file paths are the same
+        self.assertEqual(self.temp_stacked_path, output[0])
+
+        # output file exists
+        self.assertTrue(os.path.exists(self.temp_stacked_path))
+
+        # test that the output file (self.temp_stacked_path) is a blank image
+        output_hdul = fits.open(self.temp_stacked_path)
+        self.assertTrue(np.sum(output_hdul['SCI'].data == 0))
+
+    def test_not_enough_files(self):
+        input_data = {
+            'input_files': [
+                {'basename': 'sample_lco_fits_1'}
+            ]
+        }
+        median = Median(input_data)
+        
+        with self.assertRaises(ClientAlertException):
+            median.operate()

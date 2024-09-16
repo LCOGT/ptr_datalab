@@ -8,7 +8,7 @@ from datalab.datalab_session.analysis import line_profile, source_catalog
 
 class TestAnalysis(TestCase):
     analysis_test_path = 'datalab/datalab_session/tests/test_files/analysis/'
-    analysis_fits_1_path = f'{analysis_test_path}fits_1.fits.fz'
+    analysis_fits_1_path = f'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
 
     def setUp(self):
         with open(f'{self.analysis_test_path}test_line_profile.json') as f:
