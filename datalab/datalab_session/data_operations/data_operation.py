@@ -53,7 +53,7 @@ class BaseDataOperation(ABC):
         """
 
     def perform_operation(self):
-        """ The generic method to perform perform the operation if its not in progress """
+        """ The generic method to perform the operation if its not in progress """
         status = self.get_status()
         if status == 'PENDING' or status == 'FAILED':
             self.set_status('IN_PROGRESS')
