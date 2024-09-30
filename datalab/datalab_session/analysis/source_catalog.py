@@ -1,13 +1,16 @@
 import numpy as np
 
 from datalab.datalab_session.file_utils import get_hdu, scale_points
+from datalab.datalab_session.s3_utils import get_fits
 
 def source_catalog(input: dict):
   """
     Returns a dict representing the source catalog data with x,y coordinates and flux values
   """
-  cat_hdu = get_hdu(input['basename'], 'CAT')
-  sci_hdu = get_hdu(input['basename'], 'SCI')
+  fits_path = get_fits(input['basename'])
+
+  cat_hdu = get_hdu(fits_path, 'CAT')
+  sci_hdu = get_hdu(fits_path, 'SCI')
 
   # The number of sources to send back to the frontend, default 50
   SOURCE_CATALOG_COUNT = min(50, len(cat_hdu.data["x"]))

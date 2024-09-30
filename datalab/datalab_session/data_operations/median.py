@@ -49,7 +49,8 @@ The output is a median image for the n input images. This operation is commonly 
 
         log.info(f'Executing median operation on {len(input)} files')
 
-        image_data_list = self.get_fits_npdata(input, percent=0.4, cur_percent=0.0)
+        image_data_list = self.get_fits_npdata(input)
+        self.set_operation_progress(0.40)
 
         cropped_data_list = crop_arrays(image_data_list)
         stacked_data = np.stack(cropped_data_list, axis=2)

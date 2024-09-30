@@ -42,7 +42,7 @@ class LongOperation(BaseDataOperation):
         for i, file in enumerate(self.input_data.get('input_files', [])):
             print(f"Processing long operation on file {file.get('basename', 'No basename found')}")
             sleep(per_image_timeout)
-            self.set_percent_completion((i+1) / num_files)
+            self.set_operation_progress((i+1) / num_files)
         # Done "processing" the files so set the output which sets the final status
         output = {
             'output_files': self.input_data.get('input_files', [])

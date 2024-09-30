@@ -6,25 +6,21 @@ import numpy as np
 from fits2image.conversions import fits_to_jpg, fits_to_tif
 
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.s3_utils import get_fits, add_file_to_bucket
+from datalab.datalab_session.s3_utils import get_fits
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
-def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> list[fits.HDUList]:
+def get_hdu(path: str, extension: str = 'SCI') -> list[fits.HDUList]:
   """
-  Returns a HDU for the given basename from the source
-  Will download the file to a tmp directory so future calls can open it directly
+  Returns a HDU for the fits in the given path
   Warning: this function returns an opened file that must be closed after use
   """
-
-  basename_file_path = get_fits(basename, source)
-
-  hdu = fits.open(basename_file_path)
+  hdu = fits.open(path)
   try:
     extension = hdu[extension]
   except KeyError:
-    raise ClientAlertException(f"{extension} Header not found in fits file {basename}")
+    raise ClientAlertException(f"{extension} Header not found in fits file at {path.split('/')[-1]}")
   
   return extension
 

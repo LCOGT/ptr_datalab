@@ -52,17 +52,17 @@ The output is a stacked image for the n input images. This operation is commonly
 
         image_data_list = self.get_fits_npdata(input_files)
 
-        self.set_percent_completion(0.4)
+        self.set_operation_progress(0.4)
 
         cropped_data = crop_arrays(image_data_list)
         stacked_data = np.stack(cropped_data, axis=2)
 
-        self.set_percent_completion(0.6)
+        self.set_operation_progress(0.6)
 
         # using the numpy library's sum method
         stacked_sum = np.sum(stacked_data, axis=2)
         
-        self.set_percent_completion(0.8)
+        self.set_operation_progress(0.8)
 
         fits_file = create_fits(self.cache_key, stacked_sum)
 

@@ -74,8 +74,8 @@ class DataOperation(models.Model):
         return cache.get(f'operation_{self.cache_key}_status', 'PENDING')
 
     @property
-    def percent_completion(self):
-        return cache.get(f'operation_{self.cache_key}_percent_completion', 0.0)
+    def operation_progress(self):
+        return cache.get(f'operation_{self.cache_key}_progress', 0.0)
 
     @property
     def output(self):

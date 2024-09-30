@@ -64,10 +64,10 @@ class Subtraction(BaseDataOperation):
         log.info(f'Executing subtraction operation on {len(input_files)} files')
 
         input_image_data_list = self.get_fits_npdata(input_files)
-        self.set_percent_completion(.30)
+        self.set_operation_progress(.30)
 
         subtraction_image = self.get_fits_npdata(subtraction_file_input)[0]
-        self.set_percent_completion(.40)
+        self.set_operation_progress(.40)
 
         outputs = []
         for index, input_image in enumerate(input_image_data_list):
@@ -82,7 +82,7 @@ class Subtraction(BaseDataOperation):
             output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path, index)
             outputs.append(output_file)
 
-            self.set_percent_completion(self.get_percent_completion() + .50 * (index + 1) / len(input_files))
+            self.set_operation_progress(self.get_operation_progress() + .50 * (index + 1) / len(input_files))
 
         output =  {'output_files': outputs}
 

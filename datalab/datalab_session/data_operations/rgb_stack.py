@@ -65,7 +65,7 @@ class RGB_Stack(BaseDataOperation):
             fits_paths = []
             for file in rgb_input_list:
                 fits_paths.append(get_fits(file.get('basename')))
-                self.set_percent_completion(self.get_percent_completion() + 0.2)
+                self.set_operation_progress(self.get_operation_progress() + 0.2)
             
             large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_paths, color=True)
 
@@ -83,6 +83,6 @@ class RGB_Stack(BaseDataOperation):
             output = {'output_files': []}
             raise ClientAlertException('RGB Stack operation requires exactly 3 input files')
 
-        self.set_percent_completion(1.0)
+        self.set_operation_progress(1.0)
         self.set_output(output)
         log.info(f'RGB Stack output: {self.get_output()}')

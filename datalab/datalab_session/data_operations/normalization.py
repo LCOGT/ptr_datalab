@@ -46,7 +46,7 @@ The output is a normalized image. This operation is commonly used as a precursor
         log.info(f'Executing normalization operation on {len(input)} file(s)')
 
         image_data_list = self.get_fits_npdata(input)
-        self.set_percent_completion(0.40)
+        self.set_operation_progress(0.40)
 
         output_files = []
         for index, image in enumerate(image_data_list):
@@ -58,7 +58,7 @@ The output is a normalized image. This operation is commonly used as a precursor
             output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path, index=index)
             output_files.append(output_file)
 
-            self.set_percent_completion(self.get_percent_completion() + .40 * (index + 1) / len(input))
+            self.set_operation_progress(self.get_operation_progress() + .40 * (index + 1) / len(input))
             
         output =  {'output_files': output_files}
 
