@@ -4,8 +4,7 @@ import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.file_utils import create_fits, create_jpgs, crop_arrays
-from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
+from datalab.datalab_session.file_utils import crop_arrays, create_output
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -76,15 +75,9 @@ class Subtraction(BaseDataOperation):
 
             difference_array = np.subtract(input_image, subtraction_image)
 
-            fits_file = create_fits(self.cache_key, difference_array)
-            large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_file)
-
-            output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path, index)
-            outputs.append(output_file)
+            outputs.append(create_output(self.cache_key, difference_array, index=index))
 
             self.set_operation_progress(self.get_operation_progress() + .50 * (index + 1) / len(input_files))
 
-        output =  {'output_files': outputs}
-
-        self.set_output(output)
+        self.set_output(outputs)
         log.info(f'Subtraction output: {self.get_output()}')

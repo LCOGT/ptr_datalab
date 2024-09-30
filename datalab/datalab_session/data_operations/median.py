@@ -4,8 +4,7 @@ import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.file_utils import create_fits, crop_arrays, create_jpgs
-from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
+from datalab.datalab_session.file_utils import crop_arrays, create_output
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -58,13 +57,7 @@ The output is a median image for the n input images. This operation is commonly 
         # using the numpy library's median method
         median = np.median(stacked_data, axis=2)
 
-        fits_file = create_fits(self.cache_key, median)
-
-        large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_file)
-
-        output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path)
-
-        output =  {'output_files': [output_file]}
+        output = create_output(self.cache_key, median)
 
         self.set_output(output)
         log.info(f'Median output: {self.get_output()}')

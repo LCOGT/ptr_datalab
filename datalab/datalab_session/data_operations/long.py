@@ -44,7 +44,4 @@ class LongOperation(BaseDataOperation):
             sleep(per_image_timeout)
             self.set_operation_progress((i+1) / num_files)
         # Done "processing" the files so set the output which sets the final status
-        output = {
-            'output_files': self.input_data.get('input_files', [])
-        }
-        self.set_output(output)
+        self.set_output(self.input_data.get('input_files', []))

@@ -6,7 +6,7 @@ import numpy as np
 from fits2image.conversions import fits_to_jpg, fits_to_tif
 
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.s3_utils import get_fits
+from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -108,3 +108,18 @@ def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_poi
     x_points = width_2 - x_points
 
   return x_points, y_points
+
+def create_output(cache_key, np_array=None, fits_file=None, large_jpg=None, small_jpg=None, index=None):
+  """
+  A more automated way of creating output for a dev
+  Dev can specify just a cache_key and np array and the function will create the fits and jpgs
+  or the dev can pass the fits_file or jpgs and the function will save them
+  """
+
+  if np_array is not None and fits_file is None:
+    fits_file = create_fits(cache_key, np_array)
+
+  if not large_jpg or not small_jpg:
+    large_jpg, small_jpg = create_jpgs(cache_key, fits_file)
+  
+  return save_fits_and_thumbnails(cache_key, fits_file, large_jpg, small_jpg, index)

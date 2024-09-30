@@ -3,8 +3,7 @@ import logging
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.file_utils import create_fits, create_jpgs
-from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
+from datalab.datalab_session.file_utils import create_output
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -53,14 +52,10 @@ The output is a normalized image. This operation is commonly used as a precursor
             median = np.median(image)
             normalized_image = image / median
 
-            fits_file = create_fits(self.cache_key, normalized_image)
-            large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_file)
-            output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path, index=index)
-            output_files.append(output_file)
+            output = create_output(self.cache_key, normalized_image, index=index)
+            output_files.append(output)
 
             self.set_operation_progress(self.get_operation_progress() + .40 * (index + 1) / len(input))
-            
-        output =  {'output_files': output_files}
 
-        self.set_output(output)
+        self.set_output(output_files)
         log.info(f'Normalization output: {self.get_output()}')
