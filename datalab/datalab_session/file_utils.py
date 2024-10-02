@@ -39,7 +39,7 @@ def create_fits(key: str, image_arr: np.ndarray) -> str:
 
   hdu_list = fits.HDUList([primary_hdu, image_hdu])
   fits_path = tempfile.NamedTemporaryFile(suffix=f'{key}.fits').name
-  hdu_list.writeto(fits_path)
+  hdu_list.writeto(fits_path, overwrite=True)
 
   return fits_path
 

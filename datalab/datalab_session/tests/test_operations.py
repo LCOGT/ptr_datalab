@@ -56,7 +56,7 @@ class SampleDataOperation(BaseDataOperation):
         return wizard_description
     
     def operate(self):
-        self.set_output({'output_files': []})
+        self.set_output([])
 
 
 class TestDataOperation(FileExtendedTestCase):
@@ -147,7 +147,7 @@ class TestDataOperation(FileExtendedTestCase):
         self.assertEqual(self.data_operation.generate_cache_key(), pregenerated_cache_key)
 
     def test_set_get_output(self):
-        self.data_operation.set_output({'output_files': []})
+        self.data_operation.set_output([])
         self.assertEqual(self.data_operation.get_operation_progress(), 1.0)
         self.assertEqual(self.data_operation.get_status(), 'COMPLETED')
         self.assertEqual(self.data_operation.get_output(), {'output_files': []})
@@ -170,8 +170,8 @@ class TestMedianOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.data_operation.get_fits')
-    @mock.patch('datalab.datalab_session.data_operations.median.save_fits_and_thumbnails')
-    @mock.patch('datalab.datalab_session.data_operations.median.create_jpgs')
+    @mock.patch('datalab.datalab_session.file_utils.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.file_utils.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
         # return the test fits paths in order of the input_files instead of aws fetch
@@ -221,8 +221,8 @@ class TestRGBStackOperation(FileExtendedTestCase):
         self.clean_test_dir()
         return super().tearDown()
     
-    @mock.patch('datalab.datalab_session.data_operations.rgb_stack.save_fits_and_thumbnails')
-    @mock.patch('datalab.datalab_session.data_operations.rgb_stack.create_jpgs')
+    @mock.patch('datalab.datalab_session.file_utils.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.file_utils.create_jpgs')
     @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.rgb_stack.get_fits')
     def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_fits_and_thumbnails):
@@ -266,8 +266,8 @@ class TestStackOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.data_operation.get_fits')
-    @mock.patch('datalab.datalab_session.data_operations.stacking.save_fits_and_thumbnails')
-    @mock.patch('datalab.datalab_session.data_operations.stacking.create_jpgs')
+    @mock.patch('datalab.datalab_session.file_utils.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.file_utils.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
         # Create a negative images using numpy

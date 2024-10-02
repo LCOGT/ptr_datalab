@@ -1,5 +1,5 @@
-from datalab.datalab_session.file_utils import create_tif, get_fits
-from datalab.datalab_session.s3_utils import key_exists, add_file_to_bucket, get_s3_url
+from datalab.datalab_session.file_utils import create_tif
+from datalab.datalab_session.s3_utils import key_exists, add_file_to_bucket, get_s3_url, get_fits
 
 def get_tif(input: dict):
   """

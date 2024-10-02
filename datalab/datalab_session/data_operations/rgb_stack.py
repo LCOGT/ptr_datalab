@@ -5,7 +5,8 @@ import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.file_utils import create_output, get_fits, crop_arrays, create_jpgs
+from datalab.datalab_session.file_utils import create_output, crop_arrays, create_jpgs
+from datalab.datalab_session.s3_utils import get_fits
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
