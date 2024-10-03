@@ -57,7 +57,9 @@ The output is a median image for the n input images. This operation is commonly 
         # using the numpy library's median method
         median = np.median(stacked_data, axis=2)
 
-        output = create_output(self.cache_key, median)
+        self.set_operation_progress(0.80)
+
+        output = create_output(self.cache_key, median, comment=f'Product of Datalab Median on files {", ".join([image["basename"] for image in input])}')
 
         self.set_output(output)
         log.info(f'Median output: {self.get_output()}')

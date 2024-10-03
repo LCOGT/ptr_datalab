@@ -27,13 +27,14 @@ def get_hdu(path: str, extension: str = 'SCI') -> list[fits.HDUList]:
 def get_fits_dimensions(fits_file, extension: str = 'SCI') -> tuple:
   return fits.open(fits_file)[extension].shape
 
-def create_fits(key: str, image_arr: np.ndarray) -> str:
+def create_fits(key: str, image_arr: np.ndarray, comment=None) -> str:
   """
   Creates a fits file with the given key and image array
   Returns the the path to the fits_file
   """
 
   header = fits.Header([('KEY', key)])
+  header.add_comment(comment) if comment else None
   primary_hdu = fits.PrimaryHDU(header=header)
   image_hdu = fits.ImageHDU(data=image_arr, name='SCI')
 
@@ -109,7 +110,7 @@ def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_poi
 
   return x_points, y_points
 
-def create_output(cache_key, np_array=None, fits_file=None, large_jpg=None, small_jpg=None, index=None):
+def create_output(cache_key, np_array=None, fits_file=None, large_jpg=None, small_jpg=None, index=None, comment=None):
   """
   A more automated way of creating output for a dev
   Dev can specify just a cache_key and np array and the function will create the fits and jpgs
@@ -117,7 +118,7 @@ def create_output(cache_key, np_array=None, fits_file=None, large_jpg=None, smal
   """
 
   if np_array is not None and fits_file is None:
-    fits_file = create_fits(cache_key, np_array)
+    fits_file = create_fits(cache_key, np_array, comment)
 
   if not large_jpg or not small_jpg:
     large_jpg, small_jpg = create_jpgs(cache_key, fits_file)

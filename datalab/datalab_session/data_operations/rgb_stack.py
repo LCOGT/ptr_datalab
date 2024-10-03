@@ -78,7 +78,8 @@ class RGB_Stack(BaseDataOperation):
 
         self.set_operation_progress(0.8)
         
-        output =  create_output(self.cache_key, stacked_data, large_jpg=large_jpg_path, small_jpg=small_jpg_path)
+        rgb_comment = f'Product of Datalab RGB Stack on files {", ".join([image["basename"] for image in rgb_input_list])}'
+        output =  create_output(self.cache_key, stacked_data, large_jpg=large_jpg_path, small_jpg=small_jpg_path, comment=rgb_comment)
 
         self.set_operation_progress(1.0)
         self.set_output(output)

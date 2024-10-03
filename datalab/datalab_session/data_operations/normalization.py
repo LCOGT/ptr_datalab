@@ -52,7 +52,7 @@ The output is a normalized image. This operation is commonly used as a precursor
             median = np.median(image)
             normalized_image = image / median
 
-            output = create_output(self.cache_key, normalized_image, index=index)
+            output = create_output(self.cache_key, normalized_image, index=index, comment=f'Product of Datalab Normalization on file {input[index]["basename"]}')
             output_files.append(output)
 
             self.set_operation_progress(self.get_operation_progress() + .40 * (index + 1) / len(input))

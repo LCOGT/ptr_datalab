@@ -63,7 +63,8 @@ The output is a stacked image for the n input images. This operation is commonly
         
         self.set_operation_progress(0.8)
 
-        output = create_output(self.cache_key, stacked_sum)
+        stacking_comment = f'Product of Datalab Stacking. Stack of {", ".join([image["basename"] for image in input_files])}'
+        output = create_output(self.cache_key, stacked_sum, comment=stacking_comment)
 
         self.set_output(output)
         log.info(f'Stacked output: {self.get_output()}')

@@ -75,7 +75,8 @@ class Subtraction(BaseDataOperation):
 
             difference_array = np.subtract(input_image, subtraction_image)
 
-            outputs.append(create_output(self.cache_key, difference_array, index=index))
+            subtraction_comment = f'Product of Datalab Subtraction of {subtraction_file_input[0]["basename"]} subtracted from {input_files[index]["basename"]}'
+            outputs.append(create_output(self.cache_key, difference_array, index=index, comment=subtraction_comment))
 
             self.set_operation_progress(self.get_operation_progress() + .50 * (index + 1) / len(input_files))
 
