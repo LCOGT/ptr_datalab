@@ -1,4 +1,5 @@
 from rest_framework import viewsets
+from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 
 from datalab.datalab_session.serializers import DataSessionSerializer, DataOperationSerializer
@@ -17,6 +18,15 @@ class DataOperationViewSet(viewsets.ModelViewSet):
         operation = available_operations().get(serializer.validated_data['name'])(serializer.validated_data['input_data'])
         serializer.save(session_id=self.kwargs['session_pk'], cache_key=operation.cache_key)
         operation.perform_operation()
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        if instance.status == 'PENDING' and not instance.output:
+            operation = available_operations().get(instance.name)(instance.input_data)
+            operation.perform_operation()
+
+        return Response(serializer.data)
 
 
 class DataSessionViewSet(viewsets.ModelViewSet):
