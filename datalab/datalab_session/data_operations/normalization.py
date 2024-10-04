@@ -47,14 +47,13 @@ The output is a normalized image. This operation is commonly used as a precursor
         image_data_list = self.get_fits_npdata(input)
 
         output_files = []
-        for index, image in enumerate(image_data_list):
+        for index, image in enumerate(image_data_list, start=1):
             median = np.median(image)
             normalized_image = image / median
 
             output = create_output(self.cache_key, normalized_image, index=index, comment=f'Product of Datalab Normalization on file {input[index]["basename"]}')
             output_files.append(output)
-        
-        self.set_operation_progress(0.80)
+            self.set_operation_progress(0.5 + index/len(image_data_list) * 0.4)
 
         self.set_output(output_files)
         log.info(f'Normalization output: {self.get_output()}')
