@@ -51,16 +51,12 @@ The output is a stacked image for the n input images. This operation is commonly
 
         image_data_list = self.get_fits_npdata(input_files)
 
-        self.set_operation_progress(0.4)
-
         cropped_data = crop_arrays(image_data_list)
         stacked_data = np.stack(cropped_data, axis=2)
-
         self.set_operation_progress(0.6)
 
         # using the numpy library's sum method
         stacked_sum = np.sum(stacked_data, axis=2)
-        
         self.set_operation_progress(0.8)
 
         stacking_comment = f'Product of Datalab Stacking. Stack of {", ".join([image["basename"] for image in input_files])}'

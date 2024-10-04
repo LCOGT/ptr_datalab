@@ -110,4 +110,6 @@ class BaseDataOperation(ABC):
             sci_hdu = get_hdu(fits_path, 'SCI')
             image_data_list.append(sci_hdu.data)
 
+            self.set_operation_progress(index / len(input_files) * 0.5)
+
         return image_data_list

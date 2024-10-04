@@ -65,9 +65,9 @@ class RGB_Stack(BaseDataOperation):
         log.info(f'Executing RGB Stack operation on files: {rgb_input_list}')
 
         fits_paths = []
-        for file in rgb_input_list:
+        for index, file in enumerate(rgb_input_list, start=1):
             fits_paths.append(get_fits(file.get('basename')))
-            self.set_operation_progress(self.get_operation_progress() + 0.2)
+            self.set_operation_progress(index * 0.2)
         
         large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_paths, color=True)
 
@@ -81,6 +81,5 @@ class RGB_Stack(BaseDataOperation):
         rgb_comment = f'Product of Datalab RGB Stack on files {", ".join([image["basename"] for image in rgb_input_list])}'
         output =  create_output(self.cache_key, stacked_data, large_jpg=large_jpg_path, small_jpg=small_jpg_path, comment=rgb_comment)
 
-        self.set_operation_progress(1.0)
         self.set_output(output)
         log.info(f'RGB Stack output: {self.get_output()}')

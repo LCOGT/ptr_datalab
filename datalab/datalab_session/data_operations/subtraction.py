@@ -50,9 +50,7 @@ class Subtraction(BaseDataOperation):
     def operate(self):
 
         input_files = self.input_data.get('input_files', [])
-        print(f'Input files: {input_files}')
         subtraction_file_input = self.input_data.get('subtraction_file', [])
-        print(f'Subtraction file: {subtraction_file_input}')
 
         if not subtraction_file_input:
             raise ClientAlertException('Missing a subtraction file')
@@ -63,10 +61,9 @@ class Subtraction(BaseDataOperation):
         log.info(f'Executing subtraction operation on {len(input_files)} files')
 
         input_image_data_list = self.get_fits_npdata(input_files)
-        self.set_operation_progress(.30)
 
         subtraction_image = self.get_fits_npdata(subtraction_file_input)[0]
-        self.set_operation_progress(.40)
+        self.set_operation_progress(0.70)
 
         outputs = []
         for index, input_image in enumerate(input_image_data_list):
@@ -77,8 +74,8 @@ class Subtraction(BaseDataOperation):
 
             subtraction_comment = f'Product of Datalab Subtraction of {subtraction_file_input[0]["basename"]} subtracted from {input_files[index]["basename"]}'
             outputs.append(create_output(self.cache_key, difference_array, index=index, comment=subtraction_comment))
-
-            self.set_operation_progress(self.get_operation_progress() + .50 * (index + 1) / len(input_files))
+        
+        self.set_operation_progress(0.90)
 
         self.set_output(outputs)
         log.info(f'Subtraction output: {self.get_output()}')

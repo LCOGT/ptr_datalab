@@ -45,7 +45,6 @@ The output is a normalized image. This operation is commonly used as a precursor
         log.info(f'Executing normalization operation on {len(input)} file(s)')
 
         image_data_list = self.get_fits_npdata(input)
-        self.set_operation_progress(0.40)
 
         output_files = []
         for index, image in enumerate(image_data_list):
@@ -54,8 +53,8 @@ The output is a normalized image. This operation is commonly used as a precursor
 
             output = create_output(self.cache_key, normalized_image, index=index, comment=f'Product of Datalab Normalization on file {input[index]["basename"]}')
             output_files.append(output)
-
-            self.set_operation_progress(self.get_operation_progress() + .40 * (index + 1) / len(input))
+        
+        self.set_operation_progress(0.80)
 
         self.set_output(output_files)
         log.info(f'Normalization output: {self.get_output()}')

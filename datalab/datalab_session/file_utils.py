@@ -110,15 +110,13 @@ def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_poi
 
   return x_points, y_points
 
-def create_output(cache_key, np_array=None, fits_file=None, large_jpg=None, small_jpg=None, index=None, comment=None):
+def create_output(cache_key, np_array, large_jpg=None, small_jpg=None, index=None, comment=None):
   """
   A more automated way of creating output for a dev
   Dev can specify just a cache_key and np array and the function will create the fits and jpgs
   or the dev can pass the fits_file or jpgs and the function will save them
   """
-
-  if np_array is not None and fits_file is None:
-    fits_file = create_fits(cache_key, np_array, comment)
+  fits_file = create_fits(cache_key, np_array, comment)
 
   if not large_jpg or not small_jpg:
     large_jpg, small_jpg = create_jpgs(cache_key, fits_file)
