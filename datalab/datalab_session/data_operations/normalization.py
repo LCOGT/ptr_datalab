@@ -51,7 +51,7 @@ The output is a normalized image. This operation is commonly used as a precursor
             median = np.median(image)
             normalized_image = image / median
 
-            output = create_output(self.cache_key, normalized_image, index=index, comment=f'Product of Datalab Normalization on file {input[index]["basename"]}')
+            output = create_output(self.cache_key, normalized_image, index=index, comment=f'Product of Datalab Normalization on file {input[index-1]["basename"]}')
             output_files.append(output)
             self.set_operation_progress(0.5 + index/len(image_data_list) * 0.4)
 
