@@ -114,6 +114,7 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
 def get_fits(basename: str, source: str = 'archive'):
   """
   Returns a Fits File for the given basename from the source bucket
+  Will download the file to a tmp directory so future calls can open it directly
   """
   basename = basename.replace('-large', '').replace('-small', '')
   basename_file_path = os.path.join(settings.TEMP_FITS_DIR, basename)

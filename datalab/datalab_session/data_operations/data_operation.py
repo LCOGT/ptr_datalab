@@ -5,6 +5,7 @@ import json
 from django.core.cache import cache
 import numpy as np
 
+from datalab.datalab_session.s3_utils import get_fits
 from datalab.datalab_session.tasks import execute_data_operation
 from datalab.datalab_session.file_utils import get_hdu
 
@@ -57,7 +58,7 @@ class BaseDataOperation(ABC):
         status = self.get_status()
         if status == 'PENDING' or status == 'FAILED':
             self.set_status('IN_PROGRESS')
-            self.set_percent_completion(0.0)
+            self.set_operation_progress(0.0)
             # This asynchronous task will call the operate() method on the proper operation
             execute_data_operation.send(self.name(), self.input_data)
 
@@ -78,15 +79,16 @@ class BaseDataOperation(ABC):
     def get_message(self) -> str:
         return cache.get(f'operation_{self.cache_key}_message', '')
 
-    def set_percent_completion(self, percent_completed: float):
-        cache.set(f'operation_{self.cache_key}_percent_completion', percent_completed, CACHE_DURATION)
+    def set_operation_progress(self, percent_completed: float):
+        cache.set(f'operation_{self.cache_key}_progress', percent_completed, CACHE_DURATION)
 
-    def get_percent_completion(self) -> float:
-        return cache.get(f'operation_{self.cache_key}_percent_completion', 0.0)
+    def get_operation_progress(self) -> float:
+        return cache.get(f'operation_{self.cache_key}_progress', 0.0)
 
-    def set_output(self, output_data: dict):
+    def set_output(self, output):
+        output_data = {'output_files': output if isinstance(output, list) else [output]}
         self.set_status('COMPLETED')
-        self.set_percent_completion(1.0)
+        self.set_operation_progress(1.0)
         cache.set(f'operation_{self.cache_key}_output', output_data, CACHE_DURATION)
 
     def get_output(self) -> dict:
@@ -96,8 +98,7 @@ class BaseDataOperation(ABC):
         self.set_status('FAILED')
         self.set_message(message)
 
-    def get_fits_npdata(self, input_files: list[dict], percent=None, cur_percent=None) -> list[np.memmap]:
-        total_files = len(input_files)
+    def get_fits_npdata(self, input_files: list[dict]) -> list[np.memmap]:
         image_data_list = []
 
         # get the fits urls and extract the image data
@@ -105,10 +106,10 @@ class BaseDataOperation(ABC):
             basename = file_info.get('basename', 'No basename found')
             source = file_info.get('source', 'No source found')
 
-            sci_hdu = get_hdu(basename, 'SCI', source)
+            fits_path = get_fits(file_info['basename'], file_info['source'])
+            sci_hdu = get_hdu(fits_path, 'SCI')
             image_data_list.append(sci_hdu.data)
-            
-            if percent is not None and cur_percent is not None:
-                self.set_percent_completion(cur_percent + index/total_files * percent)
+
+            self.set_operation_progress(index / len(input_files) * 0.5)
 
         return image_data_list

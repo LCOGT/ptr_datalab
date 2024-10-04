@@ -10,14 +10,14 @@ class DataOperationSerializer(serializers.ModelSerializer):
     cache_key = serializers.CharField(write_only=True, required=False)
     status = serializers.ReadOnlyField()
     message = serializers.ReadOnlyField()
-    percent_completion = serializers.ReadOnlyField()
+    operation_progress = serializers.ReadOnlyField()
     output = serializers.ReadOnlyField()
 
     class Meta:
         model = DataOperation
         exclude = ('session',)
         read_only_fields = (
-            'id', 'created', 'status', 'percent_completion', 'message', 'output',
+            'id', 'created', 'status', 'operation_progress', 'message', 'output',
         )
 
 class DataSessionSerializer(serializers.ModelSerializer):

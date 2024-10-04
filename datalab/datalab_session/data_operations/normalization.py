@@ -3,8 +3,7 @@ import logging
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.file_utils import create_fits, create_jpgs
-from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
+from datalab.datalab_session.file_utils import create_output
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -46,21 +45,15 @@ The output is a normalized image. This operation is commonly used as a precursor
         log.info(f'Executing normalization operation on {len(input)} file(s)')
 
         image_data_list = self.get_fits_npdata(input)
-        self.set_percent_completion(0.40)
 
         output_files = []
-        for index, image in enumerate(image_data_list):
+        for index, image in enumerate(image_data_list, start=1):
             median = np.median(image)
             normalized_image = image / median
 
-            fits_file = create_fits(self.cache_key, normalized_image)
-            large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_file)
-            output_file = save_fits_and_thumbnails(self.cache_key, fits_file, large_jpg_path, small_jpg_path, index=index)
-            output_files.append(output_file)
+            output = create_output(self.cache_key, normalized_image, index=index, comment=f'Product of Datalab Normalization on file {input[index]["basename"]}')
+            output_files.append(output)
+            self.set_operation_progress(0.5 + index/len(image_data_list) * 0.4)
 
-            self.set_percent_completion(self.get_percent_completion() + .40 * (index + 1) / len(input))
-            
-        output =  {'output_files': output_files}
-
-        self.set_output(output)
+        self.set_output(output_files)
         log.info(f'Normalization output: {self.get_output()}')

@@ -42,7 +42,4 @@ class NoOperation(BaseDataOperation):
     
     def operate(self):
         print("No-op triggered!")
-        output = {
-            'output_files': self.input_data.get('input_files', [])
-        }
-        self.set_output(output)
+        self.set_output(self.input_data.get('input_files', []))

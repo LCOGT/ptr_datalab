@@ -6,44 +6,41 @@ import numpy as np
 from fits2image.conversions import fits_to_jpg, fits_to_tif
 
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.s3_utils import get_fits, add_file_to_bucket
+from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
-def get_hdu(basename: str, extension: str = 'SCI', source: str = 'archive') -> list[fits.HDUList]:
+def get_hdu(path: str, extension: str = 'SCI') -> list[fits.HDUList]:
   """
-  Returns a HDU for the given basename from the source
-  Will download the file to a tmp directory so future calls can open it directly
+  Returns a HDU for the fits in the given path
   Warning: this function returns an opened file that must be closed after use
   """
-
-  basename_file_path = get_fits(basename, source)
-
-  hdu = fits.open(basename_file_path)
+  hdu = fits.open(path)
   try:
     extension = hdu[extension]
   except KeyError:
-    raise ClientAlertException(f"{extension} Header not found in fits file {basename}")
+    raise ClientAlertException(f"{extension} Header not found in fits file at {path.split('/')[-1]}")
   
   return extension
 
 def get_fits_dimensions(fits_file, extension: str = 'SCI') -> tuple:
   return fits.open(fits_file)[extension].shape
 
-def create_fits(key: str, image_arr: np.ndarray) -> str:
+def create_fits(key: str, image_arr: np.ndarray, comment=None) -> str:
   """
   Creates a fits file with the given key and image array
   Returns the the path to the fits_file
   """
 
   header = fits.Header([('KEY', key)])
+  header.add_comment(comment) if comment else None
   primary_hdu = fits.PrimaryHDU(header=header)
   image_hdu = fits.ImageHDU(data=image_arr, name='SCI')
 
   hdu_list = fits.HDUList([primary_hdu, image_hdu])
   fits_path = tempfile.NamedTemporaryFile(suffix=f'{key}.fits').name
-  hdu_list.writeto(fits_path)
+  hdu_list.writeto(fits_path, overwrite=True)
 
   return fits_path
 
@@ -112,3 +109,16 @@ def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_poi
     x_points = width_2 - x_points
 
   return x_points, y_points
+
+def create_output(cache_key, np_array, large_jpg=None, small_jpg=None, index=None, comment=None):
+  """
+  A more automated way of creating output for a dev
+  Dev can specify just a cache_key and np array and the function will create the fits and jpgs
+  or the dev can pass the fits_file or jpgs and the function will save them
+  """
+  fits_file = create_fits(cache_key, np_array, comment)
+
+  if not large_jpg or not small_jpg:
+    large_jpg, small_jpg = create_jpgs(cache_key, fits_file)
+  
+  return save_fits_and_thumbnails(cache_key, fits_file, large_jpg, small_jpg, index)
