@@ -48,7 +48,10 @@ The output is a median image for the n input images. This operation is commonly 
         comment = f'Datalab Median on {", ".join([image["basename"] for image in input_list])}'
         log.info(comment)
 
-        input_FITS_list = [FITSFileReader(input['basename'], input['source']) for input in input_list]
+        input_FITS_list = []
+        for index, input in enumerate(input_list, start=1):
+            input_FITS_list.append(FITSFileReader(input['basename'], input['source']))
+            self.set_operation_progress(0.5 * (index / len(input_list)))
 
         # Creating the Median array
         cropped_data = crop_arrays([image.sci_data for image in input_FITS_list])

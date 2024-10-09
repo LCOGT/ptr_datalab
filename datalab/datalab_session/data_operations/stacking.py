@@ -49,8 +49,10 @@ The output is a stacked image for the n input images. This operation is commonly
         comment= f'Datalab Stacking on {", ".join([image["basename"] for image in input_files])}'
         log.info(comment)
 
-        input_FITS_list = [FITSFileReader(input['basename'], input['source']) for input in input_files]
-        self.set_operation_progress(0.4)
+        input_FITS_list = []
+        for index, input in enumerate(input_files, start=1):
+            input_FITS_list.append(FITSFileReader(input['basename'], input['source']))
+            self.set_operation_progress(0.5 * (index / len(input_files)))
 
         cropped_data = crop_arrays([image.sci_data for image in input_FITS_list])
         stacked_ndarray = np.stack(cropped_data, axis=2)

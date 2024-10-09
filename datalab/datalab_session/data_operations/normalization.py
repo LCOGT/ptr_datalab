@@ -44,7 +44,10 @@ The output is a normalized image. This operation is commonly used as a precursor
         input_list = self.input_data.get('input_files', [])
         log.info(f'Normalization operation on {len(input_list)} file(s)')
 
-        input_FITS_list = [FITSFileReader(input['basename'], input['source']) for input in input_list]
+        input_FITS_list = []
+        for index, input in enumerate(input_list, start=1):
+            input_FITS_list.append(FITSFileReader(input['basename'], input['source']))
+            self.set_operation_progress(0.5 * (index / len(input_list)))
 
         output_files = []
         for index, image in enumerate(input_FITS_list, start=1):
