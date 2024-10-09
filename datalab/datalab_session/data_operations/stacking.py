@@ -2,9 +2,11 @@ import logging
 
 import numpy as np
 
+from datalab.datalab_session.data_operations.fits_file_reader import FITSFileReader
+from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.file_utils import create_output, crop_arrays
+from datalab.datalab_session.file_utils import crop_arrays
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -43,24 +45,22 @@ The output is a stacked image for the n input images. This operation is commonly
     def operate(self):
 
         input_files = self.input_data.get('input_files', [])
+        if len(input_files) <= 1: raise ClientAlertException('Stack needs at least 2 files')
+        comment= f'Datalab Stacking on {", ".join([image["basename"] for image in input_files])}'
+        log.info(comment)
 
-        if len(input_files) <= 1:
-            raise ClientAlertException('Stack needs at least 2 files')
+        input_FITS_list = [FITSFileReader(input['basename'], input['source']) for input in input_files]
+        self.set_operation_progress(0.4)
 
-        log.info(f'Executing stacking operation on {len(input_files)} files')
-
-        image_data_list = self.get_fits_npdata(input_files)
-
-        cropped_data = crop_arrays(image_data_list)
-        stacked_data = np.stack(cropped_data, axis=2)
+        cropped_data = crop_arrays([image.sci_data for image in input_FITS_list])
+        stacked_ndarray = np.stack(cropped_data, axis=2)
         self.set_operation_progress(0.6)
 
         # using the numpy library's sum method
-        stacked_sum = np.sum(stacked_data, axis=2)
+        stacked_sum = np.sum(stacked_ndarray, axis=2)
         self.set_operation_progress(0.8)
 
-        stacking_comment = f'Product of Datalab Stacking. Stack of {", ".join([image["basename"] for image in input_files])}'
-        output = create_output(self.cache_key, stacked_sum, comment=stacking_comment)
+        output = FITSOutputHandler(self.cache_key, stacked_sum, comment).create_save_fits()
 
+        log.info(f'Stacked output: {output}')
         self.set_output(output)
-        log.info(f'Stacked output: {self.get_output()}')
