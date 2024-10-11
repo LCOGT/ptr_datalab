@@ -14,7 +14,7 @@ class FITSOutputHandler():
   The FITS file is then saved to the cache and the large and small jpgs are created.
 
   Attributes:
-    dlab_id (str): The cache key for the FITS file.
+    datalab_id (str): The cache key for the FITS file.
     primary_hdu (fits.PrimaryHDU): The primary HDU for the FITS file.
     image_hdu (fits.ImageHDU): The image HDU for the FITS file.
     data (np.array): The data for the image HDU.
@@ -28,13 +28,13 @@ class FITSOutputHandler():
         data (np.array): The data that will create the image HDU.
         comment (str): Optionally add a comment to add to the FITS file.
       """
-      self.dlab_id = cache_key
+      self.datalab_id = cache_key
       self.primary_hdu = fits.PrimaryHDU(header=fits.Header([('KEY', cache_key)]))
       self.image_hdu = fits.ImageHDU(data=data, name='SCI')
       if comment: self.set_comment(comment)
 
   def __str__(self) -> str:
-    return f"Key: {self.dlab_id}\nData:\n{self.data}"
+    return f"Key: {self.datalab_id}\nData:\n{self.data}"
 
   def set_comment(self, comment: str):
     """Add a comment to the FITS file."""
@@ -52,11 +52,11 @@ class FITSOutputHandler():
       small_jpg (str): Optionally add a path to a small jpg to save, will not create a new jpg.
     """
     hdu_list = fits.HDUList([self.primary_hdu, self.image_hdu])
-    fits_output_path = tempfile.NamedTemporaryFile(suffix=f'{self.dlab_id}.fits').name
+    fits_output_path = tempfile.NamedTemporaryFile(suffix=f'{self.datalab_id}.fits').name
     hdu_list.writeto(fits_output_path, overwrite=True)
 
     # allow for operations to pregenerate the jpgs, ex. RGB stacking
     if not large_jpg_path or not small_jpg_path:
-      large_jpg_path, small_jpg_path = create_jpgs(self.dlab_id, fits_output_path)
+      large_jpg_path, small_jpg_path = create_jpgs(self.datalab_id, fits_output_path)
 
-    return save_fits_and_thumbnails(self.dlab_id, fits_output_path, large_jpg_path, small_jpg_path, index)
+    return save_fits_and_thumbnails(self.datalab_id, fits_output_path, large_jpg_path, small_jpg_path, index)
