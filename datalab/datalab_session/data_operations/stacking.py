@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 
-from datalab.datalab_session.data_operations.fits_file_reader import FITSFileReader
+from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
@@ -49,12 +49,12 @@ The output is a stacked image for the n input images. This operation is commonly
         comment= f'Datalab Stacking on {", ".join([image["basename"] for image in input_files])}'
         log.info(comment)
 
-        input_FITS_list = []
+        input_fits_list = []
         for index, input in enumerate(input_files, start=1):
-            input_FITS_list.append(FITSFileReader(input['basename'], input['source']))
+            input_fits_list.append(InputDataHandler(input['basename'], input['source']))
             self.set_operation_progress(0.5 * (index / len(input_files)))
 
-        cropped_data = crop_arrays([image.sci_data for image in input_FITS_list])
+        cropped_data = crop_arrays([image.sci_data for image in input_fits_list])
         stacked_ndarray = np.stack(cropped_data, axis=2)
         self.set_operation_progress(0.6)
 
@@ -62,7 +62,7 @@ The output is a stacked image for the n input images. This operation is commonly
         stacked_sum = np.sum(stacked_ndarray, axis=2)
         self.set_operation_progress(0.8)
 
-        output = FITSOutputHandler(self.cache_key, stacked_sum, comment).create_save_fits()
+        output = FITSOutputHandler(self.cache_key, stacked_sum, comment).create_and_save_data_products()
 
         log.info(f'Stacked output: {output}')
         self.set_output(output)
