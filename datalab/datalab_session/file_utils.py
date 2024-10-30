@@ -55,7 +55,7 @@ def create_tif(key: str, fits_path: np.ndarray) -> str:
 
   return tif_path
 
-def create_jpgs(cache_key, fits_paths: str, color=False) -> list:
+def create_jpgs(cache_key, fits_paths: str, color=False, zmin=None, zmax=None) -> list:
     """
     Create jpgs from fits files and save them to S3
     If using the color option fits_paths need to be in order R, G, B
@@ -71,8 +71,8 @@ def create_jpgs(cache_key, fits_paths: str, color=False) -> list:
 
     max_height, max_width = max(get_fits_dimensions(path) for path in fits_paths)
 
-    fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color)
-    fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color)
+    fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color, zmin=zmin, zmax=zmax)
+    fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color, zmin=zmin, zmax=zmax)
 
     return large_jpg_path, thumbnail_jpg_path
 
