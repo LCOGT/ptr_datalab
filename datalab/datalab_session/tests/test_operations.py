@@ -237,9 +237,9 @@ class TestRGBStackOperation(FileExtendedTestCase):
         mock_save_fits_and_thumbnails.return_value = self.temp_rgb_path
 
         input_data = {
-            'red_input': [{'basename': 'red_fits', 'source': 'local'}],
-            'green_input': [{'basename': 'green_fits', 'source': 'local'}],
-            'blue_input': [{'basename': 'blue_fits', 'source': 'local'}]
+            'red_input': [{'basename': 'red_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}],
+            'green_input': [{'basename': 'green_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}],
+            'blue_input': [{'basename': 'blue_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}]
         }
 
         rgb = RGB_Stack(input_data)
