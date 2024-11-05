@@ -36,6 +36,8 @@ class RGB_Stack(BaseDataOperation):
                     'type': 'file',
                     'minimum': 1,
                     'maximum': 1,
+                    'include_custom_scale': True,
+                    'combine_custom_scale': 'rgb',
                     'filter': ['rp', 'r']
                 },
                 'green_input': {
@@ -44,6 +46,8 @@ class RGB_Stack(BaseDataOperation):
                     'type': 'file',
                     'minimum': 1,
                     'maximum': 1,
+                    'include_custom_scale': True,
+                    'combine_custom_scale': 'rgb',
                     'filter': ['V', 'gp']
                 },
                 'blue_input': {
@@ -52,9 +56,11 @@ class RGB_Stack(BaseDataOperation):
                     'type': 'file',
                     'minimum': 1,
                     'maximum': 1,
+                    'include_custom_scale': True,
+                    'combine_custom_scale': 'rgb',
                     'filter': ['B']
                 }
-            }
+            },
         }
     
     def operate(self):
@@ -64,12 +70,16 @@ class RGB_Stack(BaseDataOperation):
         log.info(rgb_comment)
 
         input_fits_list = []
+        zmin_list = []
+        zmax_list = []
         for index, input in enumerate(rgb_input_list, start=1):
             input_fits_list.append(InputDataHandler(input['basename'], input['source']))
+            zmin_list.append(input['zmin'])
+            zmax_list.append(input['zmax'])
             self.set_operation_progress(0.4 * (index / len(rgb_input_list)))
 
         fits_file_list = [image.fits_file for image in input_fits_list]
-        large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_file_list, color=True)
+        large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, fits_file_list, color=True, zmin=zmin_list, zmax=zmax_list)
         self.set_operation_progress(0.6)
 
         # color photos take three files, so we store it as one fits file with a 3d SCI ndarray
