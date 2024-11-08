@@ -21,7 +21,15 @@ def raw_data(input: dict):
     max_size = input.get('max_size', 500)
     image = Image.fromarray(image_data)
     newImage = image.resize((max_size, max_size), Image.LANCZOS)
-    scaled_array = np.asarray(newImage).astype(np.float16)
+    bitpix = abs(int(sci_hdu.header.get('BITPIX', 16)))
+    match bitpix:
+        case 8:
+            datatype = np.uint8
+        case 16:
+            datatype = np.float16
+        case 32:
+            datatype = np.float32
+    scaled_array = np.asarray(newImage).astype(datatype)
     scaled_array_flipped = np.flip(scaled_array, axis=0)
 
     return {'data': scaled_array_flipped.flatten().tolist(),
