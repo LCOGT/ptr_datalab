@@ -43,8 +43,8 @@ def source_catalog(input: dict):
     dec = cat_hdu.data["dec"][:SOURCE_CATALOG_COUNT]
   else:
     # TODO: implement a fallback way to calculate ra, dec from x, y and WCS
-    ra = np.zeros(SOURCE_CATALOG_COUNT)
-    dec = np.zeros(SOURCE_CATALOG_COUNT)
+    ra = None
+    dec = None
 
   # scale the x_points and y_points from the fits pixel coords to the jpg coords
   fits_height, fits_width = np.shape(sci_hdu.data)
@@ -53,13 +53,15 @@ def source_catalog(input: dict):
   # create the list of source catalog objects
   source_catalog_data = []
   for i in range(SOURCE_CATALOG_COUNT):
-    source_catalog_data.append({
+    source_data = {
       "x": x_points[i],
       "y": y_points[i],
-      "flux": flux[i].astype(int),
-      # Astronomical coordinates are formatted to 6 decimal places
-      "ra": '%.6f'%(ra[i]),
-      "dec": '%.6f'%(dec[i])
-    })
+      "flux": flux[i].astype(int)
+    }
+    if ra and dec:
+      source_data["ra"] = '%.6f' % (ra[i])
+      source_data["dec"] = '%.6f' % (dec[i])
+
+    source_catalog_data.append(source_data)
 
   return source_catalog_data
