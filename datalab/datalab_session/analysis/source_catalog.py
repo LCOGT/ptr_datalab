@@ -58,7 +58,7 @@ def source_catalog(input: dict):
       "y": y_points[i],
       "flux": flux[i].astype(int)
     }
-    if ra and dec:
+    if ra is not None and dec is not None:
       source_data["ra"] = '%.6f' % (ra[i])
       source_data["dec"] = '%.6f' % (dec[i])
 
