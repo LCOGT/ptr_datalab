@@ -20,7 +20,7 @@ def line_profile(input: dict):
       y2 (int): The y coordinate of the ending point
     }
   """
-  fits_path = get_fits(input['basename'])
+  fits_path = get_fits(input['basename'], input['source'])
 
   sci_hdu = get_hdu(fits_path, 'SCI')
 
@@ -51,16 +51,16 @@ def line_profile(input: dict):
     position_angle = coordinates.position_angle(start_sky_coord.ra, start_sky_coord.dec,
                                                 end_sky_coord.ra, end_sky_coord.dec).deg
   except WcsError:
-    # no valid WCS solution
+    # Can't calculate these values without WCS
     start_coords = None
     end_coords = None
     position_angle = None
 
+    # fallback attempt at using pixscale to calculate the arcsec distance
     try:
-      # attempt using pixscale to calculate the angle
       arcsec_angle = len(line_profile) * sci_hdu.header["PIXSCALE"]
-    except KeyError as e:
-      # no valid WCS solution, and no pixscale
+    except KeyError:
       arcsec_angle = None
 
-  return {"line_profile": line_profile, "arcsec": arcsec_angle, "start_coords": start_coords, "end_coords": end_coords, "position_angle": position_angle}
+  line_profile_output = {"line_profile": line_profile, "arcsec": arcsec_angle, "start_coords": start_coords, "end_coords": end_coords, "position_angle": position_angle}
+  return line_profile_output
