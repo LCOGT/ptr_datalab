@@ -29,18 +29,15 @@ def source_catalog(input: dict):
   cat_hdu = get_hdu(fits_path, 'CAT')
   sci_hdu = get_hdu(fits_path, 'SCI')
 
-  # The number of sources to send back to the frontend, default 50
-  SOURCE_CATALOG_COUNT = min(50, len(cat_hdu.data["x"]))
-
-  # get x,y and flux values for the first SOURCE_CATALOG_COUNT sources
-  x_points = cat_hdu.data["x"][:SOURCE_CATALOG_COUNT]
-  y_points = cat_hdu.data["y"][:SOURCE_CATALOG_COUNT]
-  flux = cat_hdu.data["flux"][:SOURCE_CATALOG_COUNT]
+  # get x,y and flux values
+  x_points = cat_hdu.data["x"]
+  y_points = cat_hdu.data["y"]
+  flux = cat_hdu.data["flux"]
 
   # ra, dec values may or may not be present in the CAT hdu
   if "ra" in cat_hdu.data.names and "dec" in cat_hdu.data.names:
-    ra = cat_hdu.data["ra"][:SOURCE_CATALOG_COUNT]
-    dec = cat_hdu.data["dec"][:SOURCE_CATALOG_COUNT]
+    ra = cat_hdu.data["ra"]
+    dec = cat_hdu.data["dec"]
   else:
     # TODO: implement a fallback way to calculate ra, dec from x, y and WCS
     ra = None
@@ -52,7 +49,7 @@ def source_catalog(input: dict):
 
   # create the list of source catalog objects
   source_catalog_data = []
-  for i in range(SOURCE_CATALOG_COUNT):
+  for i in range(len(cat_hdu.data)):
     source_data = {
       "x": x_points[i],
       "y": y_points[i],
