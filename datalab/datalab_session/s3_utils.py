@@ -124,7 +124,7 @@ def get_fits(basename: str, source: str = 'archive'):
 
     # create the tmp directory if it doesn't exist
     if not os.path.exists(settings.TEMP_FITS_DIR):
-      os.makedirs(settings.TEMP_FITS_DIR)
+      os.makedirs(settings.TEMP_FITS_DIR, exist_ok=True)
 
     match source:
       case 'archive':
