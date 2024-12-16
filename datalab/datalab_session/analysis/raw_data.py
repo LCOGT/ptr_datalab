@@ -23,27 +23,36 @@ def raw_data(input: dict):
     image = Image.fromarray(image_data)
     newImage = image.resize((max_size, max_size), Image.LANCZOS)
     bitpix = abs(int(sci_hdu.header.get('BITPIX', 16)))
+    max_value = int(sci_hdu.header.get('SATURATE', 0))  # If saturate header is present, use that as max value
     match bitpix:
         case 8:
             datatype = np.uint8
-            max_value = np.iinfo(datatype).max
+            if not max_value:
+                max_value = np.iinfo(datatype).max
         case 16:
             datatype = np.float16
-            max_value = np.finfo(datatype).max
+            if not max_value:
+                max_value = np.finfo(datatype).max
         case 32:
             datatype = np.float32
-            max_value = np.finfo(datatype).max
+            if not max_value:
+                max_value = np.finfo(datatype).max
     scaled_array = np.asarray(newImage).astype(datatype)
     scaled_array_flipped = np.flip(scaled_array, axis=0)
 
+    # Set the zmin/zmax to integer values for calculating bins
+    zmin = math.floor(zmin)
+    zmax = math.ceil(zmax)
+
     # Here we do a crazy histogram scaling to stretch the points in between zmin and zmax since that is where most detail is
     # We have 10 bins before zmin, 100 between zmin and zmax and 10 after zmax.
+    zero_point = math.floor(min(np.min(samples), 0))  # This is for images whose values go below 0
     lower_bound = int(zmin * 0.8)  # Increase resolution slightly below zmin
     upper_bound = int(zmax*1.2)  # Increase resolution slightly beyond zmax
-    lower_step = int(lower_bound / 10)
-    upper_step = int((max_value - upper_bound) / 10)
-    step = int((upper_bound - lower_bound) / 100)
-    bins = np.arange(0, lower_bound, lower_step).tolist()
+    lower_step = int(abs(lower_bound / 10))
+    upper_step = int(abs((max_value - upper_bound) / 10))
+    step = int(abs((upper_bound - lower_bound) / 100))
+    bins = np.arange(zero_point, lower_bound, lower_step).tolist()
     bins += np.arange(lower_bound, upper_bound, step).tolist()
     bins += np.arange(upper_bound, max_value, upper_step).tolist()
     histogram, bin_edges = np.histogram(samples, bins=bins)
@@ -67,7 +76,7 @@ def raw_data(input: dict):
             'width': scaled_array.shape[1],
             'histogram': hist,
             'bins': bin_middles,
-            'zmin': int(median),
-            'zmax': int(zmax),
+            'zmin': round(median),
+            'zmax': round(zmax),
             'bitdepth': bitpix
         }
