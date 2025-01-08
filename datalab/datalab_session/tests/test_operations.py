@@ -168,7 +168,7 @@ class TestMedianOperation(FileExtendedTestCase):
         self.clean_test_dir()
         return super().tearDown()
 
-    @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
+    @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
@@ -223,7 +223,7 @@ class TestRGBStackOperation(FileExtendedTestCase):
     
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
-    @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
+    @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
     def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_fits_and_thumbnails):
 
@@ -264,7 +264,7 @@ class TestStackOperation(FileExtendedTestCase):
         self.clean_test_dir()
         return super().tearDown()
 
-    @mock.patch('datalab.datalab_session.file_utils.tempfile.NamedTemporaryFile')
+    @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
