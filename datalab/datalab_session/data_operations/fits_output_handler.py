@@ -2,8 +2,8 @@ import tempfile
 import numpy as np
 from astropy.io import fits
 
-from datalab.datalab_session.file_utils import create_jpgs
-from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
+from datalab.datalab_session.utils.file_utils import create_jpgs
+from datalab.datalab_session.utils.s3_utils import save_fits_and_thumbnails
 
 
 class FITSOutputHandler():

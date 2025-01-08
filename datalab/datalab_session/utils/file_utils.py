@@ -6,7 +6,7 @@ import numpy as np
 from fits2image.conversions import fits_to_jpg, fits_to_tif
 
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.s3_utils import save_fits_and_thumbnails
+from datalab.datalab_session.utils.s3_utils import save_fits_and_thumbnails
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)

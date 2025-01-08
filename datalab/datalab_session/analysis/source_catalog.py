@@ -1,7 +1,7 @@
 import numpy as np
 
-from datalab.datalab_session.file_utils import get_hdu, scale_points
-from datalab.datalab_session.s3_utils import get_fits
+from datalab.datalab_session.utils.file_utils import get_hdu, scale_points
+from datalab.datalab_session.utils.s3_utils import get_fits
 
 # Source catalog Function Definition
 # ARGS: input (dict)

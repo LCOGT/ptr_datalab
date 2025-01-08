@@ -6,7 +6,7 @@ from datalab.datalab_session.data_operations.input_data_handler import InputData
 from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.file_utils import crop_arrays
+from datalab.datalab_session.utils.file_utils import crop_arrays
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)

@@ -1,7 +1,7 @@
 from astropy.io import fits
 
-from datalab.datalab_session.s3_utils import get_fits
-from datalab.datalab_session.file_utils import get_hdu
+from datalab.datalab_session.utils.s3_utils import get_fits
+from datalab.datalab_session.utils.file_utils import get_hdu
 
 class InputDataHandler():
   """A class to read FITS files and provide access to the data.
