@@ -3,8 +3,8 @@ from astropy.wcs import WCS
 from astropy.wcs import WcsError
 from astropy import coordinates
 
-from datalab.datalab_session.file_utils import scale_points, get_hdu
-from datalab.datalab_session.s3_utils import get_fits
+from datalab.datalab_session.utils.file_utils import scale_points, get_hdu
+from datalab.datalab_session.utils.s3_utils import get_fits
 
 # For creating an array of brightness along a user drawn line
 def line_profile(input: dict):

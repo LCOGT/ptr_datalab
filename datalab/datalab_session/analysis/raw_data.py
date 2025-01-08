@@ -1,8 +1,8 @@
 import numpy as np
 import math
 from PIL import Image
-from datalab.datalab_session.s3_utils import get_fits
-from datalab.datalab_session.file_utils import get_hdu
+from datalab.datalab_session.utils.s3_utils import get_fits
+from datalab.datalab_session.utils.file_utils import get_hdu
 from fits2image.scaling import extract_samples, calc_zscale_min_max
 
 # TODO: This analysis endpoint assumes the image to be of 16 bitdepth. We should make this agnositc to bit depth in the future

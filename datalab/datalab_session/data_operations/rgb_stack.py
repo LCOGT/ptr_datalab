@@ -1,13 +1,12 @@
 import logging
 
-from astropy.io import fits
 import numpy as np
 
 from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.file_utils import crop_arrays, create_jpgs
+from datalab.datalab_session.utils.file_utils import crop_arrays, create_jpgs
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)

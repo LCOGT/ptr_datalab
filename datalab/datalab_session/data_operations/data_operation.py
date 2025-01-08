@@ -5,9 +5,9 @@ import json
 from django.core.cache import cache
 import numpy as np
 
-from datalab.datalab_session.s3_utils import get_fits
+from datalab.datalab_session.utils.s3_utils import get_fits
 from datalab.datalab_session.tasks import execute_data_operation
-from datalab.datalab_session.file_utils import get_hdu
+from datalab.datalab_session.utils.file_utils import get_hdu
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 

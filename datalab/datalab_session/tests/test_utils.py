@@ -1,5 +1,5 @@
-from datalab.datalab_session.file_utils import *
-from datalab.datalab_session.s3_utils import *
+from datalab.datalab_session.utils.file_utils import *
+from datalab.datalab_session.utils.s3_utils import *
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
 class FileUtilsTestClass(FileExtendedTestCase):
