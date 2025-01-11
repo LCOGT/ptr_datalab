@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import math
 from PIL import Image
@@ -49,12 +50,26 @@ def raw_data(input: dict):
     zero_point = math.floor(min(np.min(samples), 0))  # This is for images whose values go below 0
     lower_bound = int(zmin * 0.8)  # Increase resolution slightly below zmin
     upper_bound = int(zmax*1.2)  # Increase resolution slightly beyond zmax
-    lower_step = int(abs(lower_bound / 10))
-    upper_step = int(abs((max_value - upper_bound) / 10))
-    step = int(abs((upper_bound - lower_bound) / 100))
-    bins = np.arange(zero_point, lower_bound, lower_step).tolist()
-    bins += np.arange(lower_bound, upper_bound, step).tolist()
-    bins += np.arange(upper_bound, max_value, upper_step).tolist()
+
+    def calculate_bins(start, end, num_bins):
+        # if start and end are equal, return a single bin
+        if start == end:
+            return [start]
+        # step must be at least 1
+        step = max(1, int(abs((end-start) / num_bins)))
+        return np.arange(start, end, step).tolist()
+
+    try:
+        # Create bins, can fail if trying to create range between two equal numbers
+        bins = calculate_bins(zero_point, lower_bound, 10)
+        bins += calculate_bins(lower_bound, upper_bound, 100)
+        bins += calculate_bins(upper_bound, max_value, 10)
+    except Exception as e:
+        logging.error(f'error calculating bins: {e}')
+        logging.error(f'values: zero_point={zero_point}, lower_bound={lower_bound}, upper_bound={upper_bound}, max_value={max_value}')
+        bins = np.linspace(zero_point, max_value, 120).tolist() # Fallback to linear binning
+    
+    # Calculate histogram
     histogram, bin_edges = np.histogram(samples, bins=bins)
     bin_middles = []
     previous_edge = 0
