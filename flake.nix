@@ -49,10 +49,17 @@
             export KUBECONFIG="`pwd`/local-kubeconfig"
 
             echo "Setting KUBECONFIG=$KUBECONFIG"
-            echo
-            echo "This is done to sandbox Kuberenetes tools (kubectl, skaffold, etc) to the local K8s cluster for this project."
             echo "If you would like to use a local K8s cluster across multiple projects, then set 'KUBECONFIG' to a common path"
-            echo "in both projects before running the command to create the local cluster."
+            echo "in both projects before running the ctlptl command to create the local cluster."
+            echo
+            echo "Starting local registry and cluster"
+            ctlptl apply -f local-registry.yaml -f local-cluster.yaml
+            echo
+            echo "Starting Dependencies in dev mode"
+            skaffold run -m deps --tail=false --verbosity=warn
+            echo "Ensure secrets.env.changeme is properly configured. Then run: "
+            echo "skaffold dev -m app --port-forward"
+            echo
           '';
         };
       };
