@@ -69,7 +69,12 @@ def create_jpgs(cache_key, fits_paths: str, color=False, zmin=None, zmax=None) -
     large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-large.jpg').name
     thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-small.jpg').name
 
-    max_height, max_width = max(get_fits_dimensions(path) for path in fits_paths)
+    max_height = 0
+    max_width = 0
+    for path in fits_paths:
+      dimensions = get_fits_dimensions(path)
+      max_height = max(max_height, dimensions[0])
+      max_width = max(max_width, dimensions[1])
 
     fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color, zmin=zmin, zmax=zmax)
     fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color, zmin=zmin, zmax=zmax)
