@@ -33,7 +33,7 @@ class InputDataHandler():
 
   def __str__(self) -> str:
     with fits.open(self.fits_file) as hdul:
-      return f"{self.basename}@{self.fits_file}\nHDU List\n{self.hdul.info()}"
+      return f"{self.basename}@{self.fits_file}\nHDU List\n{hdul.info()}"
   
   def get_hdu(self, extension: str=None):
     """Return an HDU from the FITS file.
