@@ -29,15 +29,18 @@ def source_catalog(input: dict):
   cat_hdu = get_hdu(fits_path, 'CAT')
   sci_hdu = get_hdu(fits_path, 'SCI')
 
+  DECIMALS_OF_PRECISION = 6
+  MAX_SOURCE_CATALOG_SIZE = min(len(cat_hdu.data["x"]), 1000)
+
   # get x,y and flux values
-  x_points = cat_hdu.data["x"]
-  y_points = cat_hdu.data["y"]
-  flux = cat_hdu.data["flux"]
+  x_points = cat_hdu.data["x"][:MAX_SOURCE_CATALOG_SIZE]
+  y_points = cat_hdu.data["y"][:MAX_SOURCE_CATALOG_SIZE]
+  flux = cat_hdu.data["flux"][:MAX_SOURCE_CATALOG_SIZE]
 
   # ra, dec values may or may not be present in the CAT hdu
   if "ra" in cat_hdu.data.names and "dec" in cat_hdu.data.names:
-    ra = cat_hdu.data["ra"]
-    dec = cat_hdu.data["dec"]
+    ra = cat_hdu.data["ra"][:MAX_SOURCE_CATALOG_SIZE]
+    dec = cat_hdu.data["dec"][:MAX_SOURCE_CATALOG_SIZE]
   else:
     # TODO: implement a fallback way to calculate ra, dec from x, y and WCS
     ra = None
@@ -49,15 +52,15 @@ def source_catalog(input: dict):
 
   # create the list of source catalog objects
   source_catalog_data = []
-  for i in range(len(cat_hdu.data)):
+  for i in range(MAX_SOURCE_CATALOG_SIZE):
     source_data = {
       "x": x_points[i],
       "y": y_points[i],
       "flux": flux[i].astype(int)
     }
     if ra is not None and dec is not None:
-      source_data["ra"] = '%.6f' % (ra[i])
-      source_data["dec"] = '%.6f' % (dec[i])
+      source_data["ra"] = f'%.{DECIMALS_OF_PRECISION}f' % (ra[i])
+      source_data["dec"] = f'%.{DECIMALS_OF_PRECISION}f' % (dec[i])
 
     source_catalog_data.append(source_data)
 
