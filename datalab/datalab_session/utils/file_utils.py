@@ -16,16 +16,18 @@ def get_hdu(path: str, extension: str = 'SCI') -> list[fits.HDUList]:
   Returns a HDU for the fits in the given path
   Warning: this function returns an opened file that must be closed after use
   """
-  hdu = fits.open(path)
-  try:
-    extension = hdu[extension]
-  except KeyError:
-    raise ClientAlertException(f"{extension} Header not found in fits file at {path.split('/')[-1]}")
-  
-  return extension
+  with fits.open(path) as hdu:
+    try:
+      extension_copy = hdu[extension].copy()
+    except KeyError:
+      raise ClientAlertException(f"{extension} Header not found in fits file at {path.split('/')[-1]}")
+    
+    return extension_copy
 
 def get_fits_dimensions(fits_file, extension: str = 'SCI') -> tuple:
-  return fits.open(fits_file)[extension].shape
+  with fits.open(fits_file) as hdu:
+    hdu_shape = hdu[extension].shape
+    return hdu_shape
 
 def create_fits(key: str, image_arr: np.ndarray, comment=None) -> str:
   """
