@@ -17,37 +17,33 @@ class FileUtilsTestClass(FileExtendedTestCase):
 
   def test_create_fits(self):
     test_2d_ndarray = np.zeros((10, 10))
-    path = create_fits('create_fits_test', test_2d_ndarray)
+    with create_fits('create_fits_test', test_2d_ndarray) as path:
+      # test the file was written out to a path
+      self.assertIsInstance(path, str)
+      self.assertIsFile(path)
+      
+      # test the file has the right data
+      hdu = fits.open(path)
+      self.assertEqual(hdu[0].header['KEY'], 'create_fits_test')
+      self.assertEqual(hdu[1].data.tolist(), test_2d_ndarray.tolist())
 
-    # test the file was written out to a path
-    self.assertIsInstance(path, str)
-    self.assertIsFile(path)
-    
-    # test the file has the right data
-    hdu = fits.open(path)
-    self.assertEqual(hdu[0].header['KEY'], 'create_fits_test')
-    self.assertEqual(hdu[1].data.tolist(), test_2d_ndarray.tolist())
-  
   def test_create_tif(self):
     fits_path = self.test_fits_path
-    tif_path = create_tif('create_tif_test', fits_path)
+    with create_tif('create_tif_test', fits_path) as tif_path:
+      # test the file was written out to a path
+      self.assertIsInstance(tif_path, str)
+      self.assertIsFile(tif_path)
+      self.assertFilesEqual(tif_path, self.test_tif_path)
 
-    # test the file was written out to a path
-    self.assertIsInstance(tif_path, str)
-    self.assertIsFile(tif_path)
-
-    self.assertFilesEqual(tif_path, self.test_tif_path)
-  
   def test_create_jpgs(self):
     fits_path = self.test_fits_path
-    jpg_paths = create_jpgs('create_jpgs_test', fits_path)
-
-    # test the files were written out to a path
-    self.assertEqual(len(jpg_paths), 2)
-    self.assertIsFile(jpg_paths[0])
-    self.assertIsFile(jpg_paths[1])
-    self.assertFilesEqual(jpg_paths[0], self.test_large_jpg_path)
-    self.assertFilesEqual(jpg_paths[1], self.test_small_jpg_path)
+    with create_jpgs('create_jpgs_test', fits_path) as jpg_paths:
+      # test the files were written out to a path
+      self.assertEqual(len(jpg_paths), 2)
+      self.assertIsFile(jpg_paths[0])
+      self.assertIsFile(jpg_paths[1])
+      self.assertFilesEqual(jpg_paths[0], self.test_large_jpg_path)
+      self.assertFilesEqual(jpg_paths[1], self.test_small_jpg_path)
   
   def test_stack_arrays(self):
     test_array_1 = np.zeros((10, 20))

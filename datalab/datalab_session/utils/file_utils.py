@@ -1,12 +1,14 @@
 import tempfile
 import logging
+import os
+from contextlib import contextmanager
 
 from astropy.io import fits
 import numpy as np
 from fits2image.conversions import fits_to_jpg, fits_to_tif
 
+from datalab import settings
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.utils.s3_utils import save_fits_and_thumbnails
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -29,6 +31,7 @@ def get_fits_dimensions(fits_file, extension: str = 'SCI') -> tuple:
     hdu_shape = hdu[extension].shape
     return hdu_shape
 
+@contextmanager
 def create_fits(key: str, image_arr: np.ndarray, comment=None) -> str:
   """
   Creates a fits file with the given key and image array
@@ -41,22 +44,30 @@ def create_fits(key: str, image_arr: np.ndarray, comment=None) -> str:
   image_hdu = fits.ImageHDU(data=image_arr, name='SCI')
 
   hdu_list = fits.HDUList([primary_hdu, image_hdu])
-  fits_path = tempfile.NamedTemporaryFile(suffix=f'{key}.fits').name
+  fits_path = tempfile.NamedTemporaryFile(suffix=f'{key}.fits', dir=settings.TEMP_FITS_DIR).name
   hdu_list.writeto(fits_path, overwrite=True)
 
-  return fits_path
+  try:
+    yield fits_path
+  finally:
+    os.remove(fits_path)
 
+@contextmanager
 def create_tif(key: str, fits_path: np.ndarray) -> str:
   """
     Creates a full sized TIFF file from a FITs
     Returns the path to the TIFF file
   """
   height, width = get_fits_dimensions(fits_path)
-  tif_path = tempfile.NamedTemporaryFile(suffix=f'{key}.tif').name
+  tif_path = tempfile.NamedTemporaryFile(suffix=f'{key}.tif', dir=settings.TEMP_FITS_DIR).name
   fits_to_tif(fits_path, tif_path, width=width, height=height)
 
-  return tif_path
+  try:
+    yield tif_path
+  finally:
+    os.remove(tif_path)
 
+@contextmanager
 def create_jpgs(cache_key, fits_paths: str, color=False, zmin=None, zmax=None) -> list:
     """
     Create jpgs from fits files and save them to S3
@@ -68,8 +79,8 @@ def create_jpgs(cache_key, fits_paths: str, color=False, zmin=None, zmax=None) -
         fits_paths = [fits_paths]
 
     # create the jpgs from the fits files
-    large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-large.jpg').name
-    thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-small.jpg').name
+    large_jpg_path      = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-large.jpg', dir=settings.TEMP_FITS_DIR).name
+    thumbnail_jpg_path  = tempfile.NamedTemporaryFile(suffix=f'{cache_key}-small.jpg', dir=settings.TEMP_FITS_DIR).name
 
     max_height = 0
     max_width = 0
@@ -81,7 +92,11 @@ def create_jpgs(cache_key, fits_paths: str, color=False, zmin=None, zmax=None) -
     fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color, zmin=zmin, zmax=zmax)
     fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color, zmin=zmin, zmax=zmax)
 
-    return large_jpg_path, thumbnail_jpg_path
+    try:
+      yield large_jpg_path, thumbnail_jpg_path
+    finally:
+      os.remove(large_jpg_path)
+      os.remove(thumbnail_jpg_path)
 
 def crop_arrays(array_list: list):
   """
@@ -116,16 +131,3 @@ def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_poi
     x_points = width_2 - x_points
 
   return x_points, y_points
-
-def create_output(cache_key, np_array, large_jpg=None, small_jpg=None, index=None, comment=None):
-  """
-  A more automated way of creating output for a dev
-  Dev can specify just a cache_key and np array and the function will create the fits and jpgs
-  or the dev can pass the fits_file or jpgs and the function will save them
-  """
-  fits_file = create_fits(cache_key, np_array, comment)
-
-  if not large_jpg or not small_jpg:
-    large_jpg, small_jpg = create_jpgs(cache_key, fits_file)
-  
-  return save_fits_and_thumbnails(cache_key, fits_file, large_jpg, small_jpg, index)

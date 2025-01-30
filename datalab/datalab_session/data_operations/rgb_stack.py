@@ -133,19 +133,18 @@ class RGB_Stack(BaseDataOperation):
 
         aligned_images = self._align_images(fits_files)
 
-        large_jpg_path, small_jpg_path = create_jpgs(self.cache_key, aligned_images, color=True, zmin=zmin_list, zmax=zmax_list)
-
-        stacked_ndarray = self._create_3d_array(input_handlers)
-        
-        rgb_comment = f'Datalab RGB Stack on files {", ".join(input["basename"] for input in rgb_inputs)}'
-        output = FITSOutputHandler(
-            self.cache_key, 
-            stacked_ndarray, 
-            rgb_comment
-        ).create_and_save_data_products(
-            large_jpg_path=large_jpg_path, 
-            small_jpg_path=small_jpg_path
-        )
+        with create_jpgs(self.cache_key, aligned_images, color=True, zmin=zmin_list, zmax=zmax_list) as (large_jpg_path, small_jpg_path):
+            stacked_ndarray = self._create_3d_array(input_handlers)
+            
+            rgb_comment = f'Datalab RGB Stack on files {", ".join(input["basename"] for input in rgb_inputs)}'
+            output = FITSOutputHandler(
+                self.cache_key, 
+                stacked_ndarray, 
+                rgb_comment
+            ).create_and_save_data_products(
+                large_jpg_path=large_jpg_path, 
+                small_jpg_path=small_jpg_path
+            )
 
         log.info(f'RGB Stack output: {output}')
         self.set_output(output)

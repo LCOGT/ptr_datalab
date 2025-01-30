@@ -3,6 +3,7 @@ from astropy.wcs import WCS
 from astropy.wcs import WcsError
 from astropy import coordinates
 
+from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.file_utils import scale_points, get_hdu
 from datalab.datalab_session.utils.s3_utils import get_fits
 
@@ -22,7 +23,10 @@ def line_profile(input: dict):
   """
   fits_path = get_fits(input['basename'], input['source'])
 
-  sci_hdu = get_hdu(fits_path, 'SCI')
+  try:
+    sci_hdu = get_hdu(fits_path, 'SCI')
+  except TypeError as e:
+    raise ClientAlertException(f'Error: {e}')
 
   x_points, y_points = scale_points(input["height"], input["width"], sci_hdu.data.shape[0], sci_hdu.data.shape[1], x_points=[input["x1"], input["x2"]], y_points=[input["y1"], input["y2"]])
 
