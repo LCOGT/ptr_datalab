@@ -95,8 +95,11 @@ def create_jpgs(cache_key, fits_paths: str, color=False, zmin=None, zmax=None) -
     try:
       yield large_jpg_path, thumbnail_jpg_path
     finally:
-      os.remove(large_jpg_path)
-      os.remove(thumbnail_jpg_path)
+      try:
+        os.remove(large_jpg_path)
+        os.remove(thumbnail_jpg_path)
+      except FileNotFoundError:
+        pass
 
 def crop_arrays(array_list: list):
   """

@@ -177,9 +177,9 @@ class TestMedianOperation(FileExtendedTestCase):
         # return the test fits paths in order of the input_files instead of aws fetch
         mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path]
         # save temp output to a known path so we can test it
-        mock_named_tempfile.return_value.name = self.temp_median_path
+        mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_median_path
         # avoids overwriting our output
-        mock_create_jpgs.return_value = ('test_path', 'test_path')
+        mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
         # don't save to s3
         mock_save_fits_and_thumbnails.return_value = self.temp_median_path
 
@@ -230,9 +230,9 @@ class TestRGBStackOperation(FileExtendedTestCase):
         # return the test fits paths in order of the input_files instead of aws fetch
         mock_get_fits.side_effect = [self.test_red_path, self.test_green_path, self.test_blue_path]
         # save temp output to a known path so we can test
-        mock_named_tempfile.return_value.name = self.temp_rgb_path
+        mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_rgb_path
         # avoids overwriting our output
-        mock_create_jpgs.return_value = ('test_path', 'test_path')
+        mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
         # don't save to s3
         mock_save_fits_and_thumbnails.return_value = self.temp_rgb_path
 
@@ -300,9 +300,9 @@ class TestStackOperation(FileExtendedTestCase):
         mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path,
                                      self.temp_fits_1_negative_path, self.temp_fits_2_negative_path]
         # save temp output to a known path so we can test it
-        mock_named_tempfile.return_value.name = self.temp_stacked_path
+        mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_stacked_path
         # avoids overwriting our output
-        mock_create_jpgs.return_value = ('test_path', 'test_path')
+        mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
         # don't save to s3
         mock_save_fits_and_thumbnails.return_value = self.temp_stacked_path
 
