@@ -107,10 +107,9 @@ class RGB_Stack(BaseDataOperation):
                 aligned_images.append(aligned_img)
         
         if len(aligned_images) != self.REQUIRED_INPUTS:
-            raise ClientAlertException('Failed to align all images')
+            log.info('could not align all images')
+            return fits_files
         
-        self.set_operation_progress(self.PROGRESS_STEPS['ALIGNMENT'])
-
         return aligned_images
             
     # Currently storing the output fits SCI HDU as a 3D ndarray consisting of each input's SCI data
@@ -132,6 +131,7 @@ class RGB_Stack(BaseDataOperation):
         fits_files = [handler.fits_file for handler in input_handlers]
 
         aligned_images = self._align_images(fits_files)
+        self.set_operation_progress(self.PROGRESS_STEPS['ALIGNMENT'])
 
         with create_jpgs(self.cache_key, aligned_images, color=True, zmin=zmin_list, zmax=zmax_list) as (large_jpg_path, small_jpg_path):
             stacked_ndarray = self._create_3d_array(input_handlers)
