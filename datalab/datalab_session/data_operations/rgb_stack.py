@@ -45,7 +45,7 @@ class RGB_Stack(BaseDataOperation):
                     'maximum': 1,
                     'include_custom_scale': True,
                     'combine_custom_scale': 'rgb',
-                    'filter': ['rp', 'r']
+                    'filter': ['rp', 'r', 'ip', 'h-alpha']
                 },
                 'green_input': {
                     'name': 'Green Filter',
@@ -55,7 +55,7 @@ class RGB_Stack(BaseDataOperation):
                     'maximum': 1,
                     'include_custom_scale': True,
                     'combine_custom_scale': 'rgb',
-                    'filter': ['V', 'gp']
+                    'filter': ['v', 'gp', 'oiii']
                 },
                 'blue_input': {
                     'name': 'Blue Filter',
@@ -65,7 +65,7 @@ class RGB_Stack(BaseDataOperation):
                     'maximum': 1,
                     'include_custom_scale': True,
                     'combine_custom_scale': 'rgb',
-                    'filter': ['B']
+                    'filter': ['b', 'sii']
                 }
             },
         }
