@@ -28,8 +28,9 @@ scikit-image = "^0.23.2"
 pillow = "^11.0.0"
 fits-align = "^0.4.4"
 
-[tool.poetry.group.dev.dependencies]
+[tool.poetry.group.test.dependencies]
 pytest = "^7.4.3"
+mixer = "^7.2.2"
 
 [build-system]
 requires = ["poetry-core"]

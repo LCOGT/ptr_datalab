@@ -1,5 +1,6 @@
 from rest_framework import viewsets
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 
 from datalab.datalab_session.serializers import DataSessionSerializer, DataOperationSerializer
@@ -27,6 +28,13 @@ class DataOperationViewSet(viewsets.ModelViewSet):
             operation.perform_operation()
 
         return Response(serializer.data)
+
+    @action(detail=False, methods=['post'])
+    def bulk_delete(self, request, session_pk=None):
+        ''' Bulk Delete given a list of operation ids '''
+        ids_to_delete = request.data.get('ids')
+        num_deleted, _ = DataOperation.objects.filter(pk__in=ids_to_delete, session__pk=session_pk).delete()
+        return Response({'deleted': num_deleted})
 
 
 class DataSessionViewSet(viewsets.ModelViewSet):
