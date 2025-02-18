@@ -64,7 +64,7 @@ class BaseDataOperation(ABC):
 
     def generate_cache_key(self) -> str:
         """ Generate a unique cache key hashed from the input_data and operation name """
-        string_key = f'{self.name()}_{json.dumps(sorted(self.input_data.items()))}'
+        string_key = f'{self.name()}_{json.dumps(sorted(self.input_data.items()), sort_keys=True)}'
         return hashlib.sha256(string_key.encode('utf-8')).hexdigest()
 
     def set_status(self, status: str):
