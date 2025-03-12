@@ -29,21 +29,20 @@ class FileUtilsTestClass(FileExtendedTestCase):
 
   def test_create_tif(self):
     fits_path = self.test_fits_path
-    with create_tif('create_tif_test', fits_path) as tif_path:
-      # test the file was written out to a path
+    with temp_file_manager('test.tif') as tif_path:
+      create_tif(fits_path, tif_path)
       self.assertIsInstance(tif_path, str)
       self.assertIsFile(tif_path)
       self.assertFilesEqual(tif_path, self.test_tif_path)
 
   def test_create_jpgs(self):
     fits_path = self.test_fits_path
-    with create_jpgs('create_jpgs_test', fits_path) as jpg_paths:
-      # test the files were written out to a path
-      self.assertEqual(len(jpg_paths), 2)
-      self.assertIsFile(jpg_paths[0])
-      self.assertIsFile(jpg_paths[1])
-      self.assertFilesEqual(jpg_paths[0], self.test_large_jpg_path)
-      self.assertFilesEqual(jpg_paths[1], self.test_small_jpg_path)
+    with temp_file_manager('large.jpg', 'small.jpg') as (large_jpg, small_jpg):
+      create_jpgs(fits_path, large_jpg, small_jpg)
+      self.assertIsFile(large_jpg)
+      self.assertIsFile(small_jpg)
+      self.assertFilesEqual(large_jpg, self.test_large_jpg_path)
+      self.assertFilesEqual(small_jpg, self.test_small_jpg_path)
   
   def test_stack_arrays(self):
     test_array_1 = np.zeros((10, 20))

@@ -4,7 +4,7 @@ import numpy as np
 from astropy.io import fits
 
 from datalab import settings
-from datalab.datalab_session.utils.file_utils import create_jpgs
+from datalab.datalab_session.utils.file_utils import create_jpgs, temp_file_manager
 from datalab.datalab_session.utils.s3_utils import save_fits_and_thumbnails
 
 
@@ -61,7 +61,8 @@ class FITSOutputHandler():
 
       # allow for operations to pregenerate the jpgs, ex. RGB stacking
       if not large_jpg_path or not small_jpg_path:
-        with create_jpgs(self.datalab_id, fits_output_path) as (large_jpg_path, small_jpg_path):
+        with temp_file_manager(f"{self.datalab_id}-large.jpg", f"{self.datalab_id}-small.jpg", dir=settings.TEMP_FITS_DIR) as (large_jpg_path, small_jpg_path):
+          create_jpgs(self.datalab_id, fits_output_path)
           return save_fits_and_thumbnails(self.datalab_id, fits_output_path, large_jpg_path, small_jpg_path, index)
       else:
         return save_fits_and_thumbnails(self.datalab_id, fits_output_path, large_jpg_path, small_jpg_path, index)
