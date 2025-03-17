@@ -225,14 +225,17 @@ class TestRGBStackOperation(FileExtendedTestCase):
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
-    def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_fits_and_thumbnails):
-
+    def test_operate(self, mock_get_fits, mock_temp_file_manager, mock_create_jpgs, mock_save_fits_and_thumbnails):
         # return the test fits paths in order of the input_files instead of aws fetch
         mock_get_fits.side_effect = [self.test_red_path, self.test_green_path, self.test_blue_path]
-        # save temp output to a known path so we can test
-        mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_rgb_path
-        # avoids overwriting our output
-        mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
+        # Mock temp_file_manager to return to temp path for testing
+        mock_temp_file_manager.return_value.__enter__.return_value = [
+            self.temp_rgb_path,  # TIFF file path
+            f'{test_path}large_test.jpg',
+            f'{test_path}small_test.jpg'
+        ]
+        # Skip creating jpgs, tiffs, etc.
+        mock_create_jpgs.return_value = ('test_path', 'test_path')
         # don't save to s3
         mock_save_fits_and_thumbnails.return_value = self.temp_rgb_path
 
@@ -248,6 +251,12 @@ class TestRGBStackOperation(FileExtendedTestCase):
 
         self.assertEqual(rgb.get_operation_progress(), 1.0)
         self.assertTrue(os.path.exists(output[0]))
+        # check first 100 bytes of output file
+        with open(output[0], "rb") as f:
+            print("\n Output FITS file content preview: \n\n", f.read(100), '\n\n')
+        # check first 100 bytes of test file
+        with open(self.test_rgb_path, "rb") as f:
+            print("Test FITS file content preview: \n\n", f.read(100), '\n\n')
         self.assertFilesEqual(self.test_rgb_path, output[0])
 
 

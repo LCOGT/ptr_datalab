@@ -125,9 +125,7 @@ class RGB_Stack(BaseDataOperation):
 
     def operate(self):
         rgb_inputs = self._validate_inputs()
-
         input_handlers, zmin_list, zmax_list = self._process_inputs(rgb_inputs)
-
         fits_files = [handler.fits_file for handler in input_handlers]
 
         aligned_images = self._align_images(fits_files)
