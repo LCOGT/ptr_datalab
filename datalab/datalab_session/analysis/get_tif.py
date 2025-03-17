@@ -22,5 +22,5 @@ def get_tif(input: dict):
     with temp_file_manager(f'{basename}.tif') as tif_path:
       create_tif(fits_path, tif_path)
       tif_url = add_file_to_bucket(file_key, tif_path)
-  
+
   return {"tif_url": tif_url}
