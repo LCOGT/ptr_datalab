@@ -139,22 +139,28 @@ def get_fits(basename: str, source: str = 'archive'):
   
   return basename_file_path
 
-def save_fits_and_thumbnails(cache_key, fits_path, large_jpg_path, thumbnail_jpg_path, index=None):
-    """
-    Save Fits and Thumbnails in S3 Buckets, Returns the URLs in an data operation output ready object
-    """
-    bucket_key = f'{cache_key}/{cache_key}-{index}' if index else f'{cache_key}/{cache_key}'
+def save_files_to_s3(cache_key, index=None, **file_paths):
+  """
+  Save multiple files to S3, generating URLs and returning them in a structured output.
+  **file_paths args should follow convention of <annotation>_<file_type>_path
+  <annotation> will be appended to the bucket key for naming in S3
+  <file_type> will be used to determine the file extension
+  """
+  bucket_key = f'{cache_key}/{cache_key}-{index}' if index else f'{cache_key}/{cache_key}'
+  output = {
+    'basename': f'{cache_key}-{index}' if index else cache_key,
+    'source': 'datalab'
+  }
+ 
+  for key, path in file_paths.items():
+    parts = key.split('_')
+    annotation = parts[0] if len(parts) == 3 else ''  # Extract annotation if available
+    file_ext = path.split('.')[-1]  # Extract extension from filename
 
-    fits_url            = add_file_to_bucket(f'{bucket_key}.fits', fits_path)
-    large_jpg_url       = add_file_to_bucket(f'{bucket_key}-large.jpg', large_jpg_path)
-    thumbnail_jpg_url   = add_file_to_bucket(f'{bucket_key}-small.jpg', thumbnail_jpg_path)
+    output_key = f"{annotation}_url" if annotation else f"{file_ext}_url"
+    s3_key = f"{bucket_key}-{annotation}.{file_ext}" if annotation else f"{bucket_key}.{file_ext}"
+
+    log.info(f"Uploading {path} to {s3_key}")
+    output[output_key] = add_file_to_bucket(s3_key, path)
     
-    output_file = dict({
-        'fits_url': fits_url,
-        'large_url': large_jpg_url,
-        'thumbnail_url': thumbnail_jpg_url,
-        'basename': f'{cache_key}-{index}' if index else cache_key,
-        'source': 'datalab'}
-    )
-    
-    return output_file
+  return output

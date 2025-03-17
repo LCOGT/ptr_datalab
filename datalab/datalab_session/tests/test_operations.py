@@ -170,7 +170,7 @@ class TestMedianOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
-    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
@@ -221,9 +221,9 @@ class TestRGBStackOperation(FileExtendedTestCase):
         self.clean_test_dir()
         return super().tearDown()
     
-    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
-    @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
     def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_fits_and_thumbnails):
 
@@ -266,7 +266,7 @@ class TestStackOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
-    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
 
