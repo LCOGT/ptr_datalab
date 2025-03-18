@@ -130,7 +130,12 @@ class RGB_Stack(BaseDataOperation):
 
         fits_files = [handler.fits_file for handler in input_handlers]
 
-        aligned_images = self._align_images(fits_files)
+        try:
+            aligned_images = self._align_images(fits_files)
+        except KeyError:
+            log.info('Could not align images due to missing CAT header')
+            aligned_images = fits_files
+
         self.set_operation_progress(self.PROGRESS_STEPS['ALIGNMENT'])
 
         with create_jpgs(self.cache_key, aligned_images, color=True, zmin=zmin_list, zmax=zmax_list) as (large_jpg_path, small_jpg_path):
