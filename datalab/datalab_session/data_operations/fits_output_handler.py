@@ -74,4 +74,4 @@ class FITSOutputHandler():
         file_paths['small_jpg_path'] = small_jpg_path or gen_small_jpg
         file_paths['fits_path'] = fits_output_path
 
-        return save_files_to_s3(self.datalab_id, index, **file_paths)
+        return save_files_to_s3(self.datalab_id, file_paths, index)

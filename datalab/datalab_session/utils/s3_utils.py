@@ -139,7 +139,7 @@ def get_fits(basename: str, source: str = 'archive'):
   
   return basename_file_path
 
-def save_files_to_s3(cache_key, index=None, **file_paths):
+def save_files_to_s3(cache_key, file_paths: dict, index=None):
   """
   Save multiple files to S3, generating URLs and returning them in a structured output.
   **file_paths args should follow convention of <annotation>_<file_type>_path
