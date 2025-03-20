@@ -144,7 +144,7 @@ def save_files_to_s3(cache_key, index=None, **file_paths):
   Save multiple files to S3, generating URLs and returning them in a structured output.
   **file_paths args should follow convention of <annotation>_<file_type>_path
   <annotation> will be appended to the bucket key for naming in S3
-  <file_type> will be used to determine the file extension
+  path extension will determine file type
   """
   bucket_key = f'{cache_key}/{cache_key}-{index}' if index else f'{cache_key}/{cache_key}'
   output = {
