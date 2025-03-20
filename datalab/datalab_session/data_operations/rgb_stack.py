@@ -9,7 +9,7 @@ from datalab.datalab_session.data_operations.input_data_handler import InputData
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.utils.file_utils import crop_arrays, create_jpgs
+from datalab.datalab_session.utils.file_utils import crop_arrays, create_jpgs, create_tif, temp_file_manager
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -125,9 +125,7 @@ class RGB_Stack(BaseDataOperation):
 
     def operate(self):
         rgb_inputs = self._validate_inputs()
-
         input_handlers, zmin_list, zmax_list = self._process_inputs(rgb_inputs)
-
         fits_files = [handler.fits_file for handler in input_handlers]
 
         try:
@@ -138,17 +136,25 @@ class RGB_Stack(BaseDataOperation):
 
         self.set_operation_progress(self.PROGRESS_STEPS['ALIGNMENT'])
 
-        with create_jpgs(self.cache_key, aligned_images, color=True, zmin=zmin_list, zmax=zmax_list) as (large_jpg_path, small_jpg_path):
-            stacked_ndarray = self._create_3d_array(input_handlers)
+        with temp_file_manager(
+            f"{self.cache_key}.tif", f"{self.cache_key}-large.jpg", f"{self.cache_key}-small.jpg",
+            dir=settings.TEMP_FITS_DIR
+        ) as (tif_path, large_jpg_path, small_jpg_path):
+        
+            create_tif(aligned_images, tif_path, color=True, zmin=zmin_list, zmax=zmax_list)
+            create_jpgs(aligned_images, large_jpg_path, small_jpg_path, color=True, zmin=zmin_list, zmax=zmax_list)
             
+            stacked_ndarray = self._create_3d_array(input_handlers)
             rgb_comment = f'Datalab RGB Stack on files {", ".join(input["basename"] for input in rgb_inputs)}'
+
             output = FITSOutputHandler(
                 self.cache_key, 
                 stacked_ndarray, 
                 rgb_comment
             ).create_and_save_data_products(
                 large_jpg_path=large_jpg_path, 
-                small_jpg_path=small_jpg_path
+                small_jpg_path=small_jpg_path,
+                tif_path=tif_path
             )
 
         log.info(f'RGB Stack output: {output}')

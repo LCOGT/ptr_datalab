@@ -4,8 +4,8 @@ import numpy as np
 from astropy.io import fits
 
 from datalab import settings
-from datalab.datalab_session.utils.file_utils import create_jpgs
-from datalab.datalab_session.utils.s3_utils import save_fits_and_thumbnails
+from datalab.datalab_session.utils.file_utils import create_jpgs, temp_file_manager
+from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 
 
 class FITSOutputHandler():
@@ -42,26 +42,36 @@ class FITSOutputHandler():
     """Add a comment to the FITS file."""
     self.primary_hdu.header.add_comment(comment)
   
-  def create_and_save_data_products(self, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None):
-    """Create the FITS file and save it to S3.
-
-    This function can be called when you're done with the operation and would like to save the FITS file and jpgs in S3.
-    It returns a datalab output dictionary that is formatted to be readable by the frontend.
+  def create_and_save_data_products(self, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None):
+    """
+    When you're done with the operation and would like to save the FITS file and jpgs in S3. JPGs are required, any other file is optional.
     
     Args:
-      index (int): Optionally add an index to the FITS file name. Appended to cache_key for multiple outputs.
-      large_jpg (str): Optionally add a path to a large jpg to save, will not create a new jpg.
-      small_jpg (str): Optionally add a path to a small jpg to save, will not create a new jpg.
+      index (int): Adds an index to the FITS file name for multiple outputs
+      large_jpg (str): existing jpg, used in RGB stack
+      small_jpg (str): existing jpg, used in RGB stack
+      tif_path (str): optional tif file
+    Returns:
+      Datalab output dictionary that is formatted to be readable by the frontend
     """
+    file_paths = {}
     hdu_list = fits.HDUList([self.primary_hdu, self.image_hdu])
-  
+
     with tempfile.NamedTemporaryFile(suffix=f'{self.datalab_id}.fits', dir=settings.TEMP_FITS_DIR) as fits_output_file:
+      # Create the output FITS file
       fits_output_path = fits_output_file.name
       hdu_list.writeto(fits_output_path, overwrite=True)
 
-      # allow for operations to pregenerate the jpgs, ex. RGB stacking
-      if not large_jpg_path or not small_jpg_path:
-        with create_jpgs(self.datalab_id, fits_output_path) as (large_jpg_path, small_jpg_path):
-          return save_fits_and_thumbnails(self.datalab_id, fits_output_path, large_jpg_path, small_jpg_path, index)
-      else:
-        return save_fits_and_thumbnails(self.datalab_id, fits_output_path, large_jpg_path, small_jpg_path, index)
+      # Create jpgs if not provided
+      with temp_file_manager(f"{self.datalab_id}-large.jpg", f"{self.datalab_id}-small.jpg", dir=settings.TEMP_FITS_DIR) as (gen_large_jpg, gen_small_jpg):
+        if not large_jpg_path or not small_jpg_path:
+          create_jpgs(fits_output_path, gen_large_jpg, gen_small_jpg)
+
+        if tif_path:
+          file_paths['tif_path'] = tif_path
+        
+        file_paths['large_jpg_path'] = large_jpg_path or gen_large_jpg
+        file_paths['small_jpg_path'] = small_jpg_path or gen_small_jpg
+        file_paths['fits_path'] = fits_output_path
+
+        return save_files_to_s3(self.datalab_id, file_paths, index)

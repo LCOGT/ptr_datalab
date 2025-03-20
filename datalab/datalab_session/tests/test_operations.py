@@ -170,9 +170,9 @@ class TestMedianOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
-    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
-    def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
+    def test_operate(self, mock_create_jpgs, mock_save_files_to_s3, mock_get_fits, mock_named_tempfile):
 
         # return the test fits paths in order of the input_files instead of aws fetch
         mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path]
@@ -181,7 +181,7 @@ class TestMedianOperation(FileExtendedTestCase):
         # avoids overwriting our output
         mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
         # don't save to s3
-        mock_save_fits_and_thumbnails.return_value = self.temp_median_path
+        mock_save_files_to_s3.return_value = self.temp_median_path
 
         input_data = {
             'input_files': [
@@ -221,12 +221,11 @@ class TestRGBStackOperation(FileExtendedTestCase):
         self.clean_test_dir()
         return super().tearDown()
     
-    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
-    @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
-    def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_fits_and_thumbnails):
-
+    def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_files_to_s3):
         # return the test fits paths in order of the input_files instead of aws fetch
         mock_get_fits.side_effect = [self.test_red_path, self.test_green_path, self.test_blue_path]
         # save temp output to a known path so we can test
@@ -234,7 +233,7 @@ class TestRGBStackOperation(FileExtendedTestCase):
         # avoids overwriting our output
         mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
         # don't save to s3
-        mock_save_fits_and_thumbnails.return_value = self.temp_rgb_path
+        mock_save_files_to_s3.return_value = self.temp_rgb_path
 
         input_data = {
             'red_input': [{'basename': 'red_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}],
@@ -266,9 +265,9 @@ class TestStackOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
-    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_fits_and_thumbnails')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
-    def test_operate(self, mock_create_jpgs, mock_save_fits_and_thumbnails, mock_get_fits, mock_named_tempfile):
+    def test_operate(self, mock_create_jpgs, mock_save_files_to_s3, mock_get_fits, mock_named_tempfile):
 
         # Create a negative images using numpy
         negative_image_hdul = fits.open(self.test_fits_1_path)
@@ -304,7 +303,7 @@ class TestStackOperation(FileExtendedTestCase):
         # avoids overwriting our output
         mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
         # don't save to s3
-        mock_save_fits_and_thumbnails.return_value = self.temp_stacked_path
+        mock_save_files_to_s3.return_value = self.temp_stacked_path
 
         input_data = {
             # input_data satisfies the Stack operation argument check, but the data comes from the mock_get_fits (above)
