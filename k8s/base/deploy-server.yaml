@@ -19,11 +19,19 @@ spec:
         fsGroup: 1000
       volumes:
         - name: tmp
-          emptyDir:
-            sizeLimit: 1Gi
+          ephemeral:
+            volumeClaimTemplate:
+              metadata:
+                labels:
+                  type: datalab-server-tmp-volume
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                resources:
+                  requests:
+                    storage: 1Gi
         - name: static
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: 128Mi
       initContainers:
         - name: check-db-ready
           image: postgres:14-alpine
