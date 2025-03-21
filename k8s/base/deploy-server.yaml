@@ -20,10 +20,10 @@ spec:
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: 128Mi
+            sizeLimit: 1Gi
         - name: static
           emptyDir:
-            sizeLimit: 128Mi
+            sizeLimit: 1Gi
       initContainers:
         - name: check-db-ready
           image: postgres:14-alpine
