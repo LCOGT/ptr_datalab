@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from unittest import mock
 import os
 
@@ -173,9 +174,16 @@ class TestMedianOperation(FileExtendedTestCase):
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_files_to_s3, mock_get_fits, mock_named_tempfile):
-
+        def mock_get_fits_context(basename, source='archive'):
+            @contextmanager
+            def mock_context():
+                yield {
+                    "fits_1": self.test_fits_1_path, 
+                    "fits_2": self.test_fits_2_path,
+                }[basename]
+            return mock_context()
         # return the test fits paths in order of the input_files instead of aws fetch
-        mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path]
+        mock_get_fits.side_effect = mock_get_fits_context
         # save temp output to a known path so we can test it
         mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_median_path
         # avoids overwriting our output
@@ -226,8 +234,18 @@ class TestRGBStackOperation(FileExtendedTestCase):
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
     def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_files_to_s3):
+        def mock_get_fits_context(basename, source='archive'):
+            @contextmanager
+            def mock_context():
+                yield {
+                    'red_fits': self.test_red_path,
+                    'green_fits': self.test_green_path,
+                    'blue_fits': self.test_blue_path
+                }[basename]
+            return mock_context()
+        
         # return the test fits paths in order of the input_files instead of aws fetch
-        mock_get_fits.side_effect = [self.test_red_path, self.test_green_path, self.test_blue_path]
+        mock_get_fits.side_effect = mock_get_fits_context
         # save temp output to a known path so we can test
         mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_rgb_path
         # avoids overwriting our output
@@ -251,11 +269,10 @@ class TestRGBStackOperation(FileExtendedTestCase):
 
 
 class TestStackOperation(FileExtendedTestCase):
-    # this test should work on any fits files, so we just grab from what's there already
     test_fits_1_path = f'{test_path}fits_1.fits.fz'
     test_fits_2_path = f'{test_path}fits_2.fits.fz'
 
-    temp_stacked_path = f'{test_path}temp_stacked.fits'  # temp output path
+    temp_stacked_path = f'{test_path}temp_stacked.fits'  
     temp_fits_1_negative_path = f'{test_path}temp_fits_1_negative.fits'
     temp_fits_2_negative_path = f'{test_path}temp_fits_2_negative.fits'
 
@@ -268,41 +285,31 @@ class TestStackOperation(FileExtendedTestCase):
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
     def test_operate(self, mock_create_jpgs, mock_save_files_to_s3, mock_get_fits, mock_named_tempfile):
+        # Maintain a queue of file paths
+        fits_queue = {
+            "fits_1": [self.test_fits_1_path, self.temp_fits_1_negative_path],
+            "fits_2": [self.test_fits_2_path, self.temp_fits_2_negative_path]
+        }
 
-        # Create a negative images using numpy
-        negative_image_hdul = fits.open(self.test_fits_1_path)
-        negative_image = negative_image_hdul['SCI']
-        # Multiply the data by -1 to create a negative image
-        negative_image.data = np.multiply(negative_image.data, -1)
+        def mock_get_fits_context(basename, source='archive'):
+            @contextmanager
+            def mock_context():
+                yield fits_queue[basename].pop(0)
+            return mock_context()
+        
+        # Generate negative images
+        for original, negative_path in [
+            (self.test_fits_1_path, self.temp_fits_1_negative_path),
+            (self.test_fits_2_path, self.temp_fits_2_negative_path)
+        ]:
+            hdul = fits.open(original)
+            hdul['SCI'].data *= -1
+            hdul.writeto(negative_path, overwrite=True)
 
-        # now write to new fits file
-        header = fits.Header([('KEY', self.temp_fits_1_negative_path)])
-        primary_hdu = fits.PrimaryHDU(header=header)
-        sci_hdu = fits.ImageHDU(negative_image.data, name='SCI')
-        hdul = fits.HDUList([primary_hdu, sci_hdu])
-        hdul.writeto(self.temp_fits_1_negative_path)
-
-        # do the same for the second image
-        negative_image_hdul = fits.open(self.test_fits_2_path)
-        negative_image = negative_image_hdul['SCI']
-        negative_image.data = np.multiply(negative_image.data, -1)
-
-        # now write to new fits file
-        header = fits.Header([('KEY', self.temp_fits_2_negative_path)])
-        primary_hdu = fits.PrimaryHDU(header=header)
-        sci_hdu = fits.ImageHDU(negative_image.data, name='SCI')
-        hdul = fits.HDUList([primary_hdu, sci_hdu])
-        hdul.writeto(self.temp_fits_2_negative_path)
-
-
-        # return the test fits paths in order of the input_files instead of aws fetch
-        mock_get_fits.side_effect = [self.test_fits_1_path, self.test_fits_2_path,
-                                     self.temp_fits_1_negative_path, self.temp_fits_2_negative_path]
-        # save temp output to a known path so we can test it
+        # Mock behavior
+        mock_get_fits.side_effect = mock_get_fits_context
         mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_stacked_path
-        # avoids overwriting our output
         mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
-        # don't save to s3
         mock_save_files_to_s3.return_value = self.temp_stacked_path
 
         input_data = {
@@ -315,30 +322,22 @@ class TestStackOperation(FileExtendedTestCase):
             ]
         }
 
-        # Stack the original images and the negative images.
-        # The result should be a blank image.  (x + -x = 0)
+        # Perform the stacking operation
         stack = Stack(input_data)
         stack.operate()
         output = stack.get_output().get('output_files')
 
-        # 100% completion
         self.assertEqual(stack.get_operation_progress(), 1.0)
-
-        # test that file paths are the same
         self.assertEqual(self.temp_stacked_path, output[0])
-
-        # output file exists
         self.assertTrue(os.path.exists(self.temp_stacked_path))
 
-        # test that the output file (self.temp_stacked_path) is a blank image
+        # Verify output is a blank image
         output_hdul = fits.open(self.temp_stacked_path)
-        self.assertTrue(np.sum(output_hdul['SCI'].data == 0))
+        self.assertTrue(np.all(output_hdul['SCI'].data == 0))
 
     def test_not_enough_files(self):
         input_data = {
-            'input_files': [
-                {'basename': 'sample_lco_fits_1'}
-            ]
+            'input_files': [{'basename': 'sample_lco_fits_1'}]
         }
         median = Median(input_data)
         

@@ -20,7 +20,7 @@ class TestAnalysis(TestCase):
     @mock.patch('datalab.datalab_session.analysis.line_profile.get_fits')
     def test_line_profile(self, mock_get_fits):
 
-        mock_get_fits.return_value = self.analysis_fits_1_path
+        mock_get_fits.return_value.__enter__.return_value = self.analysis_fits_1_path
 
         output = line_profile.line_profile({
             'basename': 'fits_1',
@@ -38,7 +38,7 @@ class TestAnalysis(TestCase):
     @mock.patch('datalab.datalab_session.analysis.source_catalog.get_fits')
     def test_source_catalog(self, mock_get_fits):
 
-        mock_get_fits.return_value = self.analysis_fits_1_path
+        mock_get_fits.return_value.__enter__.return_value = self.analysis_fits_1_path
         
         output = source_catalog.source_catalog({
             'basename': 'fits_1',

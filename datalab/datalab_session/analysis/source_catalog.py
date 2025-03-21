@@ -24,10 +24,9 @@ def source_catalog(input: dict):
   """
     Returns a dict representing the source catalog data with x,y coordinates and flux values
   """
-  fits_path = get_fits(input['basename'], input['source'])
-
-  cat_hdu = get_hdu(fits_path, 'CAT')
-  sci_hdu = get_hdu(fits_path, 'SCI')
+  with get_fits(input['basename'], input['source']) as fits_path:
+    cat_hdu = get_hdu(fits_path, 'CAT')
+    sci_hdu = get_hdu(fits_path, 'SCI')
 
   DECIMALS_OF_PRECISION = 6
   MAX_SOURCE_CATALOG_SIZE = min(len(cat_hdu.data["x"]), 1000)

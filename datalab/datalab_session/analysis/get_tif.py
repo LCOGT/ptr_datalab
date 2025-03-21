@@ -18,9 +18,9 @@ def get_tif(input: dict):
     tif_url = get_s3_url(file_key)
   else:
     # If tif file doesn't exist, generate a new tif file
-    fits_path = get_fits(basename)
-    with temp_file_manager(f'{basename}.tif') as tif_path:
-      create_tif(fits_path, tif_path)
-      tif_url = add_file_to_bucket(file_key, tif_path)
+    with get_fits(basename) as fits_path:
+      with temp_file_manager(f'{basename}.tif') as tif_path:
+        create_tif(fits_path, tif_path)
+        tif_url = add_file_to_bucket(file_key, tif_path)
 
   return {"tif_url": tif_url}
