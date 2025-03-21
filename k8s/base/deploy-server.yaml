@@ -19,16 +19,8 @@ spec:
         fsGroup: 1000
       volumes:
         - name: tmp
-          ephemeral:
-            volumeClaimTemplate:
-              metadata:
-                labels:
-                  type: datalab-server-tmp-volume
-              spec:
-                accessModes: [ "ReadWriteOnce" ]
-                resources:
-                  requests:
-                    storage: 1Gi
+          emptyDir:
+            sizeLimit: 1Gi
         - name: static
           emptyDir:
             sizeLimit: 128Mi
