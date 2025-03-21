@@ -3,11 +3,8 @@ import hashlib
 import json
 
 from django.core.cache import cache
-import numpy as np
 
-from datalab.datalab_session.utils.s3_utils import get_fits
 from datalab.datalab_session.tasks import execute_data_operation
-from datalab.datalab_session.utils.file_utils import get_hdu
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
@@ -97,19 +94,3 @@ class BaseDataOperation(ABC):
     def set_failed(self, message: str):
         self.set_status('FAILED')
         self.set_message(message)
-
-    def get_fits_npdata(self, input_files: list[dict]) -> list[np.memmap]:
-        image_data_list = []
-
-        # get the fits urls and extract the image data
-        for index, file_info in enumerate(input_files, start=1):
-            basename = file_info.get('basename', 'No basename found')
-            source = file_info.get('source', 'No source found')
-
-            fits_path = get_fits(file_info['basename'], file_info['source'])
-            sci_hdu = get_hdu(fits_path, 'SCI')
-            image_data_list.append(sci_hdu.data)
-
-            self.set_operation_progress(index / len(input_files) * 0.5)
-
-        return image_data_list

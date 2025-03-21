@@ -1,7 +1,10 @@
 import logging
+from pathlib import Path
+import uuid
 import requests
 import os
 import urllib.request
+from contextlib import contextmanager
 
 import boto3
 from botocore.exceptions import ClientError
@@ -111,16 +114,18 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
   fits_url = results[0].get('url', 'No URL found')
   return fits_url
 
+@contextmanager
 def get_fits(basename: str, source: str = 'archive'):
   """
   Returns a Fits File for the given basename from the source bucket
-  Will download the file to a tmp directory so future calls can open it directly
   """
   basename = basename.replace('-large', '').replace('-small', '')
-  basename_file_path = os.path.join(settings.TEMP_FITS_DIR, basename)
+  # Use a unique filename for each download to prevent collisions
+  unique_name = f"{basename}_{uuid.uuid4().hex}.fits"
+  fits_path = os.path.join(settings.TEMP_FITS_DIR, unique_name)
 
   # download the file if it isn't already downloaded in our temp directory
-  if not os.path.isfile(basename_file_path):
+  if not os.path.isfile(fits_path):
 
     # create the tmp directory if it doesn't exist
     if not os.path.exists(settings.TEMP_FITS_DIR):
@@ -135,9 +140,12 @@ def get_fits(basename: str, source: str = 'archive'):
       case _:
         raise ClientAlertException(f"Source {source} not recognized")
 
-    urllib.request.urlretrieve(fits_url, basename_file_path)
+    urllib.request.urlretrieve(fits_url, fits_path)
   
-  return basename_file_path
+  try:
+    yield fits_path
+  finally:
+    Path(fits_path).unlink(missing_ok=True)
 
 def save_files_to_s3(cache_key, file_paths: dict, index=None):
   """
