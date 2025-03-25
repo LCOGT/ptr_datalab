@@ -25,19 +25,15 @@ def raw_data(input: dict):
     newImage = image.resize((max_size, max_size), Image.LANCZOS)
     bitpix = abs(int(sci_hdu.header.get('BITPIX', 16)))
     max_value = int(sci_hdu.header.get('SATURATE', 0))  # If saturate header is present, use that as max value
-    match bitpix:
-        case 8:
-            datatype = np.uint8
-            if not max_value:
-                max_value = np.iinfo(datatype).max
-        case 16:
-            datatype = np.float16
-            if not max_value:
-                max_value = np.finfo(datatype).max
-        case 32:
-            datatype = np.float32
-            if not max_value:
-                max_value = np.finfo(datatype).max
+
+    BITPIX_TYPES = {
+        8: (np.uint8, np.iinfo(np.uint8).max),
+        16: (np.float16, np.finfo(np.float16).max),
+        32: (np.float32, np.finfo(np.float32).max)
+    }
+    
+    datatype, max_value_default = BITPIX_TYPES.get(bitpix, (np.uint16, np.iinfo(np.uint16).max))
+    max_value = max_value or max_value_default
     scaled_array = np.asarray(newImage).astype(datatype)
     scaled_array_flipped = np.flip(scaled_array, axis=0)
 
@@ -78,13 +74,7 @@ def raw_data(input: dict):
             bin_middles.append(previous_edge + int((edge-previous_edge) / 2.0))
         previous_edge = edge
 
-    # Using np.log10 on the histogram made some wild results, so just apply log10 to each value
-    hist = []
-    for h in histogram:
-        if h > 0:
-            hist.append(math.log10(h))
-        else:
-            hist.append(0)
+    hist = np.log10(np.maximum(histogram, 1))
 
     return {'data': scaled_array_flipped.flatten().tolist(),
             'height': scaled_array.shape[0],
