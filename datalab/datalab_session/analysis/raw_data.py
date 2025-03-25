@@ -22,7 +22,6 @@ def raw_data(input: dict):
     # resize the image to max. 500 pixels on an axis by default for the UI
     max_size = input.get('max_size', 500)
     image = Image.fromarray(image_data)
-    newImage = image.resize((max_size, max_size), Image.LANCZOS)
     bitpix = abs(int(sci_hdu.header.get('BITPIX', 16)))
     max_value = int(sci_hdu.header.get('SATURATE', 0))  # If saturate header is present, use that as max value
 
@@ -34,8 +33,11 @@ def raw_data(input: dict):
     
     datatype, max_value_default = BITPIX_TYPES.get(bitpix, (np.uint16, np.iinfo(np.uint16).max))
     max_value = max_value or max_value_default
-    scaled_array = np.asarray(newImage).astype(datatype)
-    scaled_array_flipped = np.flip(scaled_array, axis=0)
+    scaled_image = np.asarray(
+        Image.fromarray(image_data).resize((max_size, max_size), Image.LANCZOS)
+    )
+    # flip the scaled image vertically
+    scaled_array = scaled_image.astype(datatype)[::-1]
 
     # Set the zmin/zmax to integer values for calculating bins
     zmin = math.floor(zmin)
@@ -76,7 +78,7 @@ def raw_data(input: dict):
 
     hist = np.log10(np.maximum(histogram, 1))
 
-    return {'data': scaled_array_flipped.flatten().tolist(),
+    return {'data': scaled_array.flatten().tolist(),
             'height': scaled_array.shape[0],
             'width': scaled_array.shape[1],
             'histogram': hist,
