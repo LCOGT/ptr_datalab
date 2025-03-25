@@ -33,11 +33,11 @@ def raw_data(input: dict):
     
     datatype, max_value_default = BITPIX_TYPES.get(bitpix, (np.uint16, np.iinfo(np.uint16).max))
     max_value = max_value or max_value_default
-    scaled_image = np.asarray(
-        Image.fromarray(image_data).resize((max_size, max_size), Image.LANCZOS)
-    )
-    # flip the scaled image vertically
-    scaled_array = scaled_image.astype(datatype)[::-1]
+
+    image = Image.fromarray(image_data)
+    newImage = image.resize((max_size, max_size), Image.LANCZOS)
+    scaled_array = np.asarray(newImage).astype(datatype)
+    scaled_array_flipped = np.flip(scaled_array, axis=0)
 
     # Set the zmin/zmax to integer values for calculating bins
     zmin = math.floor(zmin)
@@ -76,9 +76,15 @@ def raw_data(input: dict):
             bin_middles.append(previous_edge + int((edge-previous_edge) / 2.0))
         previous_edge = edge
 
-    hist = np.log10(np.maximum(histogram, 1))
+    # Using np.log10 on the histogram made some wild results, so just apply log10 to each value
+    hist = []
+    for h in histogram:
+        if h > 0:
+            hist.append(math.log10(h))
+        else:
+            hist.append(0)
 
-    return {'data': scaled_array.flatten().tolist(),
+    return {'data': scaled_array_flipped.flatten().tolist(),
             'height': scaled_array.shape[0],
             'width': scaled_array.shape[1],
             'histogram': hist,
