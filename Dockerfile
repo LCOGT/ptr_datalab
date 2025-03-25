@@ -5,7 +5,7 @@ LABEL maintainer="jnation@lco.global"
 SHELL ["/bin/bash", "-c"]
 
 # install any security updates
-RUN apt-get update && apt-get -y upgrade
+RUN apt-get update && apt-get -y upgrade && apt-get install libgl1 libglib2.0-0 -y
 
 # upgrade pip and install poetry
 RUN pip install --upgrade pip && pip install "poetry>=1.4.2"
