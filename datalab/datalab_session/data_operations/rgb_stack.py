@@ -7,9 +7,10 @@ from fits_align.align import affineremap
 from django.conf import settings
 from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
+from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.utils.file_utils import crop_arrays, create_jpgs, create_tif, temp_file_manager
+from datalab.datalab_session.utils.file_utils import create_jpgs, create_tif, temp_file_manager
+
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -111,17 +112,6 @@ class RGB_Stack(BaseDataOperation):
             return fits_files
         
         return aligned_images
-            
-    # Currently storing the output fits SCI HDU as a 3D ndarray consisting of each input's SCI data
-    def _create_3d_array(self, input_handlers: list[InputDataHandler]) -> np.ndarray:
-        sci_data_list = [image.sci_data for image in input_handlers]
-
-        cropped_data_list = crop_arrays(sci_data_list)
-
-        stacked_ndarray = np.stack(cropped_data_list, axis=2)
-        self.set_operation_progress(self.PROGRESS_STEPS['STACKING'])
-
-        return stacked_ndarray
 
     def operate(self):
         rgb_inputs = self._validate_inputs()
@@ -141,21 +131,20 @@ class RGB_Stack(BaseDataOperation):
             dir=settings.TEMP_FITS_DIR
         ) as (tif_path, large_jpg_path, small_jpg_path):
         
-            create_tif(aligned_images, tif_path, color=True, zmin=zmin_list, zmax=zmax_list)
-            create_jpgs(aligned_images, large_jpg_path, small_jpg_path, color=True, zmin=zmin_list, zmax=zmax_list)
-            
-            stacked_ndarray = self._create_3d_array(input_handlers)
-            rgb_comment = f'Datalab RGB Stack on files {", ".join(input["basename"] for input in rgb_inputs)}'
+            try:
+                create_tif(aligned_images, tif_path, color=True, zmin=zmin_list, zmax=zmax_list)
+                create_jpgs(aligned_images, large_jpg_path, small_jpg_path, color=True, zmin=zmin_list, zmax=zmax_list)
+            except Exception as ex:
+                # Catches exceptions in the fits2image methods to report back to frontend
+                raise ClientAlertException(ex)
 
-            output = FITSOutputHandler(
-                self.cache_key, 
-                stacked_ndarray, 
-                rgb_comment
-            ).create_and_save_data_products(
-                large_jpg_path=large_jpg_path, 
-                small_jpg_path=small_jpg_path,
-                tif_path=tif_path
-            )
+            file_paths = {
+                'large_jpg_path': large_jpg_path,
+                'small_jpg_path': small_jpg_path,
+                'tif_path': tif_path
+            }
+
+            output = save_files_to_s3(self.cache_key, file_paths)
 
         log.info(f'RGB Stack output: {output}')
         self.set_output(output)

@@ -101,16 +101,20 @@ def create_tif(fits_paths: np.ndarray, tif_path, color=False, zmin=None, zmax=No
   max_height, max_width = max(get_fits_dimensions(fp) for fp in fits_paths)
   fits_to_img(fits_paths, tif_path, TIFF_EXTENSION, width=max_width, height=max_height, color=color, zmin=zmin, zmax=zmax)
 
-def crop_arrays(array_list: list):
+def crop_arrays(array_list: list, flatten=False):
   """
-    Takes a list of numpy arrays from fits images and stacks them to be a 3d numpy array
-    cropped since fits images can be different sizes
+    Takes a list of numpy arrays from fits images returns an array of them cropped to the max common size
+    since fits images can be different sizes. If flatten is true, the arrays are flattened with ravel().
+    Returns a tuple of the array of arrays with the common size (x,y)
   """
   min_x = min(arr.shape[0] for arr in array_list)
   min_y = min(arr.shape[1] for arr in array_list)
 
-  cropped_data_list = [arr[:min_x, :min_y] for arr in array_list]
-  return cropped_data_list
+  if flatten:
+      cropped_data_list = [arr[:min_x, :min_y].ravel() for arr in array_list]
+  else:
+    cropped_data_list = [arr[:min_x, :min_y] for arr in array_list]
+  return cropped_data_list, (min_x, min_y)
 
 def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_points=[], y_points=[], flip_y = False, flip_x = False):
   """

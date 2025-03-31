@@ -84,3 +84,14 @@ class DataOperation(models.Model):
     @property
     def message(self):
         return cache.get(f'operation_{self.cache_key}_message', '')
+
+    def clear_cache(self):
+        # Deletes all the cache keys from the redis cache for this operation
+        cache_key = self.cache_key
+        keys_to_delete = [
+            f'operation_{cache_key}_message',
+            f'operation_{cache_key}_output',
+            f'operation_{self.cache_key}_progress',
+            f'operation_{self.cache_key}_status'
+        ]
+        cache.delete_many(keys_to_delete)

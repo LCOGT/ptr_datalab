@@ -9,11 +9,15 @@ from datalab.datalab_session.exceptions import ClientAlertException
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
+
+TIME_LIMIT = 60 * 60 * 1000  # 1 hour time limit in ms
+
+
 # Retry network connection errors 3 times, all other exceptions are not retried
 def should_retry(retries_so_far, exception):
     return retries_so_far < 3 and isinstance(exception, RequestException)
 
-@dramatiq.actor(retry_when=should_retry)
+@dramatiq.actor(retry_when=should_retry, time_limit=TIME_LIMIT)
 def execute_data_operation(data_operation_name: str, input_data: dict):
     try:
         operation_class = available_operations().get(data_operation_name)

@@ -50,7 +50,6 @@ class Subtraction(BaseDataOperation):
         }
 
     def operate(self):
-
         input_files = self.input_data.get('input_files', [])
         subtraction_file_input = self.input_data.get('subtraction_file', [])
 
@@ -60,21 +59,19 @@ class Subtraction(BaseDataOperation):
         log.info(f'Subtraction operation on {len(input_files)} files')
 
         subtraction_fits = InputDataHandler(subtraction_file_input[0]['basename'], subtraction_file_input[0]['source'])
-        input_fits_list = []
-        for index, input in enumerate(input_files, start=1):
-            input_fits_list.append(InputDataHandler(input['basename'], input['source']))
-            self.set_operation_progress(0.5 * (index / len(input_files)))
-
         outputs = []
-        for index, input_image in enumerate(input_fits_list, start=1):
-            # crop the input_image and subtraction_image to the same size
-            input_image, subtraction_image = crop_arrays([input_image.sci_data, subtraction_fits.sci_data])
+        for index, input in enumerate(input_files, start=1):
+            with InputDataHandler(input['basename'], input['source']) as input_image:
+                self.set_operation_progress(0.9 * (index-0.5) / len(input_files))
+                (input_image_data, subtraction_image), _ = crop_arrays([input_image.sci_data, subtraction_fits.sci_data])
 
-            difference_array = np.subtract(input_image, subtraction_image)
+                difference_array = np.subtract(input_image_data, subtraction_image)
 
-            subtraction_comment = f'Datalab Subtraction of {subtraction_file_input[0]["basename"]} subtracted from {input_files[index-1]["basename"]}'
-            outputs.append(FITSOutputHandler(f'{self.cache_key}', difference_array, subtraction_comment).create_and_save_data_products(index=index))
-            self.set_operation_progress(0.5 + index/len(input_fits_list) * 0.4)
+                subtraction_comment = f'Datalab Subtraction of {subtraction_file_input[0]["basename"]} subtracted from {input_files[index-1]["basename"]}'
+                outputs.append(FITSOutputHandler(
+                    f'{self.cache_key}', difference_array, subtraction_comment,
+                    data_header=input_image.sci_hdu.header.copy()).create_and_save_data_products(index=index))
+                self.set_operation_progress(0.9 + index / len(input_files))
 
         log.info(f'Subtraction output: {outputs}')
         self.set_output(outputs)

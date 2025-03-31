@@ -43,7 +43,6 @@ The output is a stacked image for the n input images. This operation is commonly
         return description
 
     def operate(self):
-
         input_files = self.input_data.get('input_files', [])
         if len(input_files) <= 1: raise ClientAlertException('Stack needs at least 2 files')
         comment= f'Datalab Stacking on {", ".join([image["basename"] for image in input_files])}'
@@ -54,12 +53,11 @@ The output is a stacked image for the n input images. This operation is commonly
             input_fits_list.append(InputDataHandler(input['basename'], input['source']))
             self.set_operation_progress(0.5 * (index / len(input_files)))
 
-        cropped_data = crop_arrays([image.sci_data for image in input_fits_list])
-        stacked_ndarray = np.stack(cropped_data, axis=2)
+        cropped_data, _ = crop_arrays([image.sci_data for image in input_fits_list])
         self.set_operation_progress(0.6)
 
         # using the numpy library's sum method
-        stacked_sum = np.sum(stacked_ndarray, axis=2)
+        stacked_sum = np.sum(cropped_data, axis=0)
         self.set_operation_progress(0.8)
 
         output = FITSOutputHandler(self.cache_key, stacked_sum, comment).create_and_save_data_products()
