@@ -48,8 +48,9 @@ class FileUtilsTestClass(FileExtendedTestCase):
     test_array_1 = np.zeros((10, 20))
     test_array_2 = np.ones((20, 10))
 
-    cropped_array = crop_arrays([test_array_1, test_array_2])
+    cropped_array, size = crop_arrays([test_array_1, test_array_2])
     self.assertEqual(len(cropped_array), 2)
+    self.assertEqual(size, (10, 10))
     self.assertEqual(cropped_array[0].tolist(), np.zeros((10, 10)).tolist())
     self.assertEqual(cropped_array[1].tolist(), np.ones((10, 10)).tolist())
 

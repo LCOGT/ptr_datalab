@@ -229,7 +229,7 @@ class TestRGBStackOperation(FileExtendedTestCase):
         self.clean_test_dir()
         return super().tearDown()
     
-    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
+    @mock.patch('datalab.datalab_session.data_operations.rgb_stack.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
@@ -264,8 +264,7 @@ class TestRGBStackOperation(FileExtendedTestCase):
         output = rgb.get_output().get('output_files')
 
         self.assertEqual(rgb.get_operation_progress(), 1.0)
-        self.assertTrue(os.path.exists(output[0]))
-        self.assertFilesEqual(self.test_rgb_path, output[0])
+        self.assertEqual(output, [self.temp_rgb_path])
 
 
 class TestStackOperation(FileExtendedTestCase):

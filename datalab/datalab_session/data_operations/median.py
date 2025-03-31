@@ -54,9 +54,9 @@ The output is a median image for the n input images. This operation is commonly 
             self.set_operation_progress(0.5 * (index / len(input_list)))
 
         # Creating the Median array
-        cropped_data = crop_arrays([image.sci_data for image in input_fits_list])
-        stacked_ndarray = np.stack(cropped_data, axis=2)
-        median = np.median(stacked_ndarray, axis=2)
+        cropped_data, shape = crop_arrays([image.sci_data for image in input_fits_list], flatten=True)
+        median = np.median(cropped_data, axis=0, overwrite_input=True)
+        median = np.reshape(median, shape)
 
         self.set_operation_progress(0.80)
 

@@ -22,7 +22,7 @@ class FITSOutputHandler():
     data (np.array): The data for the image HDU.
   """
     
-  def __init__(self, cache_key: str, data: np.array, comment: str=None) -> None:
+  def __init__(self, cache_key: str, data: np.array, comment: str=None, data_header: fits.Header=None) -> None:
       """Inits FITSOutputHandler with cache_key and data.
       
       Args:
@@ -31,8 +31,9 @@ class FITSOutputHandler():
         comment (str): Optionally add a comment to add to the FITS file.
       """
       self.datalab_id = cache_key
-      self.primary_hdu = fits.PrimaryHDU(header=fits.Header([('KEY', cache_key)]))
-      self.image_hdu = fits.ImageHDU(data=data, name='SCI')
+      self.primary_hdu = fits.PrimaryHDU(header=fits.Header([('DLAB_KEY', cache_key)]))
+      self.image_hdu = fits.ImageHDU(data=data, header=data_header, name='SCI')
+
       if comment: self.set_comment(comment)
 
   def __str__(self) -> str:

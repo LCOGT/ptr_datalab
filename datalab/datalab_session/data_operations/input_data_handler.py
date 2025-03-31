@@ -1,4 +1,5 @@
 from contextlib import ExitStack
+import gc
 
 from astropy.io import fits
 
@@ -11,6 +12,7 @@ class InputDataHandler():
   Attributes:
     basename (str): The basename of the FITS file.
     fits_file (str): The path to the FITS file.
+    sci_hdu (fits.HDU): The HDU from the 'SCI' extension of the FITS file.
     sci_data (np.array): The data from the 'SCI' extension of the FITS file.
   """
 
@@ -27,15 +29,27 @@ class InputDataHandler():
     self.source = source
     self.exit_stack = ExitStack()
     self.fits_file = self.exit_stack.enter_context(get_fits(basename, source))
-    self.sci_data = get_hdu(self.fits_file, 'SCI').data
+    self.sci_hdu = get_hdu(self.fits_file, 'SCI')
+    self.sci_data = self.sci_hdu.data
   
   def __del__(self):
     self.exit_stack.close()
 
+  def __enter__(self):
+    return self
+
+  def __exit__(self, exc_type, exc_val, exc_tb):
+    # Using this as a context manager will ensure memory is returned when we are done with the file
+    del self.sci_hdu
+    del self.sci_data
+    self.exit_stack.close()
+    del self.fits_file
+    gc.collect()
+
   def __str__(self) -> str:
     with fits.open(self.fits_file) as hdul:
       return f"{self.basename}@{self.fits_file}\nHDU List\n{hdul.info()}"
-  
+
   def get_hdu(self, extension: str=None):
     """Return an HDU from the FITS file.
     
