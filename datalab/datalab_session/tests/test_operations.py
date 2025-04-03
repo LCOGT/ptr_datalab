@@ -11,6 +11,7 @@ from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.data_operations.median import Median
 from datalab.datalab_session.data_operations.stacking import Stack
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
+from datalab.datalab_session.utils.format import Format
 
 wizard_description = {
             'name': 'SampleDataOperation',
@@ -20,7 +21,7 @@ wizard_description = {
                 'input_files': {
                     'name': 'Input Files',
                     'description': 'The input files to operate on',
-                    'type': 'file',
+                    'type': Format.FITS,
                     'minimum': 1,
                     'maximum': 999
                 },
