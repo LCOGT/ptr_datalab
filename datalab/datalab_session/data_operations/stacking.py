@@ -6,6 +6,7 @@ from datalab.datalab_session.data_operations.input_data_handler import InputData
 from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.utils.format import Format
 from datalab.datalab_session.utils.file_utils import crop_arrays
 
 log = logging.getLogger()
@@ -34,7 +35,7 @@ The output is a stacked image for the n input images. This operation is commonly
                 'input_files': {
                     'name': 'Input Files',
                     'description': 'The input files to operate on',
-                    'type': 'file',
+                    'type': Format.FITS,
                     'minimum': 1,
                     'maximum': 999
                 }
@@ -60,7 +61,7 @@ The output is a stacked image for the n input images. This operation is commonly
         stacked_sum = np.sum(cropped_data, axis=0)
         self.set_operation_progress(0.8)
 
-        output = FITSOutputHandler(self.cache_key, stacked_sum, comment).create_and_save_data_products()
+        output = FITSOutputHandler(self.cache_key, stacked_sum, comment).create_and_save_data_products(Format.FITS)
 
         log.info(f'Stacked output: {output}')
         self.set_output(output)

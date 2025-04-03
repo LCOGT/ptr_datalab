@@ -43,7 +43,7 @@ class FITSOutputHandler():
     """Add a comment to the FITS file."""
     self.primary_hdu.header.add_comment(comment)
   
-  def create_and_save_data_products(self, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None):
+  def create_and_save_data_products(self, format, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None):
     """
     When you're done with the operation and would like to save the FITS file and jpgs in S3. JPGs are required, any other file is optional.
     
@@ -75,4 +75,4 @@ class FITSOutputHandler():
         file_paths['small_jpg_path'] = small_jpg_path or gen_small_jpg
         file_paths['fits_path'] = fits_output_path
 
-        return save_files_to_s3(self.datalab_id, file_paths, index)
+        return save_files_to_s3(self.datalab_id, format, file_paths, index)
