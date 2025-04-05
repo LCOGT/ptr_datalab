@@ -28,7 +28,7 @@ spec:
                 accessModes: [ "ReadWriteOnce" ]
                 resources:
                   requests:
-                    storage: 2Gi
+                    storage: 20Gi
       containers:
         - name: default
           image: datalab
@@ -65,3 +65,29 @@ spec:
             exec:
               command:
                 - /bin/true
+        - name: cleanup
+          image: datalab
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+          command: ["/bin/sh", "-c"]
+          args:
+          - >
+            while true;
+            do
+              find /tmp/fits -type f -cmin +65 -delete;
+              sleep 10m;
+            done
+          envFrom:
+            - configMapRef:
+                name: env
+                optional: false
+            - secretRef:
+                name: env
+                optional: false
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+              readOnly: false

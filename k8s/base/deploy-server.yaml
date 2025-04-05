@@ -20,7 +20,7 @@ spec:
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: 5Gi
         - name: static
           emptyDir:
             sizeLimit: 128Mi
@@ -164,3 +164,29 @@ spec:
             httpGet:
               path: /admin/login/
               port: server
+        - name: cleanup
+          image: datalab
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+          command: ["/bin/sh", "-c"]
+          args:
+          - >
+            while true;
+            do
+              find /tmp/fits -type f -cmin +65 -delete;
+              sleep 10m;
+            done
+          envFrom:
+            - configMapRef:
+                name: env
+                optional: false
+            - secretRef:
+                name: env
+                optional: false
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+              readOnly: false
