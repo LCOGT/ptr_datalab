@@ -6,6 +6,7 @@ from datalab.datalab_session.data_operations.input_data_handler import InputData
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.utils.format import Format
 from datalab.datalab_session.utils.file_utils import crop_arrays
 
 log = logging.getLogger()
@@ -35,14 +36,14 @@ class Subtraction(BaseDataOperation):
                 'input_files': {
                     'name': 'Input Files',
                     'description': 'The input files to operate on',
-                    'type': 'file',
+                    'type': Format.FITS,
                     'minimum': 1,
                     'maximum': 999
                 },
                 'subtraction_file': {
                     'name': 'Subtraction File',
                     'description': 'This file will be subtracted from the input images.',
-                    'type': 'file',
+                    'type': Format.FITS,
                     'minimum': 1,
                     'maximum': 1
                 }
@@ -70,7 +71,7 @@ class Subtraction(BaseDataOperation):
                 subtraction_comment = f'Datalab Subtraction of {subtraction_file_input[0]["basename"]} subtracted from {input_files[index-1]["basename"]}'
                 outputs.append(FITSOutputHandler(
                     f'{self.cache_key}', difference_array, subtraction_comment,
-                    data_header=input_image.sci_hdu.header.copy()).create_and_save_data_products(index=index))
+                    data_header=input_image.sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, index=index))
                 self.set_operation_progress(0.9 + index / len(input_files))
 
         log.info(f'Subtraction output: {outputs}')

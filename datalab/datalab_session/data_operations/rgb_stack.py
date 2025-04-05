@@ -9,6 +9,7 @@ from datalab.datalab_session.data_operations.input_data_handler import InputData
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.utils.format import Format
 from datalab.datalab_session.utils.file_utils import create_jpgs, create_tif, temp_file_manager
 
 
@@ -41,7 +42,7 @@ class RGB_Stack(BaseDataOperation):
                 'red_input': {
                     'name': 'Red Filter',
                     'description': 'Three images to stack their RGB values',
-                    'type': 'file',
+                    'type': Format.FITS,
                     'minimum': 1,
                     'maximum': 1,
                     'include_custom_scale': True,
@@ -51,7 +52,7 @@ class RGB_Stack(BaseDataOperation):
                 'green_input': {
                     'name': 'Green Filter',
                     'description': 'Three images to stack their RGB values',
-                    'type': 'file',
+                    'type': Format.FITS,
                     'minimum': 1,
                     'maximum': 1,
                     'include_custom_scale': True,
@@ -61,7 +62,7 @@ class RGB_Stack(BaseDataOperation):
                 'blue_input': {
                     'name': 'Blue Filter',
                     'description': 'Three images to stack their RGB values',
-                    'type': 'file',
+                    'type': Format.FITS,
                     'minimum': 1,
                     'maximum': 1,
                     'include_custom_scale': True,
@@ -144,7 +145,7 @@ class RGB_Stack(BaseDataOperation):
                 'tif_path': tif_path
             }
 
-            output = save_files_to_s3(self.cache_key, file_paths)
+            output = save_files_to_s3(self.cache_key, Format.IMAGE, file_paths)
 
         log.info(f'RGB Stack output: {output}')
         self.set_output(output)

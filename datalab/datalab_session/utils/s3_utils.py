@@ -147,7 +147,7 @@ def get_fits(basename: str, source: str = 'archive'):
   finally:
     Path(fits_path).unlink(missing_ok=True)
 
-def save_files_to_s3(cache_key, file_paths: dict, index=None):
+def save_files_to_s3(cache_key, format, file_paths: dict, index=None):
   """
   Save multiple files to S3, generating URLs and returning them in a structured output.
   **file_paths args should follow convention of <annotation>_<file_type>_path
@@ -157,7 +157,8 @@ def save_files_to_s3(cache_key, file_paths: dict, index=None):
   bucket_key = f'{cache_key}/{cache_key}-{index}' if index else f'{cache_key}/{cache_key}'
   output = {
     'basename': f'{cache_key}-{index}' if index else cache_key,
-    'source': 'datalab'
+    'source': 'datalab',
+    'type': format
   }
  
   for key, path in file_paths.items():

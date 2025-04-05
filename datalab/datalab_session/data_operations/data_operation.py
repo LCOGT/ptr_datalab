@@ -5,6 +5,7 @@ import json
 from django.core.cache import cache
 
 from datalab.datalab_session.tasks import execute_data_operation
+from datalab.datalab_session.utils.format import Format
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
@@ -21,7 +22,7 @@ class BaseDataOperation(ABC):
             return {}
         input_schema = self.wizard_description().get('inputs', {})
         for key, value in input_data.items():
-            if input_schema.get(key, {}).get('type', '') == 'file' and type(value) is list:
+            if input_schema.get(key, {}).get('type', '') == Format.FITS and type(value) is list:
                 # If there are file type inputs with multiple files, sort them by basename since order doesn't matter
                 value.sort(key=lambda x: x['basename'])
         return input_data
