@@ -5,6 +5,7 @@ import os
 from astropy.io import fits
 import numpy as np
 
+from django.conf import settings
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.data_operations.rgb_stack import RGB_Stack
 from datalab.datalab_session.exceptions import ClientAlertException
@@ -206,6 +207,7 @@ class TestMedianOperation(FileExtendedTestCase):
         self.assertEqual(median.get_operation_progress(), 1.0)
         self.assertTrue(os.path.exists(output[0]))
         self.assertFilesEqual(self.test_median_path, output[0])
+        self.assertEqual(len(os.listdir(settings.TEMP_FITS_DIR)), 0)
 
     def test_not_enough_files(self):
         input_data = {
@@ -222,7 +224,11 @@ class TestMedianOperation(FileExtendedTestCase):
 class TestRGBStackOperation(FileExtendedTestCase):
     temp_rgb_path = f'{test_path}temp_rgb.fits'
     test_rgb_path = f'{test_path}rgb_stack/rgb_stack.fits'
+
+    # Red file will be deleted so use a copy instead
     test_red_path = f'{test_path}rgb_stack/red.fits'
+    os.system(f'cp {test_red_path} {test_red_path}.copy')
+    test_red_path = f'{test_red_path}.copy'
     test_green_path = f'{test_path}rgb_stack/green.fits'
     test_blue_path = f'{test_path}rgb_stack/blue.fits'
 
@@ -266,6 +272,7 @@ class TestRGBStackOperation(FileExtendedTestCase):
 
         self.assertEqual(rgb.get_operation_progress(), 1.0)
         self.assertEqual(output, [self.temp_rgb_path])
+        self.assertEqual(len(os.listdir(settings.TEMP_FITS_DIR)), 0)
 
 
 class TestStackOperation(FileExtendedTestCase):
@@ -330,6 +337,7 @@ class TestStackOperation(FileExtendedTestCase):
         self.assertEqual(stack.get_operation_progress(), 1.0)
         self.assertEqual(self.temp_stacked_path, output[0])
         self.assertTrue(os.path.exists(self.temp_stacked_path))
+        self.assertEqual(len(os.listdir(settings.TEMP_FITS_DIR)), 0)
 
         # Verify output is a blank image
         output_hdul = fits.open(self.temp_stacked_path)
