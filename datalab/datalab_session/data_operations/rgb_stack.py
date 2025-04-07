@@ -1,6 +1,6 @@
 import logging
+import os
 
-import numpy as np
 from fits_align.ident import make_transforms
 from fits_align.align import affineremap
 
@@ -146,6 +146,13 @@ class RGB_Stack(BaseDataOperation):
             }
 
             output = save_files_to_s3(self.cache_key, Format.IMAGE, file_paths)
+
+        # Clean up aligned images
+        for file in aligned_images:
+            try:
+                os.remove(file)
+            except OSError as e:
+                log.warning(f'Failed to remove file {file}: {e}')
 
         log.info(f'RGB Stack output: {output}')
         self.set_output(output)
