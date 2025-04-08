@@ -58,13 +58,13 @@ class FITSOutputHandler():
     file_paths = {}
     hdu_list = fits.HDUList([self.primary_hdu, self.image_hdu])
 
-    with tempfile.NamedTemporaryFile(suffix=f'{self.datalab_id}.fits', dir=settings.TEMP_FITS_DIR) as fits_output_file:
+    with tempfile.NamedTemporaryFile(suffix=f'{self.datalab_id}.fits', dir=settings.TMP_DIR) as fits_output_file:
       # Create the output FITS file
       fits_output_path = fits_output_file.name
       hdu_list.writeto(fits_output_path, overwrite=True)
 
       # Create jpgs if not provided
-      with temp_file_manager(f"{self.datalab_id}-large.jpg", f"{self.datalab_id}-small.jpg", dir=settings.TEMP_FITS_DIR) as (gen_large_jpg, gen_small_jpg):
+      with temp_file_manager(f"{self.datalab_id}-large.jpg", f"{self.datalab_id}-small.jpg", dir=settings.TMP_DIR) as (gen_large_jpg, gen_small_jpg):
         if not large_jpg_path or not small_jpg_path:
           create_jpgs(fits_output_path, gen_large_jpg, gen_small_jpg)
 
