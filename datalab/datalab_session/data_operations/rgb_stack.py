@@ -105,7 +105,7 @@ class RGB_Stack(BaseDataOperation):
         aligned_images = [ref_image]
         for id in identifications:
             if id.ok:
-                aligned_img = affineremap(id.ukn.filepath, id.trans, outdir=settings.TMP_DIR)
+                aligned_img = affineremap(id.ukn.filepath, id.trans, outdir=self.temp)
                 aligned_images.append(aligned_img)
         
         if len(aligned_images) != self.REQUIRED_INPUTS:
@@ -129,7 +129,7 @@ class RGB_Stack(BaseDataOperation):
 
         with temp_file_manager(
             f"{self.cache_key}.tif", f"{self.cache_key}-large.jpg", f"{self.cache_key}-small.jpg",
-            dir=settings.TMP_DIR
+            dir=self.temp
         ) as (tif_path, large_jpg_path, small_jpg_path):
         
             try:

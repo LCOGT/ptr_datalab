@@ -1,9 +1,11 @@
 from abc import ABC, abstractmethod
 import hashlib
 import json
+import os
+import shutil
 
 from django.core.cache import cache
-
+from django.conf import settings
 from datalab.datalab_session.tasks import execute_data_operation
 from datalab.datalab_session.utils.format import Format
 
@@ -16,6 +18,19 @@ class BaseDataOperation(ABC):
         """ The data inputs are passed in in the format described from the wizard_description """
         self.input_data = self._normalize_input_data(input_data)
         self.cache_key = self.generate_cache_key()
+
+        tmp_hash_path = os.path.join(settings.TMP_DIR, self.cache_key)
+        # If tmp dir already exists, append a random hash to avoid collision
+        if os.path.exists(tmp_hash_path):
+            tmp_hash_path = os.path.join(tmp_hash_path, hashlib.sha256(os.urandom(8)).hexdigest())
+        
+        os.mkdir(tmp_hash_path)
+        self.temp = tmp_hash_path
+    
+    def __del__(self):
+        """ Clear the tmp dir for the operation """
+        if self.temp and os.path.exists(self.temp):
+            shutil.rmtree(self.temp)
 
     def _normalize_input_data(self, input_data):
         if input_data == None:
