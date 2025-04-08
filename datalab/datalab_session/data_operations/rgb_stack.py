@@ -1,10 +1,8 @@
 import logging
 
-import numpy as np
 from fits_align.ident import make_transforms
 from fits_align.align import affineremap
 
-from django.conf import settings
 from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3

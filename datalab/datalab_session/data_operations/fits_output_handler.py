@@ -3,7 +3,6 @@ import os
 import numpy as np
 from astropy.io import fits
 
-from datalab import settings
 from datalab.datalab_session.utils.file_utils import create_jpgs, temp_file_manager
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 
