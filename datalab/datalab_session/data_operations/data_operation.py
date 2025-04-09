@@ -29,7 +29,7 @@ class BaseDataOperation(ABC):
             if os.path.exists(tmp_hash_path):
                 tmp_hash_path = os.path.join(tmp_hash_path, hashlib.sha256(os.urandom(8)).hexdigest())
             
-            os.mkdir(tmp_hash_path)
+            os.makedirs(tmp_hash_path)
             self.temp = tmp_hash_path
         except Exception as e:
             log.warning(f"Failed to create temp dir for operation {self.cache_key}: {e} using default {self.temp}")
