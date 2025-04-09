@@ -1,14 +1,19 @@
 from abc import ABC, abstractmethod
 import hashlib
 import json
+import os
+import shutil
+import logging
 
 from django.core.cache import cache
-
+from django.conf import settings
 from datalab.datalab_session.tasks import execute_data_operation
 from datalab.datalab_session.utils.format import Format
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
+log = logging.getLogger()
+log.setLevel(logging.INFO)
 
 class BaseDataOperation(ABC):
 
@@ -16,6 +21,23 @@ class BaseDataOperation(ABC):
         """ The data inputs are passed in in the format described from the wizard_description """
         self.input_data = self._normalize_input_data(input_data)
         self.cache_key = self.generate_cache_key()
+        self.temp = settings.TEMP_FITS_DIR # default fallback
+
+        try:
+            tmp_hash_path = os.path.join(self.temp, self.cache_key)
+            # If tmp dir already exists, append a random hash to avoid collision
+            if os.path.exists(tmp_hash_path):
+                tmp_hash_path = os.path.join(tmp_hash_path, hashlib.sha256(os.urandom(8)).hexdigest())
+            
+            os.makedirs(tmp_hash_path)
+            self.temp = tmp_hash_path
+        except Exception as e:
+            log.warning(f"Failed to create temp dir for operation {self.cache_key}: {e} using default {self.temp}")
+    
+    def __del__(self):
+        """ Clear the tmp dir for the operation """
+        if self.temp and os.path.exists(self.temp):
+            shutil.rmtree(self.temp)
 
     def _normalize_input_data(self, input_data):
         if input_data == None:

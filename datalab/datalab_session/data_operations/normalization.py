@@ -52,7 +52,7 @@ The output is a normalized image. This operation is commonly used as a precursor
                 normalized_image = image.sci_data / median
 
                 comment = f'Datalab Normalization on file {input_list[index-1]["basename"]}'
-                output = FITSOutputHandler(f'{self.cache_key}', normalized_image, comment, data_header=image.sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, index=index)
+                output = FITSOutputHandler(f'{self.cache_key}', normalized_image, self.temp, comment, data_header=image.sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, index=index)
                 output_files.append(output)
                 self.set_operation_progress(0.9 * index / len(input_list))
 

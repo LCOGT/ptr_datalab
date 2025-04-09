@@ -3,7 +3,6 @@ import os
 import numpy as np
 from astropy.io import fits
 
-from datalab import settings
 from datalab.datalab_session.utils.file_utils import create_jpgs, temp_file_manager
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 
@@ -22,17 +21,19 @@ class FITSOutputHandler():
     data (np.array): The data for the image HDU.
   """
     
-  def __init__(self, cache_key: str, data: np.array, comment: str=None, data_header: fits.Header=None) -> None:
+  def __init__(self, cache_key: str, data: np.array, dir: str, comment: str=None, data_header: fits.Header=None) -> None:
       """Inits FITSOutputHandler with cache_key and data.
       
       Args:
         cache_key (str): The cache key for the FITS file, used as an ID when stored in S3.
         data (np.array): The data that will create the image HDU.
+        dir (str): The directory where the FITS file will be saved.
         comment (str): Optionally add a comment to add to the FITS file.
       """
       self.datalab_id = cache_key
       self.primary_hdu = fits.PrimaryHDU(header=fits.Header([('DLAB_KEY', cache_key)]))
       self.image_hdu = fits.ImageHDU(data=data, header=data_header, name='SCI')
+      self.dir = dir
 
       if comment: self.set_comment(comment)
 
@@ -58,13 +59,13 @@ class FITSOutputHandler():
     file_paths = {}
     hdu_list = fits.HDUList([self.primary_hdu, self.image_hdu])
 
-    with tempfile.NamedTemporaryFile(suffix=f'{self.datalab_id}.fits', dir=settings.TEMP_FITS_DIR) as fits_output_file:
+    with tempfile.NamedTemporaryFile(suffix=f'{self.datalab_id}.fits', dir=self.dir) as fits_output_file:
       # Create the output FITS file
       fits_output_path = fits_output_file.name
       hdu_list.writeto(fits_output_path, overwrite=True)
 
       # Create jpgs if not provided
-      with temp_file_manager(f"{self.datalab_id}-large.jpg", f"{self.datalab_id}-small.jpg", dir=settings.TEMP_FITS_DIR) as (gen_large_jpg, gen_small_jpg):
+      with temp_file_manager(f"{self.datalab_id}-large.jpg", f"{self.datalab_id}-small.jpg", dir=self.dir) as (gen_large_jpg, gen_small_jpg):
         if not large_jpg_path or not small_jpg_path:
           create_jpgs(fits_output_path, gen_large_jpg, gen_small_jpg)
 

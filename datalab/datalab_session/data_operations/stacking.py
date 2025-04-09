@@ -61,7 +61,7 @@ The output is a stacked image for the n input images. This operation is commonly
         stacked_sum = np.sum(cropped_data, axis=0)
         self.set_operation_progress(0.8)
 
-        output = FITSOutputHandler(self.cache_key, stacked_sum, comment).create_and_save_data_products(Format.FITS)
+        output = FITSOutputHandler(self.cache_key, stacked_sum, self.temp, comment).create_and_save_data_products(Format.FITS)
 
         log.info(f'Stacked output: {output}')
         self.set_output(output)

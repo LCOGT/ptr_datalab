@@ -70,7 +70,7 @@ class Subtraction(BaseDataOperation):
 
                 subtraction_comment = f'Datalab Subtraction of {subtraction_file_input[0]["basename"]} subtracted from {input_files[index-1]["basename"]}'
                 outputs.append(FITSOutputHandler(
-                    f'{self.cache_key}', difference_array, subtraction_comment,
+                    f'{self.cache_key}', difference_array, self.temp, subtraction_comment,
                     data_header=input_image.sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, index=index))
                 self.set_operation_progress(0.9 + index / len(input_files))
 
