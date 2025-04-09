@@ -21,7 +21,7 @@ class BaseDataOperation(ABC):
         """ The data inputs are passed in in the format described from the wizard_description """
         self.input_data = self._normalize_input_data(input_data)
         self.cache_key = self.generate_cache_key()
-        self.temp = settings.TMP_DIR # default fallback
+        self.temp = settings.TEMP_FITS_DIR # default fallback
 
         try:
             tmp_hash_path = os.path.join(self.temp, self.cache_key)

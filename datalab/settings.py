@@ -37,7 +37,7 @@ def get_list_from_env(variable, default=None):
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-TMP_DIR = os.getenv('TMP_DIR', os.path.join(BASE_DIR, 'tmp'))
+TEMP_FITS_DIR = os.getenv('TEMP_FITS_DIR', os.path.join(BASE_DIR, 'tmp/fits/'))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/

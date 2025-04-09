@@ -122,14 +122,14 @@ def get_fits(basename: str, source: str = 'archive'):
   basename = basename.replace('-large', '').replace('-small', '')
   # Use a unique filename for each download to prevent collisions
   unique_name = f"{basename}_{uuid.uuid4().hex}.fits"
-  fits_path = os.path.join(settings.TMP_DIR, unique_name)
+  fits_path = os.path.join(settings.TEMP_FITS_DIR, unique_name)
 
   # download the file if it isn't already downloaded in our temp directory
   if not os.path.isfile(fits_path):
 
     # create the tmp directory if it doesn't exist
-    if not os.path.exists(settings.TMP_DIR):
-      os.makedirs(settings.TMP_DIR, exist_ok=True)
+    if not os.path.exists(settings.TEMP_FITS_DIR):
+      os.makedirs(settings.TEMP_FITS_DIR, exist_ok=True)
 
     match source:
       case 'archive':
