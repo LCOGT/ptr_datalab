@@ -23,22 +23,6 @@ class BaseDataOperation(ABC):
         self.cache_key = self.generate_cache_key()
         self.temp = settings.TEMP_FITS_DIR # default fallback
 
-        try:
-            tmp_hash_path = os.path.join(self.temp, self.cache_key)
-            # If tmp dir already exists, append a random hash to avoid collision
-            if os.path.exists(tmp_hash_path):
-                tmp_hash_path = os.path.join(tmp_hash_path, hashlib.sha256(os.urandom(8)).hexdigest())
-            
-            os.makedirs(tmp_hash_path)
-            self.temp = tmp_hash_path
-        except Exception as e:
-            log.warning(f"Failed to create temp dir for operation {self.cache_key}: {e} using default {self.temp}")
-    
-    def __del__(self):
-        """ Clear the tmp dir for the operation """
-        if self.temp and os.path.exists(self.temp):
-            shutil.rmtree(self.temp)
-
     def _normalize_input_data(self, input_data):
         if input_data == None:
             return {}
@@ -72,6 +56,29 @@ class BaseDataOperation(ABC):
             It should periodically update the percent completion during its operation.
             It should set the output and status into the cache when done.
         """
+    
+    def allocate_operate(self):
+        """
+        Wraps the operate() method, creates a unique temp directory for the operation
+        """
+        # Create the temp directory for the operation
+        try:
+            tmp_hash_path = os.path.join(self.temp, self.cache_key)
+            # If tmp dir already exists, append a random hash to avoid collision
+            if os.path.exists(tmp_hash_path):
+                tmp_hash_path = os.path.join(tmp_hash_path, hashlib.sha256(os.urandom(8)).hexdigest())
+            
+            os.makedirs(tmp_hash_path)
+            self.temp = tmp_hash_path
+        except Exception as e:
+            log.warning(f"Failed to create temp dir for operation {self.cache_key}: {e} using default {self.temp}")
+        
+        # Run the operation
+        self.operate()
+
+        # Clean up the temp directory
+        if self.temp and os.path.exists(self.temp):
+            shutil.rmtree(self.temp)
 
     def perform_operation(self):
         """ The generic method to perform the operation if its not in progress """
