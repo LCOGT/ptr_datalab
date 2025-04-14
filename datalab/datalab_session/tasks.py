@@ -25,7 +25,7 @@ def execute_data_operation(data_operation_name: str, input_data: dict):
             raise NotImplementedError("Operation not implemented!")
         else:
             try:
-                operation_class(input_data).operate()
+                operation_class(input_data).allocate_operate()
             except ClientAlertException as error:
                 log.error(f"Client Error executing {data_operation_name}: {error}")
                 operation_class(input_data).set_failed(str(error))
