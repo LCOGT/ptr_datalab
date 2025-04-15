@@ -15,17 +15,19 @@ def extract_samples_in_place(image_array:np.ndarray, naxis1, naxis2):
     samples.sort()
     return samples
 
+def check_list(list, name):
+    if np.isnan(list).any():
+        num_nan = np.count_nonzero(np.isnan(list))
+        raise ValueError(f'{num_nan} NaN values found in {name}')
+    
+    if not np.all(np.isfinite(list)):
+        num_non_finite = np.count_nonzero(~np.isfinite(list))
+        raise ValueError(f'{num_non_finite} Non-finite values found in {name}')
+
 
 def raw_data(input: dict):
     with get_fits(input['basename'], input.get('source', 'archive')) as fits_path:
         sci_hdu = get_hdu(fits_path, 'SCI')
-    
-    image_data = sci_hdu.data
-
-    # Compute the fits2image autoscale params to send with the image
-    samples = extract_samples_in_place(image_data, sci_hdu.header.get('NAXIS1'), sci_hdu.header.get('NAXIS2'))
-    median = np.median(samples)
-    zmin, zmax, _ = calc_zscale_min_max(samples, contrast=0.1, iterations=1)
 
     # resize the image to max. 500 pixels on an axis by default for the UI
     max_size = input.get('max_size', 500)
@@ -45,7 +47,18 @@ def raw_data(input: dict):
             if not max_value:
                 max_value = np.finfo(datatype).max
 
-    scaled_array = cv2.resize(image_data, dsize=(max_size, max_size), interpolation=cv2.INTER_AREA)
+    # convert to 64 bit for resizing to avoid NaN values
+    image_data = sci_hdu.data
+    image_data_64 = image_data.astype(np.float64)
+
+    # Compute the fits2image autoscale params to send with the image
+    samples = extract_samples_in_place(image_data_64, sci_hdu.header.get('NAXIS1'), sci_hdu.header.get('NAXIS2'))
+    median = np.median(samples)
+    zmin, zmax, _ = calc_zscale_min_max(samples, contrast=0.1, iterations=1)
+
+    # Resize, convert back to original datatype and flip the image
+    scaled_array_64 = cv2.resize(image_data_64, dsize=(max_size, max_size), interpolation=cv2.INTER_AREA)
+    scaled_array = scaled_array_64.astype(datatype)
     scaled_array_flipped = np.flip(scaled_array, axis=0)
 
     # Set the zmin/zmax to integer values for calculating bins
@@ -92,6 +105,8 @@ def raw_data(input: dict):
             hist.append(math.log10(h))
         else:
             hist.append(0)
+
+    check_list(scaled_array_flipped, 'scaled_array_flipped')
 
     return {'data': scaled_array_flipped.ravel().tolist(),
             'height': scaled_array.shape[0],
