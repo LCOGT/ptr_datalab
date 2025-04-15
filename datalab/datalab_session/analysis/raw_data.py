@@ -1,9 +1,10 @@
 import logging
 import numpy as np
 import math
+from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.s3_utils import get_fits
 from datalab.datalab_session.utils.file_utils import get_hdu
-from fits2image.scaling import extract_samples, calc_zscale_min_max
+from fits2image.scaling import calc_zscale_min_max
 import cv2
 # TODO: This analysis endpoint assumes the image to be of 16 bitdepth. We should make this agnositc to bit depth in the future
 
@@ -15,14 +16,9 @@ def extract_samples_in_place(image_array:np.ndarray, naxis1, naxis2):
     samples.sort()
     return samples
 
-def check_list(list, name):
-    if np.isnan(list).any():
-        num_nan = np.count_nonzero(np.isnan(list))
-        raise ValueError(f'{num_nan} NaN values found in {name}')
-    
-    if not np.all(np.isfinite(list)):
-        num_non_finite = np.count_nonzero(~np.isfinite(list))
-        raise ValueError(f'{num_non_finite} Non-finite values found in {name}')
+def check_list(list):
+    if np.isnan(list).any() or not np.all(np.isfinite(list)):
+        raise ClientAlertException(f'Non-finite values found in raw data output')
 
 
 def raw_data(input: dict):
@@ -106,7 +102,7 @@ def raw_data(input: dict):
         else:
             hist.append(0)
 
-    check_list(scaled_array_flipped, 'scaled_array_flipped')
+    check_list(scaled_array_flipped)
 
     return {'data': scaled_array_flipped.ravel().tolist(),
             'height': scaled_array.shape[0],
