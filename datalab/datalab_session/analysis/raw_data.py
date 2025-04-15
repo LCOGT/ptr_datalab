@@ -51,15 +51,15 @@ def raw_data(input: dict):
     image_data = sci_hdu.data
     image_data_64 = image_data.astype(np.float64)
 
-    # Compute the fits2image autoscale params to send with the image
-    samples = extract_samples_in_place(image_data_64, sci_hdu.header.get('NAXIS1'), sci_hdu.header.get('NAXIS2'))
-    median = np.median(samples)
-    zmin, zmax, _ = calc_zscale_min_max(samples, contrast=0.1, iterations=1)
-
     # Resize, convert back to original datatype and flip the image
     scaled_array_64 = cv2.resize(image_data_64, dsize=(max_size, max_size), interpolation=cv2.INTER_AREA)
     scaled_array = scaled_array_64.astype(datatype)
     scaled_array_flipped = np.flip(scaled_array, axis=0)
+
+    # Compute the fits2image autoscale params to send with the image
+    samples = extract_samples_in_place(image_data_64, sci_hdu.header.get('NAXIS1'), sci_hdu.header.get('NAXIS2'))
+    median = np.median(samples)
+    zmin, zmax, _ = calc_zscale_min_max(samples, contrast=0.1, iterations=1)
 
     # Set the zmin/zmax to integer values for calculating bins
     zmin = math.floor(zmin)
