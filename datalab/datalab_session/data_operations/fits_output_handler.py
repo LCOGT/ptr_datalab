@@ -17,7 +17,7 @@ class FITSOutputHandler():
   Attributes:
     datalab_id (str): The cache key for the FITS file.
     primary_hdu (fits.PrimaryHDU): The primary HDU for the FITS file.
-    image_hdu (fits.ImageHDU): The image HDU for the FITS file.
+    image_hdu (fits.CompImageHDU): The image HDU for the FITS file.
     data (np.array): The data for the image HDU.
   """
     
@@ -32,7 +32,7 @@ class FITSOutputHandler():
       """
       self.datalab_id = cache_key
       self.primary_hdu = fits.PrimaryHDU(header=fits.Header([('DLAB_KEY', cache_key)]))
-      self.image_hdu = fits.ImageHDU(data=data, header=data_header, name='SCI')
+      self.image_hdu = fits.CompImageHDU(data=data, header=data_header, name='SCI')
       self.dir = dir
 
       if comment: self.set_comment(comment)

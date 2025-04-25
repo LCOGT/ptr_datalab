@@ -44,7 +44,7 @@ def create_fits(key: str, image_arr: np.ndarray, comment=None) -> str:
   header = fits.Header([('KEY', key)])
   header.add_comment(comment) if comment else None
   primary_hdu = fits.PrimaryHDU(header=header)
-  image_hdu = fits.ImageHDU(data=image_arr, name='SCI')
+  image_hdu = fits.CompImageHDU(data=image_arr, name='SCI')
 
   hdu_list = fits.HDUList([primary_hdu, image_hdu])
   fits_path = tempfile.NamedTemporaryFile(suffix=f'{key}.fits', dir=settings.TEMP_FITS_DIR).name
