@@ -17,6 +17,7 @@ class DataOperationViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         operation = available_operations().get(serializer.validated_data['name'])(serializer.validated_data['input_data'])
+        print(f"Original Operation {operation.name()} - {operation.cache_key} - {operation.input_data}")
         serializer.save(session_id=self.kwargs['session_pk'], cache_key=operation.cache_key)
         operation.perform_operation()
 
@@ -24,6 +25,7 @@ class DataOperationViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         serializer = self.get_serializer(instance)
         if instance.status == 'PENDING' and not instance.output:
+            print(f"Retrying operation {instance.id} - {instance.name} - {instance.cache_key} - {instance.status} - {instance.input_data}")
             operation = available_operations().get(instance.name)(instance.input_data)
             operation.perform_operation()
 
