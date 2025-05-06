@@ -1,7 +1,7 @@
 import numpy as np
 
 from datalab.datalab_session.utils.file_utils import get_hdu, scale_points
-from datalab.datalab_session.utils.s3_utils import get_fits
+from datalab.datalab_session.utils.filecache import FileCache
 
 # Source catalog Function Definition
 # ARGS: input (dict)
@@ -24,9 +24,9 @@ def source_catalog(input: dict):
   """
     Returns a dict representing the source catalog data with x,y coordinates and flux values
   """
-  with get_fits(input['basename'], input['source']) as fits_path:
-    cat_hdu = get_hdu(fits_path, 'CAT')
-    sci_hdu = get_hdu(fits_path, 'SCI')
+  file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'))
+  cat_hdu = get_hdu(file_path, 'CAT')
+  sci_hdu = get_hdu(file_path, 'SCI')
 
   DECIMALS_OF_PRECISION = 6
   MAX_SOURCE_CATALOG_SIZE = min(len(cat_hdu.data["x"]), 1000)

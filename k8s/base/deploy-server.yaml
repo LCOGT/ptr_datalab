@@ -113,6 +113,34 @@ spec:
                 name: env
                 optional: false
 
+        - name: reconcile-filecache
+          image: datalab
+          command:
+            - python
+            - manage.py
+            - reconcile_file_cache
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+              readOnly: false
+          env:
+            - name: CONTAINER_TYPE
+              value: "server"
+          envFrom:
+            - configMapRef:
+                name: env
+                optional: false
+            - secretRef:
+                name: env
+                optional: false
+
       containers:
         - name: default
           image: datalab
@@ -135,6 +163,8 @@ spec:
               value: "2"
             - name: GUNICORN_TIMEOUT
               value: "300"
+            - name: CONTAINER_TYPE
+              value: "server"
           envFrom:
             - configMapRef:
                 name: env
@@ -164,29 +194,3 @@ spec:
             httpGet:
               path: /admin/login/
               port: server
-        - name: cleanup
-          image: datalab
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            readOnlyRootFilesystem: true
-          command: ["/bin/sh", "-c"]
-          args:
-          - >
-            while true;
-            do
-              find /tmp/fits -type f -cmin +65 -delete;
-              sleep 10m;
-            done
-          envFrom:
-            - configMapRef:
-                name: env
-                optional: false
-            - secretRef:
-                name: env
-                optional: false
-          volumeMounts:
-            - name: tmp
-              mountPath: /tmp
-              readOnly: false

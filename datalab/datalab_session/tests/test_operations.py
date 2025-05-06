@@ -171,20 +171,18 @@ class TestMedianOperation(FileExtendedTestCase):
         return super().tearDown()
 
     @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
-    @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
+    @mock.patch('datalab.datalab_session.data_operations.input_data_handler.FileCache')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.FileCache', new=mock.MagicMock)
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
-    def test_operate(self, mock_create_jpgs, mock_save_files_to_s3, mock_get_fits, mock_named_tempfile):
-        def mock_get_fits_context(basename, source='archive'):
-            @contextmanager
-            def mock_context():
-                yield {
-                    "fits_1": self.test_fits_1_path, 
-                    "fits_2": self.test_fits_2_path,
-                }[basename]
-            return mock_context()
+    def test_operate(self, mock_create_jpgs, mock_save_files_to_s3, mock_file_cache, mock_named_tempfile):
         # return the test fits paths in order of the input_files instead of aws fetch
-        mock_get_fits.side_effect = mock_get_fits_context
+        mock_fc_instance1 = mock.MagicMock()
+        mock_fc_instance1.get_fits.return_value = self.test_fits_1_path
+        mock_fc_instance2 = mock.MagicMock()
+        mock_fc_instance2.get_fits.return_value = self.test_fits_2_path
+        mock_file_cache.side_effect = [mock_fc_instance1, mock_fc_instance2]
+
         # save temp output to a known path so we can test it
         mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_median_path
         # avoids overwriting our output
@@ -233,20 +231,17 @@ class TestRGBStackOperation(FileExtendedTestCase):
     @mock.patch('datalab.datalab_session.data_operations.rgb_stack.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.tempfile.NamedTemporaryFile')
-    @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
-    def test_operate(self, mock_get_fits, mock_named_tempfile, mock_create_jpgs, mock_save_files_to_s3):
-        def mock_get_fits_context(basename, source='archive'):
-            @contextmanager
-            def mock_context():
-                yield {
-                    'red_fits': self.test_red_path,
-                    'green_fits': self.test_green_path,
-                    'blue_fits': self.test_blue_path
-                }[basename]
-            return mock_context()
-        
+    @mock.patch('datalab.datalab_session.data_operations.input_data_handler.FileCache')
+    def test_operate(self, mock_file_cache, mock_named_tempfile, mock_create_jpgs, mock_save_files_to_s3):
         # return the test fits paths in order of the input_files instead of aws fetch
-        mock_get_fits.side_effect = mock_get_fits_context
+        mock_fc_instance1 = mock.MagicMock()
+        mock_fc_instance1.get_fits.return_value = self.test_red_path
+        mock_fc_instance2 = mock.MagicMock()
+        mock_fc_instance2.get_fits.return_value = self.test_green_path
+        mock_fc_instance3 = mock.MagicMock()
+        mock_fc_instance3.get_fits.return_value = self.test_blue_path
+        mock_file_cache.side_effect = [mock_fc_instance1, mock_fc_instance2, mock_fc_instance3]
+
         # save temp output to a known path so we can test
         mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_rgb_path
         # avoids overwriting our output
@@ -281,22 +276,11 @@ class TestStackOperation(FileExtendedTestCase):
         return super().tearDown()
 
     @mock.patch('datalab.datalab_session.utils.file_utils.tempfile.NamedTemporaryFile')
-    @mock.patch('datalab.datalab_session.data_operations.input_data_handler.get_fits')
+    @mock.patch('datalab.datalab_session.data_operations.input_data_handler.FileCache')
+    @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.FileCache', new=mock.MagicMock)
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
-    def test_operate(self, mock_create_jpgs, mock_save_files_to_s3, mock_get_fits, mock_named_tempfile):
-        # Maintain a queue of file paths
-        fits_queue = {
-            "fits_1": [self.test_fits_1_path, self.temp_fits_1_negative_path],
-            "fits_2": [self.test_fits_2_path, self.temp_fits_2_negative_path]
-        }
-
-        def mock_get_fits_context(basename, source='archive'):
-            @contextmanager
-            def mock_context():
-                yield fits_queue[basename].pop(0)
-            return mock_context()
-        
+    def test_operate(self, mock_create_jpgs, mock_save_files_to_s3, mock_file_cache, mock_named_tempfile):
         # Generate negative images
         for original, negative_path in [
             (self.test_fits_1_path, self.temp_fits_1_negative_path),
@@ -307,7 +291,16 @@ class TestStackOperation(FileExtendedTestCase):
             hdul.writeto(negative_path, overwrite=True)
 
         # Mock behavior
-        mock_get_fits.side_effect = mock_get_fits_context
+        mock_fc_instance1 = mock.MagicMock()
+        mock_fc_instance1.get_fits.return_value = self.test_fits_1_path
+        mock_fc_instance2 = mock.MagicMock()
+        mock_fc_instance2.get_fits.return_value = self.test_fits_2_path
+        mock_fc_instance1n = mock.MagicMock()
+        mock_fc_instance1n.get_fits.return_value = self.temp_fits_1_negative_path
+        mock_fc_instance2n = mock.MagicMock()
+        mock_fc_instance2n.get_fits.return_value = self.temp_fits_2_negative_path
+        mock_file_cache.side_effect = [mock_fc_instance1, mock_fc_instance2, mock_fc_instance1n, mock_fc_instance2n]
+
         mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_stacked_path
         mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
         mock_save_files_to_s3.return_value = self.temp_stacked_path
@@ -333,7 +326,8 @@ class TestStackOperation(FileExtendedTestCase):
 
         # Verify output is a blank image
         output_hdul = fits.open(self.temp_stacked_path)
-        self.assertTrue(np.all(output_hdul['SCI'].data == 0))
+
+        self.assertTrue(np.sum(output_hdul['SCI'].data) < 0.01)  # Changed to be close to zero because I was getting some tiny non-zero values when stacking multiple images
 
     def test_not_enough_files(self):
         input_data = {

@@ -27,6 +27,7 @@ boto3 = "^1.34.77"
 scikit-image = "^0.23.2"
 fits-align = "^0.4.4"
 opencv-python = "^4.11.0.86"
+django-redis = "^5.4.0"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.4.3"

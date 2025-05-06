@@ -156,10 +156,14 @@ DATABASES = {
 
 CACHES = {
     'default': {
-        'BACKEND': os.getenv('CACHE_BACKEND', 'django.core.cache.backends.redis.RedisCache'),
-        'LOCATION': os.getenv('CACHE_LOCATION', 'redis://127.0.0.1:6379')
+        'BACKEND': os.getenv('CACHE_BACKEND', 'django_redis.cache.RedisCache'),
+        'LOCATION': os.getenv('CACHE_LOCATION', 'redis://127.0.0.1:6379/0')
     }
 }
+
+FILECACHE_TOTAL_SIZE = int(os.getenv('FILECACHE_TOTAL_SIZE', 2 * 104857600))  # Size in bytes for the file cache
+
+CONTAINER_TYPE = os.getenv('CONTAINER_TYPE', 'server')
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',

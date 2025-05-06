@@ -29,6 +29,35 @@ spec:
                 resources:
                   requests:
                     storage: 20Gi
+      initContainers:
+        - name: reconcile-filecache
+          image: datalab
+          command:
+            - python
+            - manage.py
+            - reconcile_file_cache
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+              readOnly: false
+          env:
+            - name: CONTAINER_TYPE
+              value: "server"
+          envFrom:
+            - configMapRef:
+                name: env
+                optional: false
+            - secretRef:
+                name: env
+                optional: false
+
       containers:
         - name: default
           image: datalab
@@ -45,6 +74,9 @@ spec:
             - "2"
             - "--threads"
             - "4"
+          env:
+            - name: CONTAINER_TYPE
+              value: worker
           envFrom:
             - configMapRef:
                 name: env
@@ -65,29 +97,3 @@ spec:
             exec:
               command:
                 - /bin/true
-        - name: cleanup
-          image: datalab
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            readOnlyRootFilesystem: true
-          command: ["/bin/sh", "-c"]
-          args:
-          - >
-            while true;
-            do
-              find /tmp/fits -type f -cmin +65 -delete;
-              sleep 10m;
-            done
-          envFrom:
-            - configMapRef:
-                name: env
-                optional: false
-            - secretRef:
-                name: env
-                optional: false
-          volumeMounts:
-            - name: tmp
-              mountPath: /tmp
-              readOnly: false

@@ -5,6 +5,7 @@ from astropy.io import fits
 
 from datalab.datalab_session.utils.file_utils import create_jpgs, temp_file_manager
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3
+from datalab.datalab_session.utils.filecache import FileCache
 
 
 class FITSOutputHandler():
@@ -58,14 +59,16 @@ class FITSOutputHandler():
     """
     file_paths = {}
     hdu_list = fits.HDUList([self.primary_hdu, self.image_hdu])
+    file_name = f'{self.datalab_id}-{index}' if index else f'{self.datalab_id}'
 
-    with tempfile.NamedTemporaryFile(suffix=f'{self.datalab_id}.fits', dir=self.dir) as fits_output_file:
+    with tempfile.NamedTemporaryFile(suffix=f'{file_name}.fits', delete=False) as fits_output_file:
       # Create the output FITS file
       fits_output_path = fits_output_file.name
       hdu_list.writeto(fits_output_path, overwrite=True)
+      FileCache().add_file_to_cache(fits_output_path)
 
       # Create jpgs if not provided
-      with temp_file_manager(f"{self.datalab_id}-large.jpg", f"{self.datalab_id}-small.jpg", dir=self.dir) as (gen_large_jpg, gen_small_jpg):
+      with temp_file_manager(f"{file_name}-large.jpg", f"{file_name}-small.jpg") as (gen_large_jpg, gen_small_jpg):
         if not large_jpg_path or not small_jpg_path:
           create_jpgs(fits_output_path, gen_large_jpg, gen_small_jpg)
 
