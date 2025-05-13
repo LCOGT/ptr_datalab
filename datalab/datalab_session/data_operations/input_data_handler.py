@@ -1,10 +1,9 @@
-from contextlib import ExitStack
 import gc
 
 from astropy.io import fits
 
-from datalab.datalab_session.utils.s3_utils import get_fits
 from datalab.datalab_session.utils.file_utils import get_hdu
+from datalab.datalab_session.utils.filecache import FileCache
 
 class InputDataHandler():
   """A class to read FITS files and provide access to the data.
@@ -27,13 +26,9 @@ class InputDataHandler():
     """
     self.basename = basename
     self.source = source
-    self.exit_stack = ExitStack()
-    self.fits_file = self.exit_stack.enter_context(get_fits(basename, source))
+    self.fits_file = FileCache().get_fits(basename, source)
     self.sci_hdu = get_hdu(self.fits_file, 'SCI')
     self.sci_data = self.sci_hdu.data
-  
-  def __del__(self):
-    self.exit_stack.close()
 
   def __enter__(self):
     return self
@@ -42,8 +37,6 @@ class InputDataHandler():
     # Using this as a context manager will ensure memory is returned when we are done with the file
     del self.sci_hdu
     del self.sci_data
-    self.exit_stack.close()
-    del self.fits_file
     gc.collect()
 
   def __str__(self) -> str:

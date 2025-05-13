@@ -1,9 +1,9 @@
 import logging
 import numpy as np
 import math
-from datalab.datalab_session.utils.s3_utils import get_fits
 from datalab.datalab_session.utils.file_utils import get_hdu
-from fits2image.scaling import extract_samples, calc_zscale_min_max
+from datalab.datalab_session.utils.filecache import FileCache
+from fits2image.scaling import calc_zscale_min_max
 import cv2
 # TODO: This analysis endpoint assumes the image to be of 16 bitdepth. We should make this agnositc to bit depth in the future
 
@@ -17,9 +17,9 @@ def extract_samples_in_place(image_array:np.ndarray, naxis1, naxis2):
 
 
 def raw_data(input: dict):
-    with get_fits(input['basename'], input.get('source', 'archive')) as fits_path:
-        sci_hdu = get_hdu(fits_path, 'SCI')
-    
+    file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'))
+    sci_hdu = get_hdu(file_path, 'SCI')
+
     image_data = sci_hdu.data
 
     # Compute the fits2image autoscale params to send with the image

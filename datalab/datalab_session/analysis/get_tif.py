@@ -1,5 +1,6 @@
 from datalab.datalab_session.utils.file_utils import create_tif, temp_file_manager
-from datalab.datalab_session.utils.s3_utils import key_exists, add_file_to_bucket, get_s3_url, get_fits
+from datalab.datalab_session.utils.s3_utils import key_exists, add_file_to_bucket, get_s3_url
+from datalab.datalab_session.utils.filecache import FileCache
 
 def get_tif(input: dict):
   """
@@ -18,9 +19,9 @@ def get_tif(input: dict):
     tif_url = get_s3_url(file_key)
   else:
     # If tif file doesn't exist, generate a new tif file
-    with get_fits(basename) as fits_path:
-      with temp_file_manager(f'{basename}.tif') as tif_path:
-        create_tif(fits_path, tif_path)
-        tif_url = add_file_to_bucket(file_key, tif_path)
+    file_path = FileCache().get_fits(basename, input.get('source', 'archive'))
+    with temp_file_manager(f'{basename}.tif') as tif_path:
+      create_tif(file_path, tif_path)
+      tif_url = add_file_to_bucket(file_key, tif_path)
 
   return {"tif_url": tif_url}
