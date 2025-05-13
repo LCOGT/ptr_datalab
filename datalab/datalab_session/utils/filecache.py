@@ -83,7 +83,7 @@ class FileCache():
         log.debug(f"_download_file_to_cache for {file_key}")
         try:
             log.info(f"_download_file_to_cache for {file_key}: initial cache set, downloading file to {file_path}")
-            download_fits(file_path, basename, source)
+            download_fits(basename, source)
             # Now download is finished, so get the file size and update the cache with it
             file_size = os.path.getsize(file_path)
             log.info(f"_download_file_to_cache for {file_key}: download complete with file size {file_size}")

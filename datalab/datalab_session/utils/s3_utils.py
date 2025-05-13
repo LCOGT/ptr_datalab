@@ -111,7 +111,7 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
   fits_url = results[0].get('url', 'No URL found')
   return fits_url
 
-def download_fits(file_path: str, basename: str, source: str = 'archive'):
+def download_fits(basename: str, source: str = 'archive'):
   basename = basename.replace('-large', '').replace('-small', '')
   file_key = f"{source}_{basename}.fits.fz"
   fits_path = os.path.join(settings.TEMP_FITS_DIR, file_key)
