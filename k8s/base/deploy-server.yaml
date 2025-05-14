@@ -20,7 +20,7 @@ spec:
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: 5Gi
+            sizeLimit: 10Gi
         - name: static
           emptyDir:
             sizeLimit: 128Mi
@@ -133,6 +133,8 @@ spec:
           env:
             - name: CONTAINER_TYPE
               value: "server"
+            - name: FILECACHE_TOTAL_SIZE
+              value: "9663676416"
           envFrom:
             - configMapRef:
                 name: env
@@ -165,6 +167,8 @@ spec:
               value: "300"
             - name: CONTAINER_TYPE
               value: "server"
+            - name: FILECACHE_TOTAL_SIZE
+              value: "9663676416"
           envFrom:
             - configMapRef:
                 name: env

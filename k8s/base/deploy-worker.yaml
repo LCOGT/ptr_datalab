@@ -49,7 +49,9 @@ spec:
               readOnly: false
           env:
             - name: CONTAINER_TYPE
-              value: "server"
+              value: "worker"
+            - name: FILECACHE_TOTAL_SIZE
+              value: "20401094656"
           envFrom:
             - configMapRef:
                 name: env
@@ -77,6 +79,8 @@ spec:
           env:
             - name: CONTAINER_TYPE
               value: worker
+            - name: FILECACHE_TOTAL_SIZE
+              value: "20401094656"
           envFrom:
             - configMapRef:
                 name: env
