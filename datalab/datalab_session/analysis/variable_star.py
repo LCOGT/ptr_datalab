@@ -29,8 +29,12 @@ def variable_star(input: dict):
   for image in input.get("images"):
     log.info(f"Processing image: {image.get('basename')} for variable star analysis...")
 
-    file_path = FileCache().get_fits(image.get('basename'), input.get('source', 'archive'))
-    cat_hdu = get_hdu(file_path, extension='CAT')
+    try:
+      file_path = FileCache().get_fits(image.get('basename'), input.get('source', 'archive'))
+      cat_hdu = get_hdu(file_path, extension='CAT')
+    except Exception as e:
+      log.error(f"Error retrieving catalog for image {image.get('basename')}: {e}")
+      continue
     
     target_source = find_target_source(cat_hdu, target_ra, target_dec)
 
