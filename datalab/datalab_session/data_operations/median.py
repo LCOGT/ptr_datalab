@@ -65,3 +65,5 @@ The output is a median image for the n input images. This operation is commonly 
         output = FITSOutputHandler(self.cache_key, median, self.temp, comment).create_and_save_data_products(Format.FITS)
         log.info(f'Median output: {output}')
         self.set_output(output)
+        self.set_operation_progress(1.0)
+        self.set_status('COMPLETED')

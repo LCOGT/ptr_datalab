@@ -148,3 +148,5 @@ class RGB_Stack(BaseDataOperation):
 
         log.info(f'RGB Stack output: {output}')
         self.set_output(output)
+        self.set_operation_progress(1.0)
+        self.set_status('COMPLETED')
