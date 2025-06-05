@@ -115,8 +115,6 @@ class BaseDataOperation(ABC):
     def set_output(self, output):
         output_data = {'output_files': output if isinstance(output, list) else [output]}
         cache.set(f'operation_{self.cache_key}_output', output_data, CACHE_DURATION)
-        self.set_operation_progress(1.0)
-        self.set_status('COMPLETED')
 
     def get_output(self) -> dict:
         return cache.get(f'operation_{self.cache_key}_output')

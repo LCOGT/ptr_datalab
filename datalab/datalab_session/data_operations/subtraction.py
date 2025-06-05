@@ -73,7 +73,10 @@ class Subtraction(BaseDataOperation):
                 outputs.append(FITSOutputHandler(
                     f'{self.cache_key}', difference_array, self.temp, subtraction_comment,
                     data_header=input_image.sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, index=index))
+                self.set_output(outputs)
                 self.set_operation_progress(0.9 + index / len(input_files))
 
         log.info(f'Subtraction output: {outputs}')
         self.set_output(outputs)
+        self.set_operation_progress(1.0)
+        self.set_status('COMPLETED')
