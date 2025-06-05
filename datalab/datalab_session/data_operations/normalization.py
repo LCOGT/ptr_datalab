@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
@@ -40,13 +41,13 @@ The output is a normalized image. This operation is commonly used as a precursor
             }
         }
 
-    def operate(self):
+    def operate(self, submitter: User):
         input_list = self.input_data.get('input_files', [])
         log.info(f'Normalization operation on {len(input_list)} file(s)')
 
         output_files = []
         for index, input in enumerate(input_list, start=1):
-            with InputDataHandler(input['basename'], input['source']) as image:
+            with InputDataHandler(submitter, input['basename'], input['source']) as image:
                 self.set_operation_progress(0.9 * (index-0.5) / len(input_list))
                 median = np.median(image.sci_data)
                 normalized_image = image.sci_data / median

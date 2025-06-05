@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
@@ -50,7 +51,7 @@ class Subtraction(BaseDataOperation):
             },
         }
 
-    def operate(self):
+    def operate(self, submitter: User):
         input_files = self.input_data.get('input_files', [])
         subtraction_file_input = self.input_data.get('subtraction_file', [])
 
@@ -59,10 +60,10 @@ class Subtraction(BaseDataOperation):
 
         log.info(f'Subtraction operation on {len(input_files)} files')
 
-        subtraction_fits = InputDataHandler(subtraction_file_input[0]['basename'], subtraction_file_input[0]['source'])
+        subtraction_fits = InputDataHandler(submitter, subtraction_file_input[0]['basename'], subtraction_file_input[0]['source'])
         outputs = []
         for index, input in enumerate(input_files, start=1):
-            with InputDataHandler(input['basename'], input['source']) as input_image:
+            with InputDataHandler(submitter, input['basename'], input['source']) as input_image:
                 self.set_operation_progress(0.9 * (index-0.5) / len(input_files))
                 (input_image_data, subtraction_image), _ = crop_arrays([input_image.sci_data, subtraction_fits.sci_data])
 

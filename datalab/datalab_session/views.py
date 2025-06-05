@@ -48,7 +48,7 @@ class AnalysisView(RetrieveAPIView):
                 log.warning(f"Invalid action: {action}")
                 return Response({"error": f"Analysis action '{action}' not found"}, status=400)
 
-            output = action_function(input_data)
+            output = action_function(input_data, request.user)
 
             return Response(output)
 

@@ -51,13 +51,13 @@ class BaseDataOperation(ABC):
         """
 
     @abstractmethod
-    def operate(self):
+    def operate(self, submitter):
         """ The method that performs the data operation.
             It should periodically update the percent completion during its operation.
             It should set the output and status into the cache when done.
         """
     
-    def allocate_operate(self):
+    def allocate_operate(self, submitter):
         """
         Wraps the operate() method, creates a unique temp directory for the operation
         """
@@ -74,20 +74,20 @@ class BaseDataOperation(ABC):
             log.warning(f"Failed to create temp dir for operation {self.cache_key}: {e} using default {self.temp}")
         
         # Run the operation
-        self.operate()
+        self.operate(submitter)
 
         # Clean up the temp directory
         if self.temp and os.path.exists(self.temp):
             shutil.rmtree(self.temp)
 
-    def perform_operation(self):
+    def perform_operation(self, submitter_username):
         """ The generic method to perform the operation if its not in progress """
         status = self.get_status()
         if status == 'PENDING' or status == 'FAILED':
             self.set_status('IN_PROGRESS')
             self.set_operation_progress(0.0)
             # This asynchronous task will call the operate() method on the proper operation
-            execute_data_operation.send(self.name(), self.input_data)
+            execute_data_operation.send(self.name(), self.input_data, submitter_username)
 
     def generate_cache_key(self) -> str:
         """ Generate a unique cache key hashed from the input_data and operation name """

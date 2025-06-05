@@ -1,4 +1,5 @@
 import numpy as np
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.utils.file_utils import get_hdu, scale_points
 from datalab.datalab_session.utils.filecache import FileCache
@@ -20,11 +21,11 @@ from datalab.datalab_session.utils.filecache import FileCache
 #     dec (float): The declination of the source
 #   }]
 # 
-def source_catalog(input: dict):
+def source_catalog(input: dict, user: User):
   """
     Returns a dict representing the source catalog data with x,y coordinates and flux values
   """
-  file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'))
+  file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'), user)
   cat_hdu = get_hdu(file_path, 'CAT')
   sci_hdu = get_hdu(file_path, 'SCI')
 

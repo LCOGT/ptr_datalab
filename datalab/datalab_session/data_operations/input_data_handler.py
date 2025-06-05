@@ -1,6 +1,7 @@
 import gc
 
 from astropy.io import fits
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.utils.file_utils import get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
@@ -15,7 +16,7 @@ class InputDataHandler():
     sci_data (np.array): The data from the 'SCI' extension of the FITS file.
   """
 
-  def __init__(self, basename: str, source: str = None) -> None:
+  def __init__(self, submitter: User, basename: str, source: str = None) -> None:
     """
     Supported sources are 'datalab' and 'archive'
     New sources will need to be added in get_fits
@@ -24,9 +25,10 @@ class InputDataHandler():
       basename (str): The basename query for the FITS file
       source (str): location of the fits file
     """
+    self.submitter = submitter
     self.basename = basename
     self.source = source
-    self.fits_file = FileCache().get_fits(basename, source)
+    self.fits_file = FileCache().get_fits(basename, source, submitter)
     self.sci_hdu = get_hdu(self.fits_file, 'SCI')
     self.sci_data = self.sci_hdu.data
 

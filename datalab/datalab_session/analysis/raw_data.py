@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 import math
+from django.contrib.auth.models import User
 from datalab.datalab_session.utils.file_utils import get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
 from fits2image.scaling import calc_zscale_min_max
@@ -16,8 +17,8 @@ def extract_samples_in_place(image_array:np.ndarray, naxis1, naxis2):
     return samples
 
 
-def raw_data(input: dict):
-    file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'))
+def raw_data(input: dict, user: User):
+    file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'), user)
     sci_hdu = get_hdu(file_path, 'SCI')
 
     image_data = sci_hdu.data

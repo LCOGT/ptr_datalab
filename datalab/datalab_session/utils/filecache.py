@@ -5,6 +5,7 @@ from pathlib import Path
 
 from django.core.cache import cache
 from django.conf import settings
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.utils.s3_utils import download_fits
 
@@ -75,7 +76,7 @@ class FileCache():
             self._increment_file_usage(file_key)
         return True
 
-    def _download_file_to_cache(self, basename: str, source: str = 'archive'):
+    def _download_file_to_cache(self, basename: str, source: str = 'archive', user: User = User.objects.none):
         # First place the fits details into the cache, then download the file, then update the cache with the final file size
         file_key = f"{source}_{basename}"
         file_name = f"{file_key}.fits.fz"
@@ -83,7 +84,7 @@ class FileCache():
         log.debug(f"_download_file_to_cache for {file_key}")
         try:
             log.info(f"_download_file_to_cache for {file_key}: initial cache set, downloading file to {file_path}")
-            download_fits(file_path, basename, source)
+            download_fits(file_path, basename, source, user)
             # Now download is finished, so get the file size and update the cache with it
             file_size = os.path.getsize(file_path)
             log.info(f"_download_file_to_cache for {file_key}: download complete with file size {file_size}")
@@ -107,20 +108,20 @@ class FileCache():
             # Raise an exception here since we failed to download the file
             raise
 
-    def get_fits(self, basename: str, source: str = 'archive'):
+    def get_fits(self, basename: str, source: str = 'archive', user: User = User.objects.none):
         ''' This attempts to get the file out of the cache and increment its usage. If the file isn't in the cache,
             or if its in the cache but not on the filesystem, then the file will be redownloaded from S3 and placed
             in the cache. Returns the local temp dir file_path to the downloaded file.
         '''
         basename = basename.replace('-large', '').replace('-small', '')
-        file_path = self._get_fits_helper(basename, source)
+        file_path = self._get_fits_helper(basename, source, user)
         while file_path is None:
             time.sleep(0.1)
-            file_path = self._get_fits_helper(basename, source)
+            file_path = self._get_fits_helper(basename, source, user)
 
         return file_path
 
-    def _get_fits_helper(self, basename: str, source: str = 'archive'):
+    def _get_fits_helper(self, basename: str, source: str = 'archive', user: User = User.objects.none):
         file_key = f"{source}_{basename}"
         log.debug(f"_get_fits_helper for {file_key}")
         # First see if the file is in the file cache and increment its name on the LRU list
@@ -148,7 +149,7 @@ class FileCache():
             }
             self.client.hset(file_key, mapping=file_details)
             self._increment_file_usage(file_key)
-        return self._download_file_to_cache(basename, source)
+        return self._download_file_to_cache(basename, source, user)
 
     def clear_cache(self):
         ''' Clears out the file cache - assumes you already have a lock open from the calling process

@@ -31,7 +31,7 @@ class TestAnalysis(TestCase):
             'x2': 75,
             'y2': 75,
             'source': 'archive'
-        })
+        }, None)
 
         assert_almost_equal(output.get('line_profile').tolist(), self.test_line_profile_data, decimal=3)
 
@@ -46,6 +46,6 @@ class TestAnalysis(TestCase):
             'height': 100,
             'width': 100,
             'source': 'archive'
-            })
+            }, None)
 
         self.assertEqual(output, self.test_source_catalog_data)
