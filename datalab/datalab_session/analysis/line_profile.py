@@ -2,13 +2,14 @@ from skimage.measure import profile_line
 from astropy.wcs import WCS
 from astropy.wcs import WcsError
 from astropy import coordinates
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.file_utils import scale_points, get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
 
 # For creating an array of brightness along a user drawn line
-def line_profile(input: dict):
+def line_profile(input: dict, user: User):
   """
     Creates an array of luminosity values and the length of the line in arcseconds
     input = {
@@ -21,7 +22,7 @@ def line_profile(input: dict):
       y2 (int): The y coordinate of the ending point
     }
   """
-  file_path = FileCache().get_fits(input['basename'], input['source'])
+  file_path = FileCache().get_fits(input['basename'], input['source'], user)
   try:
     sci_hdu = get_hdu(file_path, 'SCI')
   except TypeError as e:
