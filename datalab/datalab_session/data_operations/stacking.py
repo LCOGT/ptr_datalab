@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
@@ -43,7 +44,7 @@ The output is a stacked image for the n input images. This operation is commonly
         }
         return description
 
-    def operate(self):
+    def operate(self, submitter: User):
         input_files = self.input_data.get('input_files', [])
         if len(input_files) <= 1: raise ClientAlertException('Stack needs at least 2 files')
         comment= f'Datalab Stacking on {", ".join([image["basename"] for image in input_files])}'
@@ -51,7 +52,7 @@ The output is a stacked image for the n input images. This operation is commonly
 
         input_fits_list = []
         for index, input in enumerate(input_files, start=1):
-            input_fits_list.append(InputDataHandler(input['basename'], input['source']))
+            input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
             self.set_operation_progress(0.5 * (index / len(input_files)))
 
         cropped_data, _ = crop_arrays([image.sci_data for image in input_fits_list])

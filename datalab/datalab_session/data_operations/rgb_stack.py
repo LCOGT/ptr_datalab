@@ -2,6 +2,7 @@ import logging
 
 from fits_align.ident import make_transforms
 from fits_align.align import affineremap
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
@@ -83,12 +84,12 @@ class RGB_Stack(BaseDataOperation):
         
         return rgb_input_list
     
-    def _process_inputs(self, rgb_input_list) -> tuple[list[InputDataHandler], list[float], list[float]]:
+    def _process_inputs(self, submitter, rgb_input_list) -> tuple[list[InputDataHandler], list[float], list[float]]:
         input_fits_list = []
         zmin_list = []
         zmax_list = []
         for index, input in enumerate(rgb_input_list, start=1):
-            input_fits_list.append(InputDataHandler(input['basename'], input['source']))
+            input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
             zmin_list.append(input['zmin'])
             zmax_list.append(input['zmax'])
             self.set_operation_progress(self.PROGRESS_STEPS['INPUT_PROCESSING'] * (index / len(rgb_input_list)))
@@ -112,9 +113,9 @@ class RGB_Stack(BaseDataOperation):
         
         return aligned_images
 
-    def operate(self):
+    def operate(self, submitter: User):
         rgb_inputs = self._validate_inputs()
-        input_handlers, zmin_list, zmax_list = self._process_inputs(rgb_inputs)
+        input_handlers, zmin_list, zmax_list = self._process_inputs(submitter, rgb_inputs)
         fits_files = [handler.fits_file for handler in input_handlers]
 
         try:

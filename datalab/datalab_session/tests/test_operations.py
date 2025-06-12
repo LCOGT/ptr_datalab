@@ -57,7 +57,7 @@ class SampleDataOperation(BaseDataOperation):
     def wizard_description():
         return wizard_description
     
-    def operate(self):
+    def operate(self, submitter):
         self.set_output([])
 
 
@@ -139,7 +139,7 @@ class TestDataOperation(FileExtendedTestCase):
         self.assertEqual(self.data_operation.wizard_description(), wizard_description)
     
     def test_operate(self):
-        self.data_operation.operate()
+        self.data_operation.operate(None)
         self.assertEqual(self.data_operation.get_operation_progress(), 1.0)
         self.assertEqual(self.data_operation.get_status(), 'COMPLETED')
         self.assertEqual(self.data_operation.get_output(), {'output_files': []})
@@ -198,7 +198,7 @@ class TestMedianOperation(FileExtendedTestCase):
         }
 
         median = Median(input_data)
-        median.operate()
+        median.operate(None)
         output = median.get_output().get('output_files')
 
         self.assertEqual(median.get_operation_progress(), 1.0)
@@ -214,7 +214,7 @@ class TestMedianOperation(FileExtendedTestCase):
         median = Median(input_data)
         
         with self.assertRaises(ClientAlertException):
-            median.operate()
+            median.operate(None)
 
 
 class TestRGBStackOperation(FileExtendedTestCase):
@@ -256,7 +256,7 @@ class TestRGBStackOperation(FileExtendedTestCase):
         }
 
         rgb = RGB_Stack(input_data)
-        rgb.operate()
+        rgb.operate(None)
         output = rgb.get_output().get('output_files')
 
         self.assertEqual(rgb.get_operation_progress(), 1.0)
@@ -317,7 +317,7 @@ class TestStackOperation(FileExtendedTestCase):
 
         # Perform the stacking operation
         stack = Stack(input_data)
-        stack.operate()
+        stack.operate(None)
         output = stack.get_output().get('output_files')
 
         self.assertEqual(stack.get_operation_progress(), 1.0)
@@ -336,4 +336,4 @@ class TestStackOperation(FileExtendedTestCase):
         median = Median(input_data)
         
         with self.assertRaises(ClientAlertException):
-            median.operate()
+            median.operate(None)

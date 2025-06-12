@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.data_operations.fits_output_handler import FITSOutputHandler
@@ -42,7 +43,7 @@ The output is a median image for the n input images. This operation is commonly 
             }
         }
     
-    def operate(self):
+    def operate(self, submitter: User):
         # Getting/Checking the Input
         input_list = self.input_data.get('input_files', [])
         if len(input_list) <= 1: raise ClientAlertException('Median needs at least 2 files')
@@ -51,7 +52,7 @@ The output is a median image for the n input images. This operation is commonly 
 
         input_fits_list = []
         for index, input in enumerate(input_list, start=1):
-            input_fits_list.append(InputDataHandler(input['basename'], input['source']))
+            input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
             self.set_operation_progress(0.5 * (index / len(input_list)))
 
         # Creating the Median array

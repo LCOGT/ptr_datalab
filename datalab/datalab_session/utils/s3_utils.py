@@ -6,7 +6,10 @@ import urllib.request
 import boto3
 from botocore.exceptions import ClientError
 
+from ocs_authentication.auth_profile.models import AuthProfile
+
 from django.conf import settings
+from django.contrib.auth.models import User
 
 from datalab.datalab_session.exceptions import ClientAlertException
 
@@ -79,23 +82,30 @@ def key_exists(key: str) -> bool:
   response = s3.list_objects_v2(Bucket=settings.DATALAB_OPERATION_BUCKET, Prefix=key, MaxKeys=1)
   return 'Contents' in response
 
-def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
+def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API, user: User = User.objects.none) -> dict:
   """
   Looks for the key as a prefix in the operations s3 bucket
 
   Args:
     basename -- name to query
-
+    archive -- archive api base url
+    user -- user whose credentials should be used for archive query
   Returns:
     dict of archive fits urls
   """
   query_params = {'basename_exact': basename }
 
-  headers = {
-    'Authorization': f'Token {settings.ARCHIVE_API_TOKEN}'
-  }
-
-  response = requests.get(archive + '/frames/', params=query_params, headers=headers)
+  try:
+    # Attempt to get the users auth profile and OCS api token to use with the archive query
+    auth_profile = AuthProfile.objects.get(user=user)
+    auth_token = auth_profile.api_token
+    headers = {
+      'Authorization': f'Token {auth_token}'
+    }
+    response = requests.get(archive + '/frames/', params=query_params, headers=headers)
+  except AuthProfile.DoesNotExist:
+    # Attempt the query without auth headers - if the data is public it should still work
+    response = requests.get(archive + '/frames/', params=query_params)
 
   try:
     response.raise_for_status()
@@ -111,25 +121,22 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API) -> dict:
   fits_url = results[0].get('url', 'No URL found')
   return fits_url
 
-def download_fits(file_path: str, basename: str, source: str = 'archive'):
-  basename = basename.replace('-large', '').replace('-small', '')
-  file_key = f"{source}_{basename}.fits.fz"
-  fits_path = os.path.join(settings.TEMP_FITS_DIR, file_key)
-  if not os.path.isfile(fits_path):
+def download_fits(file_path: str, basename: str, source: str = 'archive', user: User = User.objects.none):
+  if not os.path.isfile(file_path):
     # create the tmp directory if it doesn't exist
     if not os.path.exists(settings.TEMP_FITS_DIR):
       os.makedirs(settings.TEMP_FITS_DIR, exist_ok=True)
 
     match source:
       case 'archive':
-        fits_url = get_archive_url(basename)
+        fits_url = get_archive_url(basename, user=user)
       case 'datalab':
         s3_folder_path = f'{basename.split("-")[0]}/{basename}.fits'
         fits_url = get_s3_url(s3_folder_path)
       case _:
         raise ClientAlertException(f"Source {source} not recognized")
 
-    urllib.request.urlretrieve(fits_url, fits_path)
+    urllib.request.urlretrieve(fits_url, file_path)
     return True
   return False
 
