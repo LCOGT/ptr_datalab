@@ -66,3 +66,5 @@ The output is a stacked image for the n input images. This operation is commonly
 
         log.info(f'Stacked output: {output}')
         self.set_output(output)
+        self.set_operation_progress(1.0)
+        self.set_status('COMPLETED')

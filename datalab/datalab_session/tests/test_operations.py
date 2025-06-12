@@ -59,6 +59,8 @@ class SampleDataOperation(BaseDataOperation):
     
     def operate(self, submitter):
         self.set_output([])
+        self.set_operation_progress(1.0)
+        self.set_status('COMPLETED')
 
 
 class TestDataOperation(FileExtendedTestCase):
@@ -150,6 +152,8 @@ class TestDataOperation(FileExtendedTestCase):
 
     def test_set_get_output(self):
         self.data_operation.set_output([])
+        self.data_operation.set_operation_progress(1.0)
+        self.data_operation.set_status('COMPLETED')
         self.assertEqual(self.data_operation.get_operation_progress(), 1.0)
         self.assertEqual(self.data_operation.get_status(), 'COMPLETED')
         self.assertEqual(self.data_operation.get_output(), {'output_files': []})
