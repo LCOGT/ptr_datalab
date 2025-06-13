@@ -28,6 +28,9 @@ scikit-image = "^0.23.2"
 fits-align = "^0.4.4"
 opencv-python = "^4.11.0.86"
 django-redis = "^5.4.0"
+fsspec = "^2025.3.2"
+requests = "^2.32.3"
+aiohttp = "^3.12.2"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.4.3"

@@ -16,12 +16,12 @@ log.setLevel(logging.INFO)
 
 TIFF_EXTENSION = 'TIFF'
 
-def get_hdu(path: str, extension: str = 'SCI') -> list[fits.HDUList]:
+def get_hdu(path: str, extension: str = 'SCI', use_fsspec: bool = False) -> list[fits.HDUList]:
   """
   Returns a HDU for the fits in the given path
   Warning: this function returns an opened file that must be closed after use
   """
-  with fits.open(path) as hdu:
+  with fits.open(path, use_fsspec=use_fsspec) as hdu:
     try:
       extension_copy = hdu[extension].copy()
     except KeyError:
