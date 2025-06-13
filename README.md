@@ -3,41 +3,41 @@
 This application is the backend server for the PhotonRanch Datalab. It is a django application with a REST API for communicating with the Datalab UI.
 
 ## Prerequisites
--   Python >= 3.10
--   Django >= 4
+-   [Python](https://www.python.org/downloads/)
+-   [Poetry](https://python-poetry.org/docs/)
+-   [Redis](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/)
 
 
-## Local Development
-### Bare Metal
-Start by creating a virtualenv for this project and entering it: 
+## Bare Metal Development
+1. Create a virtualenv for this project and entering it: 
 ```
-    python -m venv /path/to/my/virtualenv
-    source /path/to/my/virtualenv/bin/activate
+    python -m venv ./venv
+    source ./venv/bin/activate
 ```
-Then install the dependencies:
+2. Install the dependencies:
 ```
-    pip install -e .
+    poetry install
 ```
-The project is configured to use a local sqlite database. You can change that to a postgres one if you want but sqlite is easy for development. Run the migrations to setup the database.
+3. Run the migrations to setup the database. The project is uses a local sqlite database. You can change that to a postgres one if you want.
 ```
     ./manage.py migrate
 ```
-Start up a Redis Server that will faciliate caching as well as the rabbitmq queue. To do this make sure you have Redis installed and then start a server at port 6379
+4. Start a Redis Server at port `6379`.
 ```
     redis-server
 ```
-Start the dramatiq worker threads, here we use a minimal number of processes and threads for size but feel free to run a full dramatiq setup as well.
+5. Start the dramatiq worker threads, here we use a minimal number of processes and threads
 ```
     ./manage.py rundramatiq --processes 1 --threads 2
 ```
-Now start your server
+6. Start the Django server
 ```
     ./manage.py runserver
 ```
 
-### Nix development
+## Nix development
 For this mode of development, you must install:
--   nix with flakes support
+-   [nix with flakes support](https://github.com/LCOGT/public-wiki/wiki/Install-Nix)
 
 Then to develop, run these commands:
 -   `nix develop --impure` to start your nix development environment - **called anytime you use a new terminal**
@@ -118,6 +118,3 @@ Available Operations are introspected from the `data_operations` directory and m
 
 #### Delete Operation from a Datasession
 `DELETE /api/datasessions/datasession_id/operations/operation_id/`
-
-## ROADMAP
-* TBD
