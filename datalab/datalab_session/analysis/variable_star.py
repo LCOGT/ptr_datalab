@@ -57,11 +57,11 @@ def find_target_source(cat_hdu, target_ra, target_dec):
   Find the source in the catalog relative to the target coordinates.
   """
   cat_data = cat_hdu.data
-  MATCH_PERCISION = 0.001
+  MATCH_PRECISION = 0.001
 
   for source in cat_data:
     target_ra = float(target_ra)
     target_dec = float(target_dec)
 
-    if abs(source['ra'] - target_ra) <= MATCH_PERCISION and abs(source['dec'] - target_dec) <= MATCH_PERCISION:
+    if abs(source['ra'] - target_ra) <= MATCH_PRECISION and abs(source['dec'] - target_dec) <= MATCH_PRECISION:
       return source
