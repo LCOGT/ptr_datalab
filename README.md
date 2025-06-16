@@ -8,17 +8,16 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
 -   Redis (`brew install redis`)
 
 
-## Local Development
-### Bare Metal
-Start by creating a virtualenv for this project and entering it: 
+## Bare Metal Development
+1. Create a virtualenv for this project and entering it: 
 ```
-    python -m venv /path/to/my/virtualenv
-    source /path/to/my/virtualenv/bin/activate
+    python -m venv ./venv
+    source ./venv/bin/activate
 ```
 
 Then install the dependencies:
 ```
-    pip install -e .
+    poetry install
 ```
 
 If the previous step gave you trouble, it may be because you're running on Python 3.13. Check to see if you have Python 3.11 by running
@@ -66,14 +65,14 @@ It's possible that you have to re-run the previous steps, up until `./manage.py 
 ```
     ./manage.py rundramatiq --processes 1 --threads 2
 ```
-Now start your server
+6. Start the Django server
 ```
     ./manage.py runserver
 ```
 
-### Nix development
+## Nix development
 For this mode of development, you must install:
--   nix with flakes support
+-   [nix with flakes support](https://github.com/LCOGT/public-wiki/wiki/Install-Nix)
 
 Then to develop, run these commands:
 -   `nix develop --impure` to start your nix development environment - **called anytime you use a new terminal**
@@ -154,6 +153,3 @@ Available Operations are introspected from the `data_operations` directory and m
 
 #### Delete Operation from a Datasession
 `DELETE /api/datasessions/datasession_id/operations/operation_id/`
-
-## ROADMAP
-* TBD
