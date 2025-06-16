@@ -5,6 +5,7 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
 ## Prerequisites
 -   Python >= 3.10
 -   Django >= 4
+-   Redis (`brew install redis`)
 
 
 ## Local Development
@@ -14,19 +15,54 @@ Start by creating a virtualenv for this project and entering it:
     python -m venv /path/to/my/virtualenv
     source /path/to/my/virtualenv/bin/activate
 ```
+
 Then install the dependencies:
 ```
     pip install -e .
 ```
+
+If the previous step gave you trouble, it may be because you're running on Python 3.13. Check to see if you have Python 3.11 by running
+```
+    python3.11 --version
+```
+
+If you have it, then run the following:
+```
+    poetry env use <</path/to/python3.11>> (e.g. /opt/homebrew/opt/python@3.11/bin/python3.11)
+```
+If you do not have python3.11, install it running
+```
+    brew install python@3.11
+```
+
+Then activate a poetry shell
+```
+    poetry shell
+```
+
+Now, try installing dependencies again
+```
+    pip install -e .
+```
+
 The project is configured to use a local sqlite database. You can change that to a postgres one if you want but sqlite is easy for development. Run the migrations to setup the database.
 ```
     ./manage.py migrate
 ```
+
 Start up a Redis Server that will faciliate caching as well as the rabbitmq queue. To do this make sure you have Redis installed and then start a server at port 6379
 ```
     redis-server
 ```
+
+Or if you prefer running it in the background
+
+```
+    brew services start redis
+```
+
 Start the dramatiq worker threads, here we use a minimal number of processes and threads for size but feel free to run a full dramatiq setup as well.
+It's possible that you have to re-run the previous steps, up until `./manage.py migrate` again.
 ```
     ./manage.py rundramatiq --processes 1 --threads 2
 ```
