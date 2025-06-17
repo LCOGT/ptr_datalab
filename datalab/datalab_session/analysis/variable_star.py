@@ -1,5 +1,7 @@
 import logging
 
+from django.contrib.auth.models import User
+
 from datalab.datalab_session.utils.file_utils import get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
 
