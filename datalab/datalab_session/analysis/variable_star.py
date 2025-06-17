@@ -1,12 +1,14 @@
 import logging
 
+from django.contrib.auth.models import User
+
 from datalab.datalab_session.utils.file_utils import get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
-def variable_star(input: dict):
+def variable_star(input: dict, user: User):
   """
   Function to perform variable star analysis on a given image.
 
@@ -30,7 +32,7 @@ def variable_star(input: dict):
     log.info(f"Processing image: {image.get('basename')} for variable star analysis...")
 
     try:
-      file_path = FileCache().get_fits(image.get('basename'), input.get('source', 'archive'))
+      file_path = FileCache().get_fits(image.get('basename'), input.get('source', 'archive'), user)
       cat_hdu = get_hdu(file_path, extension='CAT')
     except Exception as e:
       log.error(f"Error retrieving catalog for image {image.get('basename')}: {e}")
