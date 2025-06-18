@@ -9,6 +9,8 @@ from django.core.cache import cache
 from django.conf import settings
 from datalab.datalab_session.tasks import execute_data_operation
 from datalab.datalab_session.utils.format import Format
+from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 
 CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
@@ -19,6 +21,7 @@ class BaseDataOperation(ABC):
 
     def __init__(self, input_data: dict = None):
         """ The data inputs are passed in in the format described from the wizard_description """
+        print(f'starting hello hello')
         self.input_data = self._normalize_input_data(input_data)
         self.cache_key = self.generate_cache_key()
         self.temp = settings.TEMP_FITS_DIR # default fallback
@@ -49,6 +52,29 @@ class BaseDataOperation(ABC):
         """ A json-formatted DSL describing the expected inputs for this DataOperation,
             for the frontend to create custom input widgets for it in a wizard
         """
+
+    def _validate_inputs(self, input_key='input_files', minimum_inputs=1):
+        """ Validate the inputs for the operation.
+            This method should raise an exception if the inputs are not valid.
+            It should return a list of input files or data that will be used in the operate() method.
+        """
+        input_list = self.input_data.get(input_key, [])
+        if not input_list or len(input_list) < minimum_inputs:
+            raise ClientAlertException(f'Operation {self.name()} requires at least {minimum_inputs} input file(s).')
+        
+        return input_list
+    
+    def _process_inputs(self, submitter, input_list, input_processing_progress=0.1):
+        """ Process the inputs for the operation.
+            This method should return a list of processed input data that will be used in the operate() method.
+            It should also periodically update the percent completion during its operation.
+        """
+        input_handlers = []
+        total_input_files = len(input_list)
+        for idx, input_item in enumerate(input_list, start=1):
+            input_handlers.append(InputDataHandler(submitter, input_item['basename'], input_item['source']))
+            self.set_operation_progress(input_processing_progress * (idx / total_input_files))
+        return input_handlers
 
     @abstractmethod
     def operate(self, submitter):
