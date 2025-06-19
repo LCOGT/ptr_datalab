@@ -3,9 +3,9 @@
 This application is the backend server for the PhotonRanch Datalab. It is a django application with a REST API for communicating with the Datalab UI.
 
 ## Prerequisites
--   Python 3.10 - 3.12
--   Django >= 4
--   Redis (`brew install redis`)
+-   [Python v3.10 - v3.12](https://www.python.org/downloads/)
+-   [Poetry](https://python-poetry.org/docs/)
+-   [Redis](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/)
 
 
 ## Bare Metal Development
