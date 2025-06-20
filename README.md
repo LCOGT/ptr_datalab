@@ -1,83 +1,36 @@
-# Getting Started with Datalab Backend
+# Datalab Backend
 
 This application is the backend server for the PhotonRanch Datalab. It is a django application with a REST API for communicating with the Datalab UI.
 
 ## Prerequisites
--   [Python v3.10 - v3.12](https://www.python.org/downloads/)
+-   [Python](https://www.python.org/downloads/)
 -   [Poetry](https://python-poetry.org/docs/)
 -   [Redis](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/)
 
 
 ## Bare Metal Development
-### Setup
 1. Create a virtualenv for this project and entering it: 
 ```
     python -m venv ./venv
     source ./venv/bin/activate
 ```
-
-2. Install pyproject.toml:
+2. Install the dependencies:
 ```
     poetry install
 ```
-  - If the previous step fails to install check your python version is not `>= 3.13` if so switch to `3.12`,
-    ```
-        brew install python@3.12
-        poetry env use <<install/path/to/python3.11>>
-    ```
-    Retry Step 2.
-
-3. Run the migrations command to setup the local sqlite database
+3. Run the migrations to setup the database. The project is uses a local sqlite database. You can change that to a postgres one if you want.
 ```
     ./manage.py migrate
 ```
-4. Create a Django superuser, for convenience you can use your LCO credentials
+4. Start a Redis Server at port `6379`.
 ```
-    python manage.py createsuperuser
-```
-5. Start the Django app and navigate to the /admin panel (e.g http://127.0.0.1:8000/admin)
-```
-    ./manage.py runserver
-
-    Django version 4.2.20, using settings 'datalab.settings'
-    Starting development server at http://127.0.0.1:8000/
-    Quit the server with CONTROL-C 
-```
-6. Set up LCO credentials. Navigate to the Auth Profile's Tab and create an authuser from your superuser account and add your [LCO archive api token](https://observe.lco.global/accounts/profile) to the token field
-7. [Install aws cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions) to set up AWS credentials. There is a datalab-server aws account whose credentials you need to add to your local enviorment.
-8. Once you have the Access Key and Secret Access Key from a datalab dev run the configure command, confirm proper configuration with the `get-caller-identity` command
-```
-    aws configure
-
-    AWS Access Key ID [****************UVN2]:
-    AWS Secret Access Key [****************d7X5]:
-    Default region name [us-west-2]:
-    Default output format [json]:
-
-    aws sts get-caller-identity
-
-    {
-        "UserId": "AIDA6FT4CXR46KFTTIFAX",
-        "Account": "974144060537",
-        "Arn": "arn:aws:iam::974144060537:user/datalab-server"
-    }
-```
-9. Finally Restart your machine to update it's aws credentials
-
-### Running the Django App
-1. Start up a Redis Server that will faciliate caching as well as the rabbitmq queue. To do this make sure you have Redis installed and then start a server at port 6379
-```
-    // run in shell
     redis-server
-    // run in background
-    brew services start redis
 ```
-
-2. Start the dramatiq worker threads
+5. Start the dramatiq worker threads, here we use a minimal number of processes and threads
 ```
     ./manage.py rundramatiq --processes 1 --threads 2
 ```
-3. Start the Django server
+6. Start the Django server
 ```
     ./manage.py runserver
 ```
@@ -92,13 +45,13 @@ Then to develop, run these commands:
 -   `skaffold dev -m deps` to start the dependencies - **run this in a different tab to keep running during development or use 'run' instead of 'dev'**
 -   Copy `./k8s/envs/local/secrets.env.changeme` to a version without `.changeme` and fill in values for connecting to the appropriate services.
 -   `skaffold dev -m app --port-forward` to start the servers and worker. This will auto-redeploy as you make changes to the code.
--   Follow steps 4. - 9. in The Bare Metal Development section to setup Django auth, LCO creds, and AWS creds
+-   Once running you will need to initialize your account with the server before using the API - the easiest way to do this is to login one time to the admin interface at `http://127.0.0.1:8080/admin`
 
 ### Connecting a frontend
-You can also run a local [datalab-ui](https://github.com/LCOGT/datalab-ui) to connect to your datalab.
-1. Change the `./public/config/config.json` `"datalabApiBaseUrl"` to be `http://127.0.0.1:8080/api/` or wherever your backend is deployed to
-2. `npm install` to install the libraries
-3. `npm run serve` to start the frontend
+You can also run a local [datalab-ui](https://github.com/LCOGT/datalab-ui) to connect to your datalab. Assuming you've cloned that repo:
+-   Change the `./public/config/config.json` "datalabApiBaseUrl" to be `http://127.0.0.1:8080/api/` or wherever your backend is deployed to
+-   `npm install` to install the libraries
+-   `npm run serve` to run the server at `http://127.0.0.1:8081` assuming your backend was already running (otherwise it will try to be :8080)
 
 ## API Structure
 The application has a REST API with the following endpoints you can use. You must pass your user's API token in the request header to access any of the endpoints - the headers looks like `{'Authorization': 'Token 123456789abcdefg'}` if you are using python's requests library.
