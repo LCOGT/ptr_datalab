@@ -6,6 +6,7 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
 -   [Python v3.10 - v3.12](https://www.python.org/downloads/)
 -   [Poetry](https://python-poetry.org/docs/)
 -   [Redis](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/)
+-   [AWS Cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions)
 
 
 ## Bare Metal Development
@@ -20,22 +21,23 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
 ```
     poetry install
 ```
-  - If the previous step fails to install check your python version is not `>= 3.13` if so switch to `3.12`,
+  - If the previous step fails to install check your python version is not `>= 3.13` if so switch to `3.11`,
     ```
-        brew install python@3.12
+        brew install python@3.11
         poetry env use <<install/path/to/python3.11>>
+        poetry shell
+        pip install -e .
     ```
-    Retry Step 2.
 
-3. Run the migrations command to setup the local sqlite database
+1. Run the migrations command to setup the local sqlite database
 ```
     ./manage.py migrate
 ```
-4. Create a Django superuser, for convenience you can use your LCO credentials
+1. Create a Django superuser, for convenience you can use your LCO credentials
 ```
     python manage.py createsuperuser
 ```
-5. Start the Django app and navigate to the /admin panel (e.g http://127.0.0.1:8000/admin)
+1. Start the Django app and navigate to the /admin panel (e.g http://127.0.0.1:8000/admin)
 ```
     ./manage.py runserver
 
@@ -43,26 +45,26 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
     Starting development server at http://127.0.0.1:8000/
     Quit the server with CONTROL-C 
 ```
-6. Set up LCO credentials. Navigate to the Auth Profile's Tab and create an authuser from your superuser account and add your [LCO archive api token](https://observe.lco.global/accounts/profile) to the token field
-7. [Install aws cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions) to set up AWS credentials. There is a datalab-server aws account whose credentials you need to add to your local enviorment.
-8. Once you have the Access Key and Secret Access Key from a datalab dev run the configure command, confirm proper configuration with the `get-caller-identity` command
+1. Set up LCO credentials. Navigate to the Auth Profile's Tab and create an authuser from your superuser account and add your [LCO archive api token](https://observe.lco.global/accounts/profile) to the token field
+2. Log into AWS on the browser and navigate to IAM roles to find your user profile. On your profile you should create/use an access and secret-access key that is your personal token to talk to aws. Permissions to access the datalab bucket will need to be requested from the Datalab Dev team (Jon, Lloyd, Carolina) as of Jun 2025.
+3. Once you have your Access Key and Secret Access Key from a datalab dev, run the configure command, and then confirm proper configuration with the `get-caller-identity` command
 ```
-    aws configure
+    > aws configure
 
     AWS Access Key ID [****************UVN2]:
     AWS Secret Access Key [****************d7X5]:
     Default region name [us-west-2]:
     Default output format [json]:
 
-    aws sts get-caller-identity
+    > aws sts get-caller-identity
 
     {
-        "UserId": "AIDA6FT4CXR46KFTTIFAX",
-        "Account": "974144060537",
-        "Arn": "arn:aws:iam::974144060537:user/datalab-server"
+        "UserId": "****************TIFAX",
+        "Account": "********0537",
+        "Arn": "arn:aws:iam::********0537:user/datalab-server"
     }
 ```
-9. Finally Restart your machine to update it's aws credentials
+1. Finally Restart your machine to update it's aws credentials cache
 
 ### Running the Django App
 1. Start up a Redis Server that will faciliate caching as well as the rabbitmq queue. To do this make sure you have Redis installed and then start a server at port 6379
