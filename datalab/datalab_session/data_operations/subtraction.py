@@ -16,7 +16,8 @@ log.setLevel(logging.INFO)
 
 class Subtraction(BaseDataOperation):
     MINIMUM_NUMBER_OF_INPUT_FILES = 1
-    MINIMUM_NUMBER_OF_SUBTRACTION_FILES = 1
+    MAXIMUM_NUMBER_OF_INPUT_FILES = 999
+    NUMBER_OF_SUBTRACTION_FILES = 1
     MINIMUM_NUMBER_OF_INPUTS_TOTAL = 2
     PROGRESS_MIDPOINT_OFFSET = 0.5
     PROGRESS_STEPS = {
@@ -47,14 +48,14 @@ class Subtraction(BaseDataOperation):
                     'description': 'The input files to operate on',
                     'type': Format.FITS,
                     'minimum': Subtraction.MINIMUM_NUMBER_OF_INPUT_FILES,
-                    'maximum': 999
+                    'maximum': Subtraction.MAXIMUM_NUMBER_OF_INPUT_FILES,
                 },
                 'subtraction_file': {
                     'name': 'Subtraction File',
                     'description': 'This file will be subtracted from the input images.',
                     'type': Format.FITS,
-                    'minimum': 1,
-                    'maximum': 1
+                    'minimum': Subtraction.NUMBER_OF_SUBTRACTION_FILES,
+                    'maximum': Subtraction.NUMBER_OF_SUBTRACTION_FILES,
                 }
             },
         }
@@ -73,7 +74,7 @@ class Subtraction(BaseDataOperation):
 
         subtraction_file_input = self._validate_inputs(
             input_key='subtraction_file',
-            minimum_inputs=self.MINIMUM_NUMBER_OF_SUBTRACTION_FILES
+            minimum_inputs=self.NUMBER_OF_SUBTRACTION_FILES
         )
 
         subtraction_handler = self._process_inputs(

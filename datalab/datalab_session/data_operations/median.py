@@ -16,6 +16,7 @@ log.setLevel(logging.INFO)
 
 class Median(BaseDataOperation):
     MINIMUM_NUMBER_OF_INPUTS = 2
+    MAXIMUM_NUMBER_OF_INPUTS = 999
     PROGRESS_STEPS = {
         'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.3,
         'MEDIAN_CALCULATION_PERCENTAGE_COMPLETION': 0.6,
@@ -43,7 +44,7 @@ The output is a median image for the n input images. This operation is commonly 
                 'description': 'The input files to operate on',
                 'type': Format.FITS,
                 'minimum': Median.MINIMUM_NUMBER_OF_INPUTS,
-                'maximum': 999
+                'maximum': Median.MAXIMUM_NUMBER_OF_INPUTS
             }
             }
         }

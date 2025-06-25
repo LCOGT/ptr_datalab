@@ -16,7 +16,7 @@ log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 class RGB_Stack(BaseDataOperation):
-    MINIMUM_NUMBER_OF_INPUTS_PER_FILTER = 1
+    NUMBER_OF_INPUTS_PER_FILTER = 1
     TOTAL_NUMBER_OF_INPUTS = 3
     PROGRESS_STEPS = {
         'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.4,
@@ -44,8 +44,8 @@ class RGB_Stack(BaseDataOperation):
                     'name': 'Red Filter',
                     'description': 'Three images to stack their RGB values',
                     'type': Format.FITS,
-                    'minimum': 1,
-                    'maximum': 1,
+                    'minimum': RGB_Stack.NUMBER_OF_INPUTS_PER_FILTER,
+                    'maximum': RGB_Stack.NUMBER_OF_INPUTS_PER_FILTER,
                     'include_custom_scale': True,
                     'combine_custom_scale': 'rgb',
                     'filter': ['rp', 'r', 'ip', 'h-alpha']
@@ -54,8 +54,8 @@ class RGB_Stack(BaseDataOperation):
                     'name': 'Green Filter',
                     'description': 'Three images to stack their RGB values',
                     'type': Format.FITS,
-                    'minimum': 1,
-                    'maximum': 1,
+                    'minimum': RGB_Stack.NUMBER_OF_INPUTS_PER_FILTER,
+                    'maximum': RGB_Stack.NUMBER_OF_INPUTS_PER_FILTER,
                     'include_custom_scale': True,
                     'combine_custom_scale': 'rgb',
                     'filter': ['v', 'gp', 'oiii']
@@ -64,8 +64,8 @@ class RGB_Stack(BaseDataOperation):
                     'name': 'Blue Filter',
                     'description': 'Three images to stack their RGB values',
                     'type': Format.FITS,
-                    'minimum': 1,
-                    'maximum': 1,
+                    'minimum': RGB_Stack.NUMBER_OF_INPUTS_PER_FILTER,
+                    'maximum': RGB_Stack.NUMBER_OF_INPUTS_PER_FILTER,
                     'include_custom_scale': True,
                     'combine_custom_scale': 'rgb',
                     'filter': ['b', 'sii']
@@ -84,16 +84,16 @@ class RGB_Stack(BaseDataOperation):
                 aligned_img = affineremap(id.ukn.filepath, id.trans, outdir=self.temp)
                 aligned_images.append(aligned_img)
         
-        if len(aligned_images) != self.REQUIRED_INPUTS:
+        if len(aligned_images) != self.TOTAL_NUMBER_OF_INPUTS:
             log.info('could not align all images')
             return fits_files
         
         return aligned_images
 
     def operate(self, submitter: User):
-        red_input = self._validate_inputs(input_key='red_input', minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS_PER_FILTER)
-        green_input = self._validate_inputs(input_key='green_input', minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS_PER_FILTER)
-        blue_input = self._validate_inputs(input_key='blue_input', minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS_PER_FILTER)
+        red_input = self._validate_inputs(input_key='red_input', minimum_inputs=self.NUMBER_OF_INPUTS_PER_FILTER)
+        green_input = self._validate_inputs(input_key='green_input', minimum_inputs=self.NUMBER_OF_INPUTS_PER_FILTER)
+        blue_input = self._validate_inputs(input_key='blue_input', minimum_inputs=self.NUMBER_OF_INPUTS_PER_FILTER)
 
         red_handler = self._process_inputs(submitter, red_input, input_processing_progress=self.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION'] / self.TOTAL_NUMBER_OF_INPUTS)[0]
         green_handler = self._process_inputs(submitter, green_input, input_processing_progress=self.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION'] / self.TOTAL_NUMBER_OF_INPUTS)[0]

@@ -16,6 +16,7 @@ log.setLevel(logging.INFO)
 
 class Stack(BaseDataOperation):
     MINIMUM_NUMBER_OF_INPUTS = 2
+    MAXIMUM_NUMBER_OF_INPUTS = 999
     PROGRESS_STEPS = {
         'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.4,
         'STACKING_PERCENTAGE_COMPLETION': 0.6,
@@ -43,8 +44,8 @@ The output is a stacked image for the n input images. This operation is commonly
                     'name': 'Input Files',
                     'description': 'The input files to operate on',
                     'type': Format.FITS,
-                    'minimum': 1,
-                    'maximum': 999
+                    'minimum': Stack.MINIMUM_NUMBER_OF_INPUTS,
+                    'maximum': Stack.MAXIMUM_NUMBER_OF_INPUTS,
                 }
             }
         }

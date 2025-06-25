@@ -15,6 +15,7 @@ log.setLevel(logging.INFO)
 
 class Normalization(BaseDataOperation):
     MINIMUM_NUMBER_OF_INPUTS = 1
+    MAXIMUM_NUMBER_OF_INPUTS = 999
     PROGRESS_MIDPOINT_OFFSET = 0.5
     PROGRESS_STEPS = {
         'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.2,
@@ -44,7 +45,7 @@ The output is a normalized image. This operation is commonly used as a precursor
                     'description': 'The input files to operate on',
                     'type': Format.FITS,
                     'minimum': Normalization.MINIMUM_NUMBER_OF_INPUTS,
-                    'maximum': 999
+                    'maximum': Normalization.MAXIMUM_NUMBER_OF_INPUTS,
                 }
             }
         }
