@@ -15,7 +15,15 @@ log.setLevel(logging.INFO)
 
 
 class Subtraction(BaseDataOperation):
-
+    MINIMUM_NUMBER_OF_INPUT_FILES = 1
+    MINIMUM_NUMBER_OF_SUBTRACTION_FILES = 1
+    MINIMUM_NUMBER_OF_INPUTS_TOTAL = 2
+    PROGRESS_MIDPOINT_OFFSET = 0.5
+    PROGRESS_STEPS = {
+        'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.2,
+        'SUBTRACTION_PERCENTAGE_COMPLETION': 0.8,
+        'OUTPUT_PERCENTAGE_COMPLETION': 1.0
+    }
     @staticmethod
     def name():
         return 'Subtraction'
@@ -23,7 +31,7 @@ class Subtraction(BaseDataOperation):
     @staticmethod
     def description():
         return """
-          The Subtraction operation takes in 1..n input images and calculated the subtraction value pixel-by-pixel.
+          The Subtraction operation takes in 2..n input images and calculated the subtraction value pixel-by-pixel.
           The output is a subtraction image for the n input images. This operation is commonly used for background subtraction.
         """
 
@@ -38,7 +46,7 @@ class Subtraction(BaseDataOperation):
                     'name': 'Input Files',
                     'description': 'The input files to operate on',
                     'type': Format.FITS,
-                    'minimum': 1,
+                    'minimum': Subtraction.MINIMUM_NUMBER_OF_INPUT_FILES,
                     'maximum': 999
                 },
                 'subtraction_file': {
@@ -52,31 +60,51 @@ class Subtraction(BaseDataOperation):
         }
 
     def operate(self, submitter: User):
-        input_files = self.input_data.get('input_files', [])
-        subtraction_file_input = self.input_data.get('subtraction_file', [])
+        input_list = self._validate_inputs(
+            input_key='input_files',
+            minimum_inputs=self.MINIMUM_NUMBER_OF_INPUT_FILES
+        )
 
-        if not subtraction_file_input: raise ClientAlertException('Missing a subtraction file')
-        if len(input_files) < 1: raise ClientAlertException('Need at least one input file')
+        input_handlers = self._process_inputs(
+            submitter,
+            input_list,
+            input_processing_progress=self.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION']
+        )
 
-        log.info(f'Subtraction operation on {len(input_files)} files')
+        subtraction_file_input = self._validate_inputs(
+            input_key='subtraction_file',
+            minimum_inputs=self.MINIMUM_NUMBER_OF_SUBTRACTION_FILES
+        )
 
-        subtraction_fits = InputDataHandler(submitter, subtraction_file_input[0]['basename'], subtraction_file_input[0]['source'])
+        subtraction_handler = self._process_inputs(
+            submitter,
+            subtraction_file_input,
+            input_processing_progress=0
+        )[0]
+
         outputs = []
-        for index, input in enumerate(input_files, start=1):
-            with InputDataHandler(submitter, input['basename'], input['source']) as input_image:
-                self.set_operation_progress(0.9 * (index-0.5) / len(input_files))
-                (input_image_data, subtraction_image), _ = crop_arrays([input_image.sci_data, subtraction_fits.sci_data])
+        for index, input_image in enumerate(input_handlers, start=1):
+            self.set_operation_progress(
+                self.PROGRESS_STEPS['SUBTRACTION_PERCENTAGE_COMPLETION'] * (index - self.PROGRESS_MIDPOINT_OFFSET) / len(input_handlers)
+            )
+            (input_image_data, subtraction_image), _ = crop_arrays([input_image.sci_data, subtraction_handler.sci_data])
 
-                difference_array = np.subtract(input_image_data, subtraction_image)
+            difference_array = np.subtract(input_image_data, subtraction_image)
 
-                subtraction_comment = f'Datalab Subtraction of {subtraction_file_input[0]["basename"]} subtracted from {input_files[index-1]["basename"]}'
-                outputs.append(FITSOutputHandler(
-                    f'{self.cache_key}', difference_array, self.temp, subtraction_comment,
-                    data_header=input_image.sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, index=index))
-                self.set_output(outputs)
-                self.set_operation_progress(0.9 + index / len(input_files))
+            subtraction_comment = (
+                f"Datalab Subtraction of {subtraction_file_input[0]['basename']}"
+                f"subtracted from {input_list[index-1]['basename']}"
+            )
+            outputs.append(FITSOutputHandler(
+                f'{self.cache_key}', difference_array, self.temp, subtraction_comment,
+                data_header=input_image.sci_hdu.header.copy()
+            ).create_and_save_data_products(Format.FITS, index=index))
+            self.set_output(outputs)
+            self.set_operation_progress(
+                self.PROGRESS_STEPS['SUBTRACTION_PERCENTAGE_COMPLETION'] * index / len(input_handlers)
+            )
 
         log.info(f'Subtraction output: {outputs}')
         self.set_output(outputs)
-        self.set_operation_progress(1.0)
+        self.set_operation_progress(self.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])
         self.set_status('COMPLETED')

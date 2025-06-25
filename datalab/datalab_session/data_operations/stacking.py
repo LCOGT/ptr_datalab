@@ -15,7 +15,13 @@ log.setLevel(logging.INFO)
 
 
 class Stack(BaseDataOperation):
-    
+    MINIMUM_NUMBER_OF_INPUTS = 2
+    PROGRESS_STEPS = {
+        'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.4,
+        'STACKING_PERCENTAGE_COMPLETION': 0.6,
+        'STACKING_OUTPUT_PERCENTAGE_COMPLETION': 0.8,
+        'OUTPUT_PERCENTAGE_COMPLETION': 1.0
+    }
     @staticmethod
     def name():
         return 'Stacking'
@@ -45,26 +51,27 @@ The output is a stacked image for the n input images. This operation is commonly
         return description
 
     def operate(self, submitter: User):
-        input_files = self.input_data.get('input_files', [])
-        if len(input_files) <= 1: raise ClientAlertException('Stack needs at least 2 files')
-        comment= f'Datalab Stacking on {", ".join([image["basename"] for image in input_files])}'
+        input_files = self._validate_inputs(
+            input_key='input_files',
+            minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS
+        )
+        comment = f'Datalab Stacking on {", ".join([image["basename"] for image in input_files])}'
         log.info(comment)
 
-        input_fits_list = []
-        for index, input in enumerate(input_files, start=1):
-            input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
-            self.set_operation_progress(0.5 * (index / len(input_files)))
+        input_handlers = self._process_inputs(
+            submitter,
+            input_files,
+            input_processing_progress=self.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION']
+        )
 
-        cropped_data, _ = crop_arrays([image.sci_data for image in input_fits_list])
-        self.set_operation_progress(0.6)
+        cropped_data, _ = crop_arrays([image.sci_data for image in input_handlers])
+        self.set_operation_progress(self.PROGRESS_STEPS['STACKING_PERCENTAGE_COMPLETION'])
 
-        # using the numpy library's sum method
         stacked_sum = np.sum(cropped_data, axis=0)
-        self.set_operation_progress(0.8)
+        self.set_operation_progress(self.PROGRESS_STEPS['STACKING_OUTPUT_PERCENTAGE_COMPLETION'])
 
         output = FITSOutputHandler(self.cache_key, stacked_sum, self.temp, comment).create_and_save_data_products(Format.FITS)
-
         log.info(f'Stacked output: {output}')
         self.set_output(output)
-        self.set_operation_progress(1.0)
+        self.set_operation_progress(self.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])
         self.set_status('COMPLETED')

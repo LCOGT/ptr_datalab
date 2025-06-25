@@ -17,9 +17,9 @@ class Normalization(BaseDataOperation):
     MINIMUM_NUMBER_OF_INPUTS = 1
     PROGRESS_MIDPOINT_OFFSET = 0.5
     PROGRESS_STEPS = {
-        'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.2,   # 20% after inputs are loaded/validated
-        'NORMALIZING_PERCENTAGE_COMPLETION': 0.9,        # 90% after normalization is done
-        'OUTPUT_PERCENTAGE_COMPLETION': 1.0              # 100% after output is saved
+        'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.2,
+        'NORMALIZING_PERCENTAGE_COMPLETION': 0.9,
+        'OUTPUT_PERCENTAGE_COMPLETION': 1.0
     }
 
     @staticmethod
@@ -43,7 +43,7 @@ The output is a normalized image. This operation is commonly used as a precursor
                     'name': 'Input Files',
                     'description': 'The input files to operate on',
                     'type': Format.FITS,
-                    'minimum': 1,
+                    'minimum': Normalization.MINIMUM_NUMBER_OF_INPUTS,
                     'maximum': 999
                 }
             }
@@ -51,14 +51,11 @@ The output is a normalized image. This operation is commonly used as a precursor
 
     def operate(self, submitter: User):
         input_list = self._validate_inputs(input_key='input_files', minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS)
-        print(f'HELLO')
         input_handlers = self._process_inputs(
             submitter,
             input_list,
             input_processing_progress=self.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION']
         )
-        print(f'Input handlers xxxxxxxx: {input_handlers}')
-
         log.info(f'Normalization operation on {len(input_list)} file(s)')
 
         output_files = []

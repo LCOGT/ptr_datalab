@@ -15,14 +15,19 @@ log.setLevel(logging.INFO)
 
 
 class Median(BaseDataOperation):
-    
+    MINIMUM_NUMBER_OF_INPUTS = 2
+    PROGRESS_STEPS = {
+        'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.3,
+        'MEDIAN_CALCULATION_PERCENTAGE_COMPLETION': 0.6,
+        'OUTPUT_PERCENTAGE_COMPLETION': 1.0
+    }
     @staticmethod
     def name():
         return 'Median'
     
     @staticmethod
     def description():
-        return """The median operation takes in 1..n input images and calculated the median value pixel-by-pixel.
+        return """The median operation takes in 2..n input images and calculated the median value pixel-by-pixel.
 
 The output is a median image for the n input images. This operation is commonly used for background subtraction."""
 
@@ -33,37 +38,35 @@ The output is a median image for the n input images. This operation is commonly 
             'description': Median.description(),
             'category': 'image',
             'inputs': {
-                'input_files': {
-                    'name': 'Input Files',
-                    'description': 'The input files to operate on',
-                    'type': Format.FITS,
-                    'minimum': 1,
-                    'maximum': 999
-                }
+            'input_files': {
+                'name': 'Input Files',
+                'description': 'The input files to operate on',
+                'type': Format.FITS,
+                'minimum': Median.MINIMUM_NUMBER_OF_INPUTS,
+                'maximum': 999
+            }
             }
         }
     
     def operate(self, submitter: User):
-        # Getting/Checking the Input
-        input_list = self.input_data.get('input_files', [])
-        if len(input_list) <= 1: raise ClientAlertException('Median needs at least 2 files')
+        input_list = self._validate_inputs(input_key='input_files', minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS)
         comment = f'Datalab Median on {", ".join([image["basename"] for image in input_list])}'
         log.info(comment)
 
-        input_fits_list = []
-        for index, input in enumerate(input_list, start=1):
-            input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
-            self.set_operation_progress(0.5 * (index / len(input_list)))
+        input_handlers = self._process_inputs(
+            submitter,
+            input_list,
+            input_processing_progress= self.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION'],
+        )
 
-        # Creating the Median array
-        cropped_data, shape = crop_arrays([image.sci_data for image in input_fits_list], flatten=True)
+        cropped_data, shape = crop_arrays([image.sci_data for image in input_handlers], flatten=True)
         median = np.median(cropped_data, axis=0, overwrite_input=True)
         median = np.reshape(median, shape)
 
-        self.set_operation_progress(0.80)
+        self.set_operation_progress(self.PROGRESS_STEPS['MEDIAN_CALCULATION_PERCENTAGE_COMPLETION'])
 
         output = FITSOutputHandler(self.cache_key, median, self.temp, comment).create_and_save_data_products(Format.FITS)
         log.info(f'Median output: {output}')
         self.set_output(output)
-        self.set_operation_progress(1.0)
+        self.set_operation_progress(self.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])
         self.set_status('COMPLETED')
