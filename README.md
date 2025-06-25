@@ -29,15 +29,15 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
         pip install -e .
     ```
 
-1. Run the migrations command to setup the local sqlite database
+3. Run the migrations command to setup the local sqlite database
 ```
     ./manage.py migrate
 ```
-2. Create a Django superuser, for convenience you can use your LCO credentials
+4. Create a Django superuser, for convenience you can use your LCO credentials
 ```
     python manage.py createsuperuser
 ```
-3. Start the Django app and navigate to the /admin panel (e.g http://127.0.0.1:8000/admin)
+5. Start the Django app and navigate to the /admin panel (e.g http://127.0.0.1:8000/admin)
 ```
     ./manage.py runserver
 
@@ -45,9 +45,9 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
     Starting development server at http://127.0.0.1:8000/
     Quit the server with CONTROL-C 
 ```
-4. Set up LCO credentials. Navigate to the Auth Profile's Tab and create an authuser from your superuser account and add your [LCO archive api token](https://observe.lco.global/accounts/profile) to the token field
-5. Log into AWS on the browser and navigate to IAM roles to find your user profile. On your profile you should create/use an access and secret-access key that is your personal token to talk to aws. Permissions to access the datalab bucket will need to be requested from the Datalab Dev team (Jon, Lloyd, Carolina) as of Jun 2025.
-6. Once you have your Access Key and Secret Access Key from a datalab dev, run the configure command, and then confirm proper configuration with the `get-caller-identity` command
+6. Set up LCO credentials. Navigate to the Auth Profile's Tab and create an authuser from your superuser account and add your [LCO archive api token](https://observe.lco.global/accounts/profile) to the token field
+7. Log into AWS on the browser and navigate to IAM roles to find your user profile. On your profile you should create/use an access and secret-access key that is your personal token to talk to aws. Permissions to access the datalab bucket will need to be requested from the Datalab Dev team (Jon, Lloyd, Carolina) as of Jun 2025.
+8. Once you have your Access Key and Secret Access Key from a datalab dev, run the configure command, and then confirm proper configuration with the `get-caller-identity` command
 ```
     > aws configure
 
@@ -64,7 +64,7 @@ This application is the backend server for the PhotonRanch Datalab. It is a djan
         "Arn": "arn:aws:iam::********0537:user/datalab-server"
     }
 ```
-7. Finally Restart your machine to update it's aws credentials cache
+9. Finally Restart your machine to update it's aws credentials cache
 
 ### Running the Django App
 1. Start up a Redis Server that will faciliate caching as well as the rabbitmq queue. To do this make sure you have Redis installed and then start a server at port 6379
