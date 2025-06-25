@@ -21,7 +21,6 @@ class BaseDataOperation(ABC):
 
     def __init__(self, input_data: dict = None):
         """ The data inputs are passed in in the format described from the wizard_description """
-        print(f'starting hello hello')
         self.input_data = self._normalize_input_data(input_data)
         self.cache_key = self.generate_cache_key()
         self.temp = settings.TEMP_FITS_DIR # default fallback
