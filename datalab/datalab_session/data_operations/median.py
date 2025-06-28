@@ -18,7 +18,7 @@ class Median(BaseDataOperation):
     MINIMUM_NUMBER_OF_INPUTS = 2
     MAXIMUM_NUMBER_OF_INPUTS = 999
     PROGRESS_STEPS = {
-        'INPUT_PROCESSING_PERCENTAGE_COMPLETION': 0.3,
+        'MEDIAN_MIDPOINT': 0.5,
         'MEDIAN_CALCULATION_PERCENTAGE_COMPLETION': 0.6,
         'OUTPUT_PERCENTAGE_COMPLETION': 1.0
     }
@@ -39,13 +39,13 @@ The output is a median image for the n input images. This operation is commonly 
             'description': Median.description(),
             'category': 'image',
             'inputs': {
-            'input_files': {
-                'name': 'Input Files',
-                'description': 'The input files to operate on',
-                'type': Format.FITS,
-                'minimum': Median.MINIMUM_NUMBER_OF_INPUTS,
-                'maximum': Median.MAXIMUM_NUMBER_OF_INPUTS
-            }
+                'input_files': {
+                    'name': 'Input Files',
+                    'description': 'The input files to operate on',
+                    'type': Format.FITS,
+                    'minimum': Median.MINIMUM_NUMBER_OF_INPUTS,
+                    'maximum': Median.MAXIMUM_NUMBER_OF_INPUTS
+                }
             }
         }
     
@@ -54,20 +54,19 @@ The output is a median image for the n input images. This operation is commonly 
         comment = f'Datalab Median on {", ".join([image["basename"] for image in input_list])}'
         log.info(comment)
 
-        input_handlers = self._process_inputs(
-            submitter,
-            input_list,
-            input_processing_progress= self.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION'],
-        )
+        input_fits_list = []
+        for index, input in enumerate(input_list, start=1):
+            input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
+            self.set_operation_progress(Median.PROGRESS_STEPS['MEDIAN_MIDPOINT'] * (index / len(input_list)))
 
-        cropped_data, shape = crop_arrays([image.sci_data for image in input_handlers], flatten=True)
+        cropped_data, shape = crop_arrays([image.sci_data for image in input_fits_list], flatten=True)
         median = np.median(cropped_data, axis=0, overwrite_input=True)
         median = np.reshape(median, shape)
 
-        self.set_operation_progress(self.PROGRESS_STEPS['MEDIAN_CALCULATION_PERCENTAGE_COMPLETION'])
+        self.set_operation_progress(Median.PROGRESS_STEPS['MEDIAN_CALCULATION_PERCENTAGE_COMPLETION'])
 
         output = FITSOutputHandler(self.cache_key, median, self.temp, comment).create_and_save_data_products(Format.FITS)
         log.info(f'Median output: {output}')
         self.set_output(output)
-        self.set_operation_progress(self.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])
+        self.set_operation_progress(Median.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])
         self.set_status('COMPLETED')

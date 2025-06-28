@@ -53,27 +53,13 @@ class BaseDataOperation(ABC):
         """
 
     def _validate_inputs(self, input_key='input_files', minimum_inputs=1):
-        """ Validate the inputs for the operation.
-            This method should raise an exception if the inputs are not valid.
-            It should return a list of input files or data that will be used in the operate() method.
+        """ The input_key is the key in the input_files dictionary in the wizard_description that contains the list of inputs.
         """
         input_list = self.input_data.get(input_key, [])
         if not input_list or len(input_list) < minimum_inputs:
             raise ClientAlertException(f'Operation {self.name()} requires at least {minimum_inputs} input file(s).')
-        
+        print(f'Validating inputs for {self.name()} operation: {input_list}')
         return input_list
-    
-    def _process_inputs(self, submitter, input_list, input_processing_progress=0.1):
-        """ Process the inputs for the operation.
-            This method should return a list of processed input data that will be used in the operate() method.
-            It should also periodically update the percent completion during its operation.
-        """
-        input_handlers = []
-        total_input_files = len(input_list)
-        for idx, input_item in enumerate(input_list, start=1):
-            input_handlers.append(InputDataHandler(submitter, input_item['basename'], input_item['source']))
-            self.set_operation_progress(input_processing_progress * (idx / total_input_files))
-        return input_handlers
 
     @abstractmethod
     def operate(self, submitter):
