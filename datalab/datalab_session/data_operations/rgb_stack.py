@@ -1,4 +1,5 @@
 import logging
+from typing import List
 
 from fits_align.ident import make_transforms
 from fits_align.align import affineremap
@@ -71,21 +72,8 @@ class RGB_Stack(BaseDataOperation):
             },
         }
     
-    def _validate_inputs(self):
-        rgb_input_list = []
-        for color in ['red_input', 'green_input', 'blue_input']:
-            input_data = self.input_data[color][0]
-            if not input_data:
-                raise ClientAlertException(f'Missing {color}')
-            rgb_input_list.append(input_data)
-
-        if len(self.input_data) != self.REQUIRED_INPUTS:
-            raise ClientAlertException(f'RGB stack requires exactly {self.REQUIRED_INPUTS} files')
-        
-        return rgb_input_list
-    
     def _process_inputs(self, submitter, rgb_input_list) -> tuple[list[InputDataHandler], list[float], list[float]]:
-        input_fits_list = []
+        input_fits_list: List = []
         zmin_list = []
         zmax_list = []
         for index, input in enumerate(rgb_input_list, start=1):
@@ -114,7 +102,10 @@ class RGB_Stack(BaseDataOperation):
         return aligned_images
 
     def operate(self, submitter: User):
-        rgb_inputs = self._validate_inputs()
+        red_input = self._validate_inputs(input_key='red_input', minimum_inputs=1)
+        green_input = self._validate_inputs(input_key='green_input', minimum_inputs=1)
+        blue_input = self._validate_inputs(input_key='blue_input', minimum_inputs=1)
+        rgb_inputs = red_input + green_input + blue_input
         input_handlers, zmin_list, zmax_list = self._process_inputs(submitter, rgb_inputs)
         fits_files = [handler.fits_file for handler in input_handlers]
 
