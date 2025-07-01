@@ -1,6 +1,7 @@
 import logging
 
 from django.contrib.auth.models import User
+import numpy as np
 
 from datalab.datalab_session.utils.file_utils import get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
@@ -43,9 +44,13 @@ def variable_star(input: dict, user: User):
     if target_source is None:
       log.info(f"No matching source found for target coordinates: RA={target_ra}, DEC={target_dec} in image {image.get('basename')}")
     else:
+      # Fallback to calculating mag/magerr from flux/fluxerr if not in catalog columns
+      if(not 'mag' in target_source or not 'magerr' in target_source):
+        target_source['mag'], target_source['magerr'] = flux_to_mag(target_source['flux'], target_source['fluxerr'])
+
       light_curve.append({
-        'mag': target_source['mag'] if 'mag' in target_source else target_source['flux'],
-        'magerr': target_source['magerr'] if 'magerr' in target_source else target_source['fluxerr'],
+        'mag': target_source['mag'],
+        'magerr': target_source['magerr'],
         'observation_date': image.get("observation_date"),
       })
 
@@ -67,3 +72,15 @@ def find_target_source(cat_hdu, target_ra, target_dec):
 
     if abs(source['ra'] - target_ra) <= MATCH_PRECISION and abs(source['dec'] - target_dec) <= MATCH_PRECISION:
       return source
+
+def flux_to_mag(flux, fluxerr):
+  """
+  Convert flux and fluxerr to magnitude and magnitude error.
+  """
+  if flux <= 0:
+    return None, None
+  
+  mag = -2.5 * np.log10(flux)
+  magerr = (2.5 / np.log(10)) * (fluxerr / flux)
+  
+  return mag, magerr
