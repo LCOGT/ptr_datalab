@@ -44,8 +44,8 @@ def variable_star(input: dict, user: User):
       log.info(f"No matching source found for target coordinates: RA={target_ra}, DEC={target_dec} in image {image.get('basename')}")
     else:
       light_curve.append({
-        'mag': target_source['mag'],
-        'magerr': target_source['magerr'],
+        'mag': target_source['mag'] if 'mag' in target_source else target_source['flux'],
+        'magerr': target_source['magerr'] if 'magerr' in target_source else target_source['fluxerr'],
         'observation_date': image.get("observation_date"),
       })
 
