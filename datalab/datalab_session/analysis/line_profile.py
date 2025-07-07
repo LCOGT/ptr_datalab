@@ -41,8 +41,9 @@ def line_profile(input: dict, user: User):
     if(wcs.get_axis_types()[0].get('coordinate_type') == None):
       raise WcsError("No valid WCS solution")
 
-    start_sky_coord = wcs.pixel_to_world(x_points[0], y_points[0])
-    end_sky_coord = wcs.pixel_to_world(x_points[1], y_points[1])
+    # pixel_to_world accepts (y, x) order
+    start_sky_coord = wcs.pixel_to_world(y_points[0], x_points[0])
+    end_sky_coord = wcs.pixel_to_world(y_points[1], x_points[1])
 
     # Angular distance
     arcsec_angle = start_sky_coord.separation(end_sky_coord).arcsecond

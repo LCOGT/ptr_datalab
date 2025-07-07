@@ -129,8 +129,8 @@ def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_poi
   y_points = np.array(y_points)
 
   # Possibly introduces error since result is rounded to int from a smaller image to a larger one
-  x_points = (x_points / width_1 * width_2).astype(int)
-  y_points = (y_points / height_1 * height_2).astype(int)
+  x_points = ((x_points / width_1) * width_2)
+  y_points = ((y_points / height_1) * height_2)
 
   if flip_y:
     y_points = height_2 - y_points
