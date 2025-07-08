@@ -43,16 +43,21 @@ def variable_star(input: dict, user: User):
 
     if target_source is None:
       log.info(f"No matching source found for target coordinates: RA={target_ra}, DEC={target_dec} in image {image.get('basename')}")
-    else:
-      # Fallback to calculating mag/magerr from flux/fluxerr if not in catalog columns
-      if(not 'mag' in target_source or not 'magerr' in target_source):
-        target_source['mag'], target_source['magerr'] = flux_to_mag(target_source['flux'], target_source['fluxerr'])
+      continue
 
-      light_curve.append({
-        'mag': target_source['mag'],
-        'magerr': target_source['magerr'],
-        'observation_date': image.get("observation_date"),
-      })
+    # Fallback calculating mag/magerr from flux/fluxerr if not in catalog columns
+    if(not 'mag' in target_source or not 'magerr' in target_source):
+      target_source['mag'], target_source['magerr'] = flux_to_mag(target_source['flux'], target_source['fluxerr'])
+
+    if target_source['mag'] is None or target_source['magerr'] is None:
+      log.warning(f"Invalid magnitude or magnitude error for target source in image {image.get('basename')}. Skipping this source.")
+      continue
+    
+    light_curve.append({
+      'mag': target_source['mag'],
+      'magerr': target_source['magerr'],
+      'observation_date': image.get("observation_date"),
+    })
 
   return {
     'target_coords': coords,
@@ -77,10 +82,13 @@ def flux_to_mag(flux, fluxerr):
   """
   Convert flux and fluxerr to magnitude and magnitude error.
   """
+  CONVERSION_FACTOR = 2.5
+  FLUX2MAG = CONVERSION_FACTOR / np.log(10)
+
   if flux <= 0:
     return None, None
   
-  mag = -2.5 * np.log10(flux)
-  magerr = (2.5 / np.log(10)) * (fluxerr / flux)
+  mag = -CONVERSION_FACTOR * np.log10(flux)
+  magerr = FLUX2MAG * (fluxerr / flux)
   
   return mag, magerr
