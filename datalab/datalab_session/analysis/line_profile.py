@@ -46,7 +46,7 @@ def line_profile(input: dict, user: User):
     end_sky_coord = wcs.pixel_to_world(y_points[1], x_points[1])
 
     # Angular distance
-    arcsec_angle = start_sky_coord.separation(end_sky_coord).arcsecond
+    arcsec = start_sky_coord.separation(end_sky_coord).arcsecond
 
     # Coordinates
     start_coords = [start_sky_coord.ra.deg, start_sky_coord.dec.deg]
@@ -61,11 +61,11 @@ def line_profile(input: dict, user: User):
     end_coords = None
     position_angle = None
 
-    # fallback attempt at using pixscale to calculate the arcsec distance
     try:
-      arcsec_angle = len(line_profile) * sci_hdu.header["PIXSCALE"]
+      # fallback: use pixscale to calculate the arcsec distance
+      arcsec = (len(line_profile)-1) * sci_hdu.header["PIXSCALE"]
     except KeyError:
-      arcsec_angle = None
+      arcsec = None
 
-  line_profile_output = {"line_profile": line_profile, "arcsec": arcsec_angle, "start_coords": start_coords, "end_coords": end_coords, "position_angle": position_angle}
+  line_profile_output = {"line_profile": line_profile, "arcsec": arcsec, "start_coords": start_coords, "end_coords": end_coords, "position_angle": position_angle}
   return line_profile_output
