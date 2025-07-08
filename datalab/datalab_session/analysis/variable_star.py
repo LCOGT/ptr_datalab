@@ -30,19 +30,19 @@ def variable_star(input: dict, user: User):
 
   # Loop through each image's catalog and extract the target source's mag/magerr for the light curve
   for image in input.get("images"):
-    log.info(f"Processing image: {image.get('basename')} for variable star analysis...")
+    basename = image.get('basename')
 
     try:
-      file_path = FileCache().get_fits(image.get('basename'), input.get('source', 'archive'), user)
+      file_path = FileCache().get_fits(basename, input.get('source', 'archive'), user)
       cat_hdu = get_hdu(file_path, extension='CAT')
     except Exception as e:
-      log.error(f"Error retrieving catalog for image {image.get('basename')}: {e}")
+      log.error(f"Error retrieving catalog for image {basename}: {e}")
       continue
     
     target_source = find_target_source(cat_hdu, target_ra, target_dec)
 
     if target_source is None:
-      log.info(f"No matching source found for target coordinates: RA={target_ra}, DEC={target_dec} in image {image.get('basename')}")
+      log.info(f"No matching source found for target coordinates: RA={target_ra}, DEC={target_dec} in image {basename}")
       continue
 
     # Fallback calculating mag/magerr from flux/fluxerr if not in catalog columns
@@ -50,9 +50,9 @@ def variable_star(input: dict, user: User):
       target_source['mag'], target_source['magerr'] = flux_to_mag(target_source['flux'], target_source['fluxerr'])
 
     if target_source['mag'] is None or target_source['magerr'] is None:
-      log.warning(f"Invalid magnitude or magnitude error for target source in image {image.get('basename')}. Skipping this source.")
+      log.warning(f"Invalid magnitude or magnitude error for target source in image {basename}. Skipping this source.")
       continue
-    
+
     light_curve.append({
       'mag': target_source['mag'],
       'magerr': target_source['magerr'],
