@@ -121,15 +121,15 @@ def scale_points(height_1: int, width_1: int, height_2: int, width_2: int, x_poi
     Scales x_points and y_points from img_1 height and width to img_2 height and width
     Optionally flips the points on the x or y axis
   """
-  if any([dim == 0 for dim in [height_1, width_1, height_2, width_2]]):
+  if any([dimension == 0 for dimension in [height_1, width_1, height_2, width_2]]):
     raise ValueError("height and width must be non-zero")
 
   # normalize the points to be lists in case tuples or other are passed
   x_points = np.array(x_points)
   y_points = np.array(y_points)
 
-  x_points = (x_points / width_1 * width_2).astype(int)
-  y_points = (y_points / height_1 * height_2).astype(int)
+  x_points = ((x_points / width_1) * width_2)
+  y_points = ((y_points / height_1) * height_2)
 
   if flip_y:
     y_points = height_2 - y_points
