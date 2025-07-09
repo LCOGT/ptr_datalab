@@ -27,6 +27,8 @@ def variable_star(input: dict, user: User):
   target_dec = coords.get("dec")
 
   light_curve = []
+  excluded_images = []
+  flux_fallback = False
 
   # Loop through each image's catalog and extract the target source's mag/magerr for the light curve
   for image in input.get("images"):
@@ -37,6 +39,7 @@ def variable_star(input: dict, user: User):
       cat_hdu = get_hdu(file_path, extension='CAT')
     except Exception as e:
       log.error(f"Error retrieving catalog for image {basename}: {e}")
+      excluded_images.append(basename)
       continue
     
     target_source = find_target_source(cat_hdu, target_ra, target_dec)
@@ -47,21 +50,28 @@ def variable_star(input: dict, user: User):
 
     # Fallback calculating mag/magerr from flux/fluxerr if not in catalog columns
     if(not 'mag' in target_source or not 'magerr' in target_source):
-      target_source['mag'], target_source['magerr'] = flux_to_mag(target_source['flux'], target_source['fluxerr'])
+      mag, magerr = flux_to_mag(target_source['flux'], target_source['fluxerr'])
+      flux_fallback = True
+    else:
+      mag = target_source['mag']
+      magerr = target_source['magerr']
 
-    if target_source['mag'] is None or target_source['magerr'] is None:
+    if mag is None or magerr is None:
       log.warning(f"Invalid magnitude or magnitude error for target source in image {basename}. Skipping this source.")
+      excluded_images.append(basename)
       continue
 
     light_curve.append({
-      'mag': target_source['mag'],
-      'magerr': target_source['magerr'],
+      'mag': mag,
+      'magerr': magerr,
       'observation_date': image.get("observation_date"),
     })
 
   return {
     'target_coords': coords,
-    'light_curve': light_curve
+    'light_curve': light_curve,
+    'flux_fallback': flux_fallback,
+    'excluded_images': excluded_images,
   }
 
 def find_target_source(cat_hdu, target_ra, target_dec):
