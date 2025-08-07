@@ -66,7 +66,7 @@ def variable_star(input: dict, user: User):
     light_curve.append({
       'mag': mag,
       'magerr': magerr,
-      'observation_date': Time(image.get("observation_date")).jd,
+      'julian_date': Time(image.get("observation_date")).jd,
     })
   
   period, fap = calculate_period(light_curve)
@@ -114,7 +114,7 @@ def calculate_period(light_curve):
   Use the astropy lomb scargle to perform the periodogram analysis on the light curve
   """
   ls = LombScargle(
-    [lc['observation_date'] for lc in light_curve],
+    [lc['julian_date'] for lc in light_curve],
     [lc['mag'] for lc in light_curve],
     [lc['magerr'] for lc in light_curve]
   )
