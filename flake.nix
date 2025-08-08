@@ -2,8 +2,6 @@
   description = "Datalab";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-parts.url = "github:hercules-ci/flake-parts";
     devenv-k8s.url = "github:LCOGT/devenv-k8s";
 
     nixpkgs.follows = "devenv-k8s/nixpkgs";
