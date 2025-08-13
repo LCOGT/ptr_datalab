@@ -56,4 +56,4 @@ class AnalysisView(RetrieveAPIView):
 
         except ClientAlertException as error:
             log.error(f"Error running analysis action {action}: {error}")
-            return Response({"error": f"Image doesn't support {action}"}, status=400)
+            return Response({"error": f"{action} Error: {error}"}, status=400)
