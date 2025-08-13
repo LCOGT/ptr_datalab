@@ -121,7 +121,7 @@ class FileCache():
         while file_path is None:
             if time.time() - start_time > GET_FITS_TIMEOUT:
                 log.error(f"Timeout reached while waiting for {basename} to download.")
-                return None
+                raise TimeoutError(f"Failed to retrieve {basename} within {GET_FITS_TIMEOUT} seconds.")
             
             time.sleep(0.1)
             file_path = self._get_fits_helper(basename, source, user)
