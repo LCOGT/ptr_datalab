@@ -1,6 +1,7 @@
 import numpy as np
 from django.contrib.auth.models import User
 
+from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.file_utils import get_hdu, scale_points
 from datalab.datalab_session.utils.filecache import FileCache
 
@@ -25,7 +26,11 @@ def source_catalog(input: dict, user: User):
   """
     Returns a dict representing the source catalog data with x,y coordinates and flux values
   """
-  file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'), user)
+  try:
+    file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'), user)
+  except TimeoutError as e:
+    raise ClientAlertException(f"Download of {input['basename']} timed out")
+  
   cat_hdu = get_hdu(file_path, 'CAT')
   sci_hdu = get_hdu(file_path, 'SCI')
 

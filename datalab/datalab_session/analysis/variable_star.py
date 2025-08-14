@@ -1,12 +1,14 @@
 import logging
 
 from django.contrib.auth.models import User
+from astropy.timeseries import LombScargle
+from astropy.time import Time
 import numpy as np
 
 from datalab.datalab_session.utils.file_utils import get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
 
-log = logging.getLogger()
+log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
 def variable_star(input: dict, user: User):
@@ -31,7 +33,7 @@ def variable_star(input: dict, user: User):
   flux_fallback = False
 
   # Loop through each image's catalog and extract the target source's mag/magerr for the light curve
-  for image in input.get("images"):
+  for image in input.get("images", []):
     basename = image.get('basename')
 
     try:
@@ -41,37 +43,41 @@ def variable_star(input: dict, user: User):
       log.error(f"Error retrieving catalog for image {basename}: {e}")
       excluded_images.append(basename)
       continue
-    
+
     target_source = find_target_source(cat_hdu, target_ra, target_dec)
 
     if target_source is None:
-      log.info(f"No matching source found for target coordinates: RA={target_ra}, DEC={target_dec} in image {basename}")
+      log.info(f"No source found matching target coordinates: RA={target_ra}, DEC={target_dec} in image {basename}")
+      excluded_images.append(basename)
       continue
 
-    # Fallback calculating mag/magerr from flux/fluxerr if not in catalog columns
-    if(not 'mag' in target_source or not 'magerr' in target_source):
-      mag, magerr = flux_to_mag(target_source['flux'], target_source['fluxerr'])
-      flux_fallback = True
-    else:
+    try:
       mag = target_source['mag']
       magerr = target_source['magerr']
-
-    if mag is None or magerr is None:
-      log.warning(f"Invalid magnitude or magnitude error for target source in image {basename}. Skipping this source.")
+    except KeyError as e:
+      # If mag or magerr is not present, fallback convert flux to mag
+      mag, magerr = flux_to_mag(target_source['flux'], target_source['fluxerr'])
+      flux_fallback = True
+    except Exception as e:
+      log.warning(f"Invalid magnitude or magnitude error for target in image {basename}")
       excluded_images.append(basename)
       continue
 
     light_curve.append({
       'mag': mag,
       'magerr': magerr,
-      'observation_date': image.get("observation_date"),
+      'julian_date': Time(image.get("observation_date")).jd,
     })
+  
+  period, fap = calculate_period(light_curve)
 
   return {
     'target_coords': coords,
     'light_curve': light_curve,
     'flux_fallback': flux_fallback,
     'excluded_images': excluded_images,
+    'period': period,
+    'fap': fap,
   }
 
 def find_target_source(cat_hdu, target_ra, target_dec):
@@ -102,3 +108,24 @@ def flux_to_mag(flux, fluxerr):
   magerr = FLUX2MAG * (fluxerr / flux)
   
   return mag, magerr
+
+def calculate_period(light_curve):
+  """
+  Use the astropy lomb scargle to perform the periodogram analysis on the light curve
+  """
+  ls = LombScargle(
+    [lc['julian_date'] for lc in light_curve],
+    [lc['mag'] for lc in light_curve],
+    [lc['magerr'] for lc in light_curve]
+  )
+
+  frequency, power = ls.autopower()
+
+  # Find the best frequency
+  best_frequency = frequency[np.argmax(power)]
+  period = 1 / best_frequency
+
+  fap = ls.false_alarm_probability(power.max())
+
+  log.info(f"Best period found: {period} days with FAP: {fap}")
+  return period, fap

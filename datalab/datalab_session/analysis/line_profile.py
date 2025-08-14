@@ -22,9 +22,11 @@ def line_profile(input: dict, user: User):
       y2 (int): The y coordinate of the ending point
     }
   """
-  file_path = FileCache().get_fits(input['basename'], input['source'], user)
   try:
+    file_path = FileCache().get_fits(input['basename'], input['source'], user)
     sci_hdu = get_hdu(file_path, 'SCI')
+  except TimeoutError as e:
+    raise ClientAlertException(f"Download of {input['basename']} timed out")
   except TypeError as e:
     raise ClientAlertException(f'Error: {e}')
 

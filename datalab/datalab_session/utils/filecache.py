@@ -113,9 +113,16 @@ class FileCache():
             or if its in the cache but not on the filesystem, then the file will be redownloaded from S3 and placed
             in the cache. Returns the local temp dir file_path to the downloaded file.
         '''
+        GET_FITS_TIMEOUT = 15
+        start_time = time.time()
+
         basename = basename.replace('-large', '').replace('-small', '')
         file_path = self._get_fits_helper(basename, source, user)
         while file_path is None:
+            if time.time() - start_time > GET_FITS_TIMEOUT:
+                log.error(f"Timeout reached while waiting for {basename} to download.")
+                raise TimeoutError(f"Failed to retrieve {basename} within {GET_FITS_TIMEOUT} seconds.")
+            
             time.sleep(0.1)
             file_path = self._get_fits_helper(basename, source, user)
 
