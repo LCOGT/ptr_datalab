@@ -5,12 +5,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 
 from datalab.datalab_session.data_operations.utils import available_operations
-from datalab.datalab_session.analysis.line_profile import line_profile
-from datalab.datalab_session.analysis.source_catalog import source_catalog
-from datalab.datalab_session.analysis.get_tif import get_tif
-from datalab.datalab_session.analysis.get_jpg import get_jpg
-from datalab.datalab_session.analysis.raw_data import raw_data
-from datalab.datalab_session.analysis.variable_star import variable_star
+from datalab.datalab_session.analysis import *
 from datalab.datalab_session.exceptions import ClientAlertException
 
 log = logging.getLogger()
@@ -36,6 +31,7 @@ class AnalysisView(RetrieveAPIView):
         "get-tif": get_tif,
         "get-jpg": get_jpg,
         "raw-data": raw_data,
+        "wcs": wcs,
         "variable-star": variable_star,
     }
 
