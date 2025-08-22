@@ -1,3 +1,4 @@
+from urllib.error import HTTPError
 from astropy.wcs import WCS, WcsError
 from django.contrib.auth.models import User
 
@@ -19,9 +20,11 @@ def wcs(input: dict, user: User):
     sci_hdu = get_hdu(file_path, 'SCI')
     fits_dimensions = [sci_hdu.data.shape[0], sci_hdu.data.shape[1]]
   except TimeoutError as e:
-    raise ClientAlertException(f"Download of {input['basename']} timed out")
+    raise ClientAlertException(f"Download of {input['basename']} FITs timed out")
   except TypeError as e:
     raise ClientAlertException(e)
+  except HTTPError as e:
+    raise ClientAlertException(f"No FITs file found for this image")
 
   try:
     wcs = WCS(sci_hdu.header)
