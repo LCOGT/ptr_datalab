@@ -4,7 +4,7 @@ import json
 from django.test import TestCase
 from numpy.testing import assert_almost_equal
 
-from datalab.datalab_session.analysis import line_profile, source_catalog
+from datalab.datalab_session.analysis import *
 
 class TestAnalysis(TestCase):
     analysis_test_path = 'datalab/datalab_session/tests/test_files/analysis/'
@@ -22,7 +22,7 @@ class TestAnalysis(TestCase):
         mock_instance = mock_file_cache.return_value
         mock_instance.get_fits.return_value = self.analysis_fits_1_path
 
-        output = line_profile.line_profile({
+        output = line_profile({
             'basename': 'fits_1',
             'height': 100,
             'width': 100,
@@ -41,7 +41,7 @@ class TestAnalysis(TestCase):
 
         mock_instance.get_fits.return_value = self.analysis_fits_1_path
         
-        output = source_catalog.source_catalog({
+        output = source_catalog({
             'basename': 'fits_1',
             'height': 100,
             'width': 100,
