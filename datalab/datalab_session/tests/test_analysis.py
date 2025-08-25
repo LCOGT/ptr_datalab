@@ -4,7 +4,7 @@ import json
 from django.test import TestCase
 from numpy.testing import assert_almost_equal
 
-from datalab.datalab_session.analysis import line_profile, source_catalog, wcs
+from datalab.datalab_session.analysis import line_profile, source_catalog
 
 class TestAnalysis(TestCase):
     analysis_test_path = 'datalab/datalab_session/tests/test_files/analysis/'
