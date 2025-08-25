@@ -40,3 +40,5 @@ def wcs(input: dict, user: User):
     return output
   except WcsError as e:
     raise ClientAlertException(e)
+  except AttributeError as e:
+    raise ClientAlertException("No WCS solution found for this image")
