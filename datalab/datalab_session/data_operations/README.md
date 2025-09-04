@@ -31,7 +31,7 @@ Raise a `ClientAlertException` to pass a message back to the frontend which will
 This is caught in `tasks.py` and where it sets the operation as failed and puts your error message in the message field of the data operation class.
 
 #### Skipping `input_data_handler` and `output_data_handler`
-Some methods require more granular control of getting the input data and creating the output. For example the RGB_Stack operation creates a color image so it skips using the data_output_handler class. In this case you'll need to use the methods in `file_utils.py` and `s3_utils.py`
+Some methods require more granular control of getting the input data and creating the output. For example the Color_Image operation creates a color image so it skips using the data_output_handler class. In this case you'll need to use the methods in `file_utils.py` and `s3_utils.py`
 
 ## File Reference
 **`data_operation.py`**

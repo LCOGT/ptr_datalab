@@ -23,6 +23,8 @@ def raw_data(input: dict, user: User):
         file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'), user)
     except TimeoutError as e:
         raise ClientAlertException(f"Download of {input['basename']} timed out")
+    except KeyError as e:
+        raise ClientAlertException(e)
     
     sci_hdu = get_hdu(file_path, 'SCI')
     image_data = sci_hdu.data
