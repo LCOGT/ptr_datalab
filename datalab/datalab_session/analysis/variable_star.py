@@ -69,7 +69,11 @@ def variable_star(input: dict, user: User):
       'julian_date': Time(image.get("observation_date")).jd,
     })
   
-  period, fap = calculate_period(light_curve)
+  try:
+    period, fap = calculate_period(light_curve)
+  except Exception as e:
+    log.error(f"Error calculating period: {e}")
+    period, fap = 0, 0
 
   return {
     'target_coords': coords,
