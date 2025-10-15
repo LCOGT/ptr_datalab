@@ -58,8 +58,8 @@ def source_catalog(input: dict, user: User):
   source_catalog_data = []
   for i in range(MAX_SOURCE_CATALOG_SIZE):
     source_data = {
-      "x": x_points[i],
-      "y": y_points[i],
+      "xwin": x_points[i],
+      "ywin": y_points[i],
       "flux": flux[i].astype(int)
     }
     if ra is not None and dec is not None:
