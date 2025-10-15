@@ -37,7 +37,9 @@ def source_catalog(input: dict, user: User):
   DECIMALS_OF_PRECISION = 6
   MAX_SOURCE_CATALOG_SIZE = min(len(cat_hdu.data["x"]), 1000)
 
-  # get x,y and flux values
+  # get xwin,ywin and flux values
+  # We get xwin and ywin because they provide more accurate centroid positions
+  # Which in turn return more precise values for separation and positon angles for binary and blended stars
   x_points = cat_hdu.data["xwin"][:MAX_SOURCE_CATALOG_SIZE]
   y_points = cat_hdu.data["ywin"][:MAX_SOURCE_CATALOG_SIZE]
   flux = cat_hdu.data["flux"][:MAX_SOURCE_CATALOG_SIZE]
