@@ -31,7 +31,6 @@ def line_profile(input: dict, user: User):
     raise ClientAlertException(f'Error: {e}')
 
   x_points, y_points = scale_points(input["height"], input["width"], sci_hdu.data.shape[0], sci_hdu.data.shape[1], x_points=[input["x1"], input["x2"]], y_points=[input["y1"], input["y2"]])
-
   # Line profile and distance in arcseconds
   line_profile = profile_line(sci_hdu.data, (x_points[0], y_points[0]), (x_points[1], y_points[1]), mode="constant", cval=-1)
 
@@ -43,13 +42,11 @@ def line_profile(input: dict, user: User):
     if(wcs.get_axis_types()[0].get('coordinate_type') == None):
       raise WcsError("No valid WCS solution")
 
-    # pixel_to_world accepts (y, x) order
-    start_sky_coord = wcs.pixel_to_world(y_points[0], x_points[0])
-    end_sky_coord = wcs.pixel_to_world(y_points[1], x_points[1])
+    start_sky_coord = wcs.pixel_to_world(y_points[0]-1, x_points[0]-1)
+    end_sky_coord = wcs.pixel_to_world(y_points[1]-1, x_points[1]-1)
 
     # Angular distance
     arcsec = start_sky_coord.separation(end_sky_coord).arcsecond
-
     # Coordinates
     start_coords = [start_sky_coord.ra.deg, start_sky_coord.dec.deg]
     end_coords = [end_sky_coord.ra.deg, end_sky_coord.dec.deg]
