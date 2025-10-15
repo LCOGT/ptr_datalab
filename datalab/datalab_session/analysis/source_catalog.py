@@ -38,10 +38,9 @@ def source_catalog(input: dict, user: User):
   MAX_SOURCE_CATALOG_SIZE = min(len(cat_hdu.data["x"]), 1000)
 
   # get x,y and flux values
-  x_points = cat_hdu.data["x"][:MAX_SOURCE_CATALOG_SIZE]
-  y_points = cat_hdu.data["y"][:MAX_SOURCE_CATALOG_SIZE]
+  x_points = cat_hdu.data["xwin"][:MAX_SOURCE_CATALOG_SIZE]
+  y_points = cat_hdu.data["ywin"][:MAX_SOURCE_CATALOG_SIZE]
   flux = cat_hdu.data["flux"][:MAX_SOURCE_CATALOG_SIZE]
-
   # ra, dec values may or may not be present in the CAT hdu
   if "ra" in cat_hdu.data.names and "dec" in cat_hdu.data.names:
     ra = cat_hdu.data["ra"][:MAX_SOURCE_CATALOG_SIZE]
