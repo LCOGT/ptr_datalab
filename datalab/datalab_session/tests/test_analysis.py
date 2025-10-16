@@ -47,6 +47,5 @@ class TestAnalysis(TestCase):
             'width': 100,
             'source': 'archive'
             }, None)
-        print(json.dumps(f'!!!!!!!: {output}', indent=2))
 
         self.assertEqual(output, self.test_source_catalog_data)
