@@ -24,7 +24,7 @@ from datalab.datalab_session.utils.filecache import FileCache
 # 
 def source_catalog(input: dict, user: User):
   """
-    Returns a dict representing the source catalog data with x,y coordinates and flux values
+    Returns a dict representing the source catalog data with xwin,ywin coordinates and flux values
   """
   try:
     file_path = FileCache().get_fits(input['basename'], input.get('source', 'archive'), user)
@@ -42,6 +42,8 @@ def source_catalog(input: dict, user: User):
   # Which in turn return more precise values for separation and positon angles for binary and blended stars
   x_points = cat_hdu.data["xwin"][:MAX_SOURCE_CATALOG_SIZE]
   y_points = cat_hdu.data["ywin"][:MAX_SOURCE_CATALOG_SIZE]
+  x = cat_hdu.data["x"][:MAX_SOURCE_CATALOG_SIZE]
+  y = cat_hdu.data["y"][:MAX_SOURCE_CATALOG_SIZE]
   flux = cat_hdu.data["flux"][:MAX_SOURCE_CATALOG_SIZE]
   # ra, dec values may or may not be present in the CAT hdu
   if "ra" in cat_hdu.data.names and "dec" in cat_hdu.data.names:
@@ -55,13 +57,16 @@ def source_catalog(input: dict, user: User):
   # scale the x_points and y_points from the fits pixel coords to the jpg coords
   fits_height, fits_width = np.shape(sci_hdu.data)
   x_points, y_points = scale_points(fits_height, fits_width, input['width'], input['height'], x_points=x_points, y_points=y_points)
+  x, y = scale_points(fits_height, fits_width, input['width'], input['height'], x_points=x, y_points=y)
 
   # create the list of source catalog objects
   source_catalog_data = []
   for i in range(MAX_SOURCE_CATALOG_SIZE):
     source_data = {
-      "x": x_points[i],
-      "y": y_points[i],
+      "x_win": x_points[i],
+      "y_win": y_points[i],
+      "x": x[i],
+      "y": y[i],
       "flux": flux[i].astype(int)
     }
     if ra is not None and dec is not None:
