@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import shutil
 from unittest import mock
 import os
 
