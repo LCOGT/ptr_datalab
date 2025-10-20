@@ -10,14 +10,13 @@ from datalab.datalab_session.data_operations.data_operation import BaseDataOpera
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.format import Format
-from datalab.datalab_session.utils.file_utils import create_jpgs, create_tif, temp_file_manager
+from datalab.datalab_session.utils.file_utils import create_composite_jpgs, create_composite_tif, temp_file_manager
 
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 class Color_Image(BaseDataOperation):
-    REQUIRED_INPUTS = 3
     PROGRESS_STEPS = {
         'INPUT_PROCESSING': 0.4,
         'ALIGNMENT': 0.6,
@@ -52,16 +51,37 @@ class Color_Image(BaseDataOperation):
         }
     
     def _process_inputs(self, submitter, color_input_list) -> tuple[list[InputDataHandler], list[float], list[float]]:
-        input_fits_list: List = []
-        zmin_list = []
-        zmax_list = []
+        input_dicts: List = []
+        input_handlers: List = []
         for index, input in enumerate(color_input_list, start=1):
-            input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
-            zmin_list.append(input['zmin'])
-            zmax_list.append(input['zmax'])
+            input_handlers.append(InputDataHandler(submitter, input['basename'], input['source']))
             self.set_operation_progress(self.PROGRESS_STEPS['INPUT_PROCESSING'] * (index / len(color_input_list)))
-        
-        return input_fits_list, zmin_list, zmax_list
+
+        # Attempt to do the image alignment here
+        fits_files = [handler.fits_file for handler in input_handlers]
+
+        try:
+            aligned_images = self._align_images(fits_files)
+        except KeyError:
+            log.info('Could not align images due to missing CAT header')
+            aligned_images = fits_files
+
+        self.set_operation_progress(self.PROGRESS_STEPS['ALIGNMENT'])
+
+        # Now create the input_dicts needed for image composition
+        for index, fits_file in enumerate(aligned_images):
+            normalized_color = [color_input_list[index]['color']['r'] / 255,
+                                color_input_list[index]['color']['g'] / 255,
+                                color_input_list[index]['color']['b'] / 255]
+            input_dicts.append({
+                'fits_path': fits_file,
+                'scale_algorithm': 'zscale',
+                'color': normalized_color,
+                'zmin': color_input_list[index]['zmin'],
+                'zmax': color_input_list[index]['zmax'],
+            })
+
+        return input_dicts
     
     def _align_images(self, fits_files: list[str]) -> list[str]:
         ref_image = fits_files[0]
@@ -74,27 +94,18 @@ class Color_Image(BaseDataOperation):
                 aligned_img = affineremap(id.ukn.filepath, id.trans, outdir=self.temp)
                 aligned_images.append(aligned_img)
         
-        if len(aligned_images) != self.REQUIRED_INPUTS:
+        if len(aligned_images) != len(fits_files):
             log.info('could not align all images')
             return fits_files
         
         return aligned_images
 
     def operate(self, submitter: User):
-        red_input = self._validate_inputs(input_key='red_input', minimum_inputs=1)
-        green_input = self._validate_inputs(input_key='green_input', minimum_inputs=1)
-        blue_input = self._validate_inputs(input_key='blue_input', minimum_inputs=1)
-        color_inputs = red_input + green_input + blue_input
-        input_handlers, zmin_list, zmax_list = self._process_inputs(submitter, color_inputs)
-        fits_files = [handler.fits_file for handler in input_handlers]
+        print("Starting color image:")
+        print(self.input_data)
+        color_inputs = self._validate_inputs(input_key='color_channels', minimum_inputs=1)
 
-        try:
-            aligned_images = self._align_images(fits_files)
-        except KeyError:
-            log.info('Could not align images due to missing CAT header')
-            aligned_images = fits_files
-
-        self.set_operation_progress(self.PROGRESS_STEPS['ALIGNMENT'])
+        input_dicts = self._process_inputs(submitter, color_inputs)
 
         with temp_file_manager(
             f"{self.cache_key}.tif", f"{self.cache_key}-large.jpg", f"{self.cache_key}-small.jpg",
@@ -102,8 +113,8 @@ class Color_Image(BaseDataOperation):
         ) as (tif_path, large_jpg_path, small_jpg_path):
         
             try:
-                create_tif(aligned_images, tif_path, color=True, zmin=zmin_list, zmax=zmax_list)
-                create_jpgs(aligned_images, large_jpg_path, small_jpg_path, color=True, zmin=zmin_list, zmax=zmax_list)
+                create_composite_tif(input_dicts, tif_path)
+                create_composite_jpgs(input_dicts, large_jpg_path, small_jpg_path)
             except Exception as ex:
                 # Catches exceptions in the fits2image methods to report back to frontend
                 raise ClientAlertException(ex)
