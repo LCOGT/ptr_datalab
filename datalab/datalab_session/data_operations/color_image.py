@@ -43,7 +43,7 @@ class Color_Image(BaseDataOperation):
                     'description': 'Image for a channel of the color image',
                     'type': Format.FITS,
                     'minimum': 1,
-                    'maximum': 1,
+                    'maximum': 6,
                     'include_custom_scale': True,
                     'color_picker': True,
                 },
@@ -101,9 +101,8 @@ class Color_Image(BaseDataOperation):
         return aligned_images
 
     def operate(self, submitter: User):
-        print("Starting color image:")
-        print(self.input_data)
         color_inputs = self._validate_inputs(input_key='color_channels', minimum_inputs=1)
+        log.info(f"Color image operation on {', '.join([image['basename'] for image in color_inputs])}")
 
         input_dicts = self._process_inputs(submitter, color_inputs)
 
