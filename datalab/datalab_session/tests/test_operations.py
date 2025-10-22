@@ -254,9 +254,11 @@ class TestColorImageOperation(FileExtendedTestCase):
         mock_save_files_to_s3.return_value = self.temp_color_path
 
         input_data = {
-            'red_input': [{'basename': 'red_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}],
-            'green_input': [{'basename': 'green_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}],
-            'blue_input': [{'basename': 'blue_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}]
+            'color_channels': [
+                {'basename': 'red_fits', 'source': 'local', 'zmin': 0, 'zmax': 255, 'color': {'r': 255, 'g': 0, 'b': 0}},
+                {'basename': 'green_fits', 'source': 'local', 'zmin': 0, 'zmax': 255, 'color': {'r': 0, 'g': 255, 'b': 0}},
+                {'basename': 'blue_fits', 'source': 'local', 'zmin': 0, 'zmax': 255, 'color': {'r': 0, 'g': 0, 'b': 255}}
+            ]
         }
 
         color_image = Color_Image(input_data)
