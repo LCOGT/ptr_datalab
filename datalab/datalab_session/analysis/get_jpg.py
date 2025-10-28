@@ -22,7 +22,7 @@ def get_jpg(input: dict, user: User):
   except TimeoutError as e:
     raise ClientAlertException(f"Download of {basename} timed out")
 
-  with temp_file_manager(f'{basename}_large.jpg', f'{basename}_small.jpg') as (large_jpg, small_jpg):
+  with temp_file_manager(f'{basename}-large.jpg', f'{basename}-small.jpg') as (large_jpg, small_jpg):
     create_jpgs(file_path, large_jpg, small_jpg, zmin=zmin, zmax=zmax)
     with open(large_jpg, "rb") as img_file:
       img_data = img_file.read()

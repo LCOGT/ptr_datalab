@@ -7,7 +7,7 @@ from astropy.io import fits
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.data_operations.rgb_stack import RGB_Stack
+from datalab.datalab_session.data_operations.color_image import Color_Image
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.data_operations.median import Median
 from datalab.datalab_session.data_operations.stacking import Stack
@@ -222,18 +222,18 @@ class TestMedianOperation(FileExtendedTestCase):
             median.operate(None)
 
 
-class TestRGBStackOperation(FileExtendedTestCase):
-    temp_rgb_path = f'{test_path}temp_rgb.fits'
-    test_rgb_path = f'{test_path}rgb_stack/rgb_stack.fits'
-    test_red_path = f'{test_path}rgb_stack/red.fits'
-    test_green_path = f'{test_path}rgb_stack/green.fits'
-    test_blue_path = f'{test_path}rgb_stack/blue.fits'
+class TestColorImageOperation(FileExtendedTestCase):
+    temp_color_path = f'{test_path}temp_color.fits'
+    test_color_path = f'{test_path}color_image/color_image.fits'
+    test_red_path = f'{test_path}color_image/red.fits'
+    test_green_path = f'{test_path}color_image/green.fits'
+    test_blue_path = f'{test_path}color_image/blue.fits'
 
     def tearDown(self):
         self.clean_test_dir()
         return super().tearDown()
     
-    @mock.patch('datalab.datalab_session.data_operations.rgb_stack.save_files_to_s3')
+    @mock.patch('datalab.datalab_session.data_operations.color_image.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.create_jpgs')
     @mock.patch('datalab.datalab_session.data_operations.fits_output_handler.tempfile.NamedTemporaryFile')
     @mock.patch('datalab.datalab_session.data_operations.input_data_handler.FileCache')
@@ -248,24 +248,26 @@ class TestRGBStackOperation(FileExtendedTestCase):
         mock_file_cache.side_effect = [mock_fc_instance1, mock_fc_instance2, mock_fc_instance3]
 
         # save temp output to a known path so we can test
-        mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_rgb_path
+        mock_named_tempfile.return_value.__enter__.return_value.name = self.temp_color_path
         # avoids overwriting our output
         mock_create_jpgs.return_value.__enter__.return_value = ('test_path', 'test_path')
         # don't save to s3
-        mock_save_files_to_s3.return_value = self.temp_rgb_path
+        mock_save_files_to_s3.return_value = self.temp_color_path
 
         input_data = {
-            'red_input': [{'basename': 'red_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}],
-            'green_input': [{'basename': 'green_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}],
-            'blue_input': [{'basename': 'blue_fits', 'source': 'local', 'zmin': 0, 'zmax': 255}]
+            'color_channels': [
+                {'basename': 'red_fits', 'source': 'local', 'zmin': 0, 'zmax': 255, 'color': {'r': 255, 'g': 0, 'b': 0}},
+                {'basename': 'green_fits', 'source': 'local', 'zmin': 0, 'zmax': 255, 'color': {'r': 0, 'g': 255, 'b': 0}},
+                {'basename': 'blue_fits', 'source': 'local', 'zmin': 0, 'zmax': 255, 'color': {'r': 0, 'g': 0, 'b': 255}}
+            ]
         }
 
-        rgb = RGB_Stack(input_data)
-        rgb.operate(None)
-        output = rgb.get_output().get('output_files')
+        color_image = Color_Image(input_data)
+        color_image.operate(None)
+        output = color_image.get_output().get('output_files')
 
-        self.assertEqual(rgb.get_operation_progress(), 1.0)
-        self.assertEqual(output, [self.temp_rgb_path])
+        self.assertEqual(color_image.get_operation_progress(), 1.0)
+        self.assertEqual(output, [self.temp_color_path])
 
 
 class TestStackOperation(FileExtendedTestCase):

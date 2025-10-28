@@ -113,7 +113,7 @@ class FileCache():
             or if its in the cache but not on the filesystem, then the file will be redownloaded from S3 and placed
             in the cache. Returns the local temp dir file_path to the downloaded file.
         '''
-        GET_FITS_TIMEOUT = 15
+        GET_FITS_TIMEOUT = 30
         start_time = time.time()
 
         basename = basename.replace('-large', '').replace('-small', '')

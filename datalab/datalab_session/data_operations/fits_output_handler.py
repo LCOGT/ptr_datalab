@@ -51,8 +51,8 @@ class FITSOutputHandler():
     
     Args:
       index (int): Adds an index to the FITS file name for multiple outputs
-      large_jpg (str): existing jpg, used in RGB stack
-      small_jpg (str): existing jpg, used in RGB stack
+      large_jpg (str): existing jpg, used in Color Image
+      small_jpg (str): existing jpg, used in Color Image
       tif_path (str): optional tif file
     Returns:
       Datalab output dictionary that is formatted to be readable by the frontend

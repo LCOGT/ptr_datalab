@@ -6,7 +6,7 @@ from pathlib import Path
 
 from astropy.io import fits
 import numpy as np
-from fits2image.conversions import fits_to_jpg, fits_to_img
+from fits2image.conversions import fits_to_jpg, fits_to_img, multi_fits_to_img
 
 from datalab import settings
 from datalab.datalab_session.exceptions import ClientAlertException
@@ -89,6 +89,36 @@ def create_jpgs(fits_paths: str, large_jpg_path, thumbnail_jpg_path, color=False
 
   fits_to_jpg(fits_paths, large_jpg_path, width=max_width, height=max_height, color=color, zmin=zmin, zmax=zmax)
   fits_to_jpg(fits_paths, thumbnail_jpg_path, color=color, zmin=zmin, zmax=zmax)
+
+
+def get_input_dimensions(input_dict):
+  """
+    Get max width/height for the set of fits input dicts for the multi_fits_to_img function
+  """
+  if input_dict.get('fits_path'):
+    return get_fits_dimensions(input_dict['fits_path'])
+  else:
+    return input_dict['fits_data'].shape
+
+
+def create_composite_jpgs(input_dicts: dict, large_jpg_path: str, thumbnail_jpg_path: str):
+  """
+    Converts FITS images to color JPEG images.
+  """
+  max_height, max_width = max(get_input_dimensions(input_dict) for input_dict in input_dicts)
+
+  multi_fits_to_img(input_dicts, large_jpg_path, width=max_width, height=max_height, file_type='jpeg')
+  multi_fits_to_img(input_dicts, thumbnail_jpg_path, width=200, height=200, file_type='jpeg')
+
+
+def create_composite_tif(input_dicts: dict, tif_path: str):
+  """
+    Converts FITS images to color TIFF images.
+  """
+  max_height, max_width = max(get_input_dimensions(input_dict) for input_dict in input_dicts)
+
+  multi_fits_to_img(input_dicts, tif_path, width=max_width, height=max_height, file_type='tiff')
+
 
 def create_tif(fits_paths: np.ndarray, tif_path, color=False, zmin=None, zmax=None) -> str:
   """

@@ -1,9 +1,11 @@
 import logging
 import requests
+from retrying import retry
 import os
 import urllib.request
 
 import boto3
+from botocore.client import Config
 from botocore.exceptions import ClientError
 
 from ocs_authentication.auth_profile.models import AuthProfile
@@ -15,6 +17,8 @@ from datalab.datalab_session.exceptions import ClientAlertException
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
+config = Config(connect_timeout=10, retries={'mode': 'standard', 'total_max_attempts': 12})
+
 
 def add_file_to_bucket(item_key: str, path: object) -> str:
   """
@@ -27,7 +31,7 @@ def add_file_to_bucket(item_key: str, path: object) -> str:
   Returns:
     A presigned url for the object just added to the bucket
   """
-  s3 = boto3.client('s3')
+  s3 = boto3.client('s3', config=config)
   try:
     response = s3.upload_file(
       path,
@@ -50,7 +54,7 @@ def get_s3_url(key: str, bucket: str = settings.DATALAB_OPERATION_BUCKET) -> str
   Returns:
     A presigned url for the object or None
   """
-  s3 = boto3.client('s3')
+  s3 = boto3.client('s3', config=config)
 
   try:
     url = s3.generate_presigned_url(
@@ -67,6 +71,7 @@ def get_s3_url(key: str, bucket: str = settings.DATALAB_OPERATION_BUCKET) -> str
 
   return url
 
+
 def key_exists(key: str) -> bool:
   """
   Checks if a given string exists as part of an object key in an S3 bucket.
@@ -78,9 +83,19 @@ def key_exists(key: str) -> bool:
   Returns:
     bool: True if at least one object key contains the given prefix, False otherwise.
   """
-  s3 = boto3.client('s3')
-  response = s3.list_objects_v2(Bucket=settings.DATALAB_OPERATION_BUCKET, Prefix=key, MaxKeys=1)
-  return 'Contents' in response
+  s3 = boto3.client('s3', config=config)
+  try:
+    s3.head_object(Bucket=settings.DATALAB_OPERATION_BUCKET, Key=key)
+    return True
+  except ClientError as e:
+    if e.response['Error']['Code'] == "404":
+      log.warning(f"key {key} not found in s3 bucket")
+    elif e.response['Error']['Code'] == 403:
+      log.warning(f"invalid permissions for key {key} in s3 bucket")
+    else:
+      log.error(f"Failed to search for {key} in s3 bucket: {repr(e)}")
+    return False
+
 
 def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API, user: User = User.objects.none) -> dict:
   """
@@ -121,6 +136,7 @@ def get_archive_url(basename: str, archive: str = settings.ARCHIVE_API, user: Us
   fits_url = results[0].get('url', 'No URL found')
   return fits_url
 
+@retry(stop_max_attempt_number=12, wait_fixed=5000)
 def download_fits(file_path: str, basename: str, source: str = 'archive', user: User = User.objects.none):
   if not os.path.isfile(file_path):
     # create the tmp directory if it doesn't exist
@@ -139,6 +155,7 @@ def download_fits(file_path: str, basename: str, source: str = 'archive', user: 
     urllib.request.urlretrieve(fits_url, file_path)
     return True
   return False
+
 
 def save_files_to_s3(cache_key, format, file_paths: dict, index=None):
   """
