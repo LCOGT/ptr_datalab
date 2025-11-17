@@ -67,10 +67,11 @@ def variable_star(input: dict, user: User):
       'mag': mag,
       'magerr': magerr,
       'julian_date': Time(image.get("observation_date")).jd,
+      'observation_date': image.get("observation_date")
     })
   
   try:
-    period, fap = calculate_period(light_curve)
+    frequency, power, period, fap = calculate_period(light_curve)
   except Exception as e:
     log.error(f"Error calculating period: {e}")
     period, fap = 0, 0
@@ -82,6 +83,8 @@ def variable_star(input: dict, user: User):
     'excluded_images': excluded_images,
     'period': period,
     'fap': fap,
+    'frequency': frequency,
+    'power': power
   }
 
 def find_target_source(cat_hdu, target_ra, target_dec):
@@ -91,12 +94,17 @@ def find_target_source(cat_hdu, target_ra, target_dec):
   cat_data = cat_hdu.data
   MATCH_PRECISION = 0.001
 
+  if 'ra' not in cat_data.names or 'dec' not in cat_data.names:
+    log.warning("CAT data does not have ra or dec names!")
+    return None
   for source in cat_data:
     target_ra = float(target_ra)
     target_dec = float(target_dec)
 
     if abs(source['ra'] - target_ra) <= MATCH_PRECISION and abs(source['dec'] - target_dec) <= MATCH_PRECISION:
       return source
+
+  return None
 
 def flux_to_mag(flux, fluxerr):
   """
@@ -132,4 +140,4 @@ def calculate_period(light_curve):
   fap = ls.false_alarm_probability(power.max())
 
   log.info(f"Best period found: {period} days with FAP: {fap}")
-  return period, fap
+  return frequency, power, period, fap
