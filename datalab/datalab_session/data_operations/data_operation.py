@@ -123,8 +123,11 @@ class BaseDataOperation(ABC):
     def get_operation_progress(self) -> float:
         return cache.get(f'operation_{self.cache_key}_progress', 0.0)
 
-    def set_output(self, output):
-        output_data = {'output_files': output if isinstance(output, list) else [output]}
+    def set_output(self, output, is_raw=False):
+        if is_raw:
+            output_data = output
+        else:
+            output_data = {'output_files': output if isinstance(output, list) else [output]}
         cache.set(f'operation_{self.cache_key}_output', output_data, CACHE_DURATION)
 
     def get_output(self) -> dict:
