@@ -35,6 +35,7 @@ class FITSOutputHandler():
       self.primary_hdu = fits.PrimaryHDU(header=fits.Header([('DLAB_KEY', cache_key)]))
       self.image_hdu = fits.CompImageHDU(data=data, header=data_header, name='SCI')
       self.dir = dir
+      print(f"[DEBUG] Initializing FITSOutputHandler with header: {data_header}")
 
       if comment: self.set_comment(comment)
 
@@ -45,7 +46,8 @@ class FITSOutputHandler():
     """Add a comment to the FITS file."""
     self.primary_hdu.header.add_comment(comment)
   
-  def create_and_save_data_products(self, format, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None):
+  ## add arg: header and call copy wcs method
+  def create_and_save_data_products(self, format, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None, header: str=None):
     """
     When you're done with the operation and would like to save the FITS file and jpgs in S3. JPGs are required, any other file is optional.
     
@@ -54,9 +56,12 @@ class FITSOutputHandler():
       large_jpg (str): existing jpg, used in Color Image
       small_jpg (str): existing jpg, used in Color Image
       tif_path (str): optional tif file
+      header (str): optional header to copy WCS from
     Returns:
       Datalab output dictionary that is formatted to be readable by the frontend
     """
+    print(f"[DEBUG] Creating and saving data products. Header argument: {header}")
+    print(f"TEST HELLO")
     file_paths = {}
     hdu_list = fits.HDUList([self.primary_hdu, self.image_hdu])
     file_name = f'{self.datalab_id}-{index}' if index else f'{self.datalab_id}'
@@ -65,6 +70,8 @@ class FITSOutputHandler():
       # Create the output FITS file
       fits_output_path = fits_output_file.name
       hdu_list.writeto(fits_output_path, overwrite=True)
+      # self.copy_wcs_from_valid_input(header)
+
       FileCache().add_file_to_cache(fits_output_path)
 
       # Create jpgs if not provided
@@ -80,3 +87,14 @@ class FITSOutputHandler():
         file_paths['fits_path'] = fits_output_path
 
         return save_files_to_s3(self.datalab_id, format, file_paths, index)
+
+## add arg: header (replace source_fits_path)
+  def copy_wcs_from_valid_input(self, input_header):
+      """Copy WCS header from the SCI extension of another FITS file to this FITS file's image HDU."""
+      wcs_keys = ['CRVAL1', 'CRVAL2', 'CRPIX1', 'CRPIX2', 'CD1_1', 'CD1_2', 'CD2_1', 'CD2_2']
+      print(f"[DEBUG] Copying WCS from input header: {input_header}")
+      ## input header is now the arg and the method that im passing to inputfitshandler is returning this arg
+      for key in wcs_keys:
+          if key in input_header:
+              print(f"[DEBUG] Copying {key}: {input_header[key]}")
+              self.image_hdu.header[key] = input_header[key]
