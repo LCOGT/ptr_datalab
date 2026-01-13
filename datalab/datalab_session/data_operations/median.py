@@ -66,9 +66,7 @@ The output is a median image for the n input images. This operation is commonly 
         median = np.reshape(median, shape)
 
         self.set_operation_progress(Median.PROGRESS_STEPS['MEDIAN_CALCULATION_PERCENTAGE_COMPLETION'])
-        ## when calling create and save, pass the header template
-        header_template = input_fits_list[0].get_header()
-        output = FITSOutputHandler(self.cache_key, median, self.temp, comment, data_header=input_fits_list[0].sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, header=header_template)
+        output = FITSOutputHandler(self.cache_key, median, self.temp, comment, data_header=input_fits_list[0].sci_hdu.header.copy()).create_and_save_data_products(Format.FITS)
         log.info(f'Median output: {output}')
         self.set_output(output)
         self.set_operation_progress(Median.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])

@@ -52,11 +52,3 @@ class InputDataHandler():
       extension (str): The extension to return from the FITS file. Default is 'SCI'.
     """
     return get_hdu(self.fits_file, extension)
-  
-  def get_header(self):
-    """Return the header from an HDU in the FITS file.
-    
-    Args:
-      extension (str): The extension to return the header from. Default is 'SCI'.
-    """
-    return self.sci_hdu.header

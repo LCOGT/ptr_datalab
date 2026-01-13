@@ -49,7 +49,7 @@ class FITSOutputHandler():
     self.primary_hdu.header.add_comment(comment)
   
   ## add arg: header and call copy wcs method
-  def create_and_save_data_products(self, format, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None, header: str=None):
+  def create_and_save_data_products(self, format, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None):
     """
     When you're done with the operation and would like to save the FITS file and jpgs in S3. JPGs are required, any other file is optional.
     
@@ -62,7 +62,6 @@ class FITSOutputHandler():
     Returns:
       Datalab output dictionary that is formatted to be readable by the frontend
     """
-    log.info(f"[DEBUG] Creating and saving data products. Header argument: {header}")
     file_paths = {}
     hdu_list = fits.HDUList([self.primary_hdu, self.image_hdu])
     file_name = f'{self.datalab_id}-{index}' if index else f'{self.datalab_id}'
