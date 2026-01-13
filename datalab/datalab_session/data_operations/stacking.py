@@ -61,16 +61,18 @@ The output is a stacked image for the n input images. This operation is commonly
 
         input_fits_list = []
         for index, input in enumerate(input_files, start=1):
+            log.info(f'this is index: {index}' f'and input: {input}')
             input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
+            log.info(f'input fits list in normalization: {input_fits_list}')
             self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_MIDPOINT'] * (index / len(input_files)))
 
         cropped_data, _ = crop_arrays([image.sci_data for image in input_fits_list])
         self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_PERCENTAGE_COMPLETION'])
-
         stacked_sum = np.sum(cropped_data, axis=0)
         self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_OUTPUT_PERCENTAGE_COMPLETION'])
+        header_template = input_fits_list[0].get_header()
 
-        output = FITSOutputHandler(self.cache_key, stacked_sum, self.temp, comment).create_and_save_data_products(Format.FITS)
+        output = FITSOutputHandler(self.cache_key, stacked_sum, self.temp, comment, data_header=input_fits_list[0].sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, header=header_template)
 
         log.info(f'Stacked output: {output}')
         self.set_output(output)
