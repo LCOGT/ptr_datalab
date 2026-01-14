@@ -57,7 +57,7 @@ class Color_Image(BaseDataOperation):
             input_handlers.append(InputDataHandler(submitter, input['basename'], input['source']))
             self.set_operation_progress(self.PROGRESS_STEPS['INPUT_PROCESSING'] * (index / len(color_input_list)))
 
-        # Attempt to do the image ment here
+        # Attempt to do the image alignment here
         fits_files = [handler.fits_file for handler in input_handlers]
 
         try:

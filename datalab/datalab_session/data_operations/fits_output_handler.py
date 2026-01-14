@@ -58,7 +58,6 @@ class FITSOutputHandler():
       large_jpg (str): existing jpg, used in Color Image
       small_jpg (str): existing jpg, used in Color Image
       tif_path (str): optional tif file
-      header (str): optional header to copy WCS from
     Returns:
       Datalab output dictionary that is formatted to be readable by the frontend
     """
