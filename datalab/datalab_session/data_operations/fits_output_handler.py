@@ -2,12 +2,14 @@ import tempfile
 import os
 import numpy as np
 from astropy.io import fits
+import logging
 
 from datalab.datalab_session.utils.file_utils import create_jpgs, temp_file_manager
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 from datalab.datalab_session.utils.filecache import FileCache
 
-
+log = logging.getLogger()
+log.setLevel(logging.INFO)
 class FITSOutputHandler():
   """A class to handle FITS output files and create jpgs.
   
@@ -35,6 +37,7 @@ class FITSOutputHandler():
       self.primary_hdu = fits.PrimaryHDU(header=fits.Header([('DLAB_KEY', cache_key)]))
       self.image_hdu = fits.CompImageHDU(data=data, header=data_header, name='SCI')
       self.dir = dir
+      log.info(f"[DEBUG] Initializing FITSOutputHandler with header: {data_header}")
 
       if comment: self.set_comment(comment)
 
@@ -45,6 +48,7 @@ class FITSOutputHandler():
     """Add a comment to the FITS file."""
     self.primary_hdu.header.add_comment(comment)
   
+  ## add arg: header and call copy wcs method
   def create_and_save_data_products(self, format, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None):
     """
     When you're done with the operation and would like to save the FITS file and jpgs in S3. JPGs are required, any other file is optional.
@@ -65,6 +69,7 @@ class FITSOutputHandler():
       # Create the output FITS file
       fits_output_path = fits_output_file.name
       hdu_list.writeto(fits_output_path, overwrite=True)
+
       FileCache().add_file_to_cache(fits_output_path)
 
       # Create jpgs if not provided
