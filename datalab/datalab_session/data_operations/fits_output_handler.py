@@ -2,14 +2,10 @@ import tempfile
 import os
 import numpy as np
 from astropy.io import fits
-import logging
-
 from datalab.datalab_session.utils.file_utils import create_jpgs, temp_file_manager
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 from datalab.datalab_session.utils.filecache import FileCache
 
-log = logging.getLogger()
-log.setLevel(logging.INFO)
 class FITSOutputHandler():
   """A class to handle FITS output files and create jpgs.
   
@@ -37,7 +33,6 @@ class FITSOutputHandler():
       self.primary_hdu = fits.PrimaryHDU(header=fits.Header([('DLAB_KEY', cache_key)]))
       self.image_hdu = fits.CompImageHDU(data=data, header=data_header, name='SCI')
       self.dir = dir
-      log.info(f"[DEBUG] Initializing FITSOutputHandler with header: {data_header}")
 
       if comment: self.set_comment(comment)
 
