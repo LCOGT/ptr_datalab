@@ -62,7 +62,6 @@ The output is a normalized image. This operation is commonly used as a precursor
                 median = np.median(image.sci_data)
                 normalized_image = image.sci_data / median
                 comment = f'Datalab Normalization on file {input_list[index-1]["basename"]}'
-
                 output = FITSOutputHandler(f'{self.cache_key}', normalized_image, self.temp, comment, data_header=image.sci_hdu.header.copy()).create_and_save_data_products(Format.FITS, index=index)
                 output_files.append(output)
                 self.set_output(output_files)
