@@ -56,7 +56,6 @@ The output is a median image for the n input images. This operation is commonly 
 
         input_fits_list = []
         for index, input in enumerate(input_list, start=1):
-            ## Add method to inputdatahandler to get the header 
             input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
             log.info(f'input fits list: {input_fits_list}')
             self.set_operation_progress(Median.PROGRESS_STEPS['MEDIAN_MIDPOINT'] * (index / len(input_list)))
