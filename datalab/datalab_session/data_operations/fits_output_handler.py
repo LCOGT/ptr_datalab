@@ -43,7 +43,6 @@ class FITSOutputHandler():
     """Add a comment to the FITS file."""
     self.primary_hdu.header.add_comment(comment)
   
-  ## add arg: header and call copy wcs method
   def create_and_save_data_products(self, format, index: int=None, large_jpg_path: str=None, small_jpg_path: str=None, tif_path: str=None):
     """
     When you're done with the operation and would like to save the FITS file and jpgs in S3. JPGs are required, any other file is optional.
