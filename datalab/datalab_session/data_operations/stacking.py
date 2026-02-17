@@ -9,6 +9,10 @@ from datalab.datalab_session.data_operations.data_operation import BaseDataOpera
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.format import Format
 from datalab.datalab_session.utils.file_utils import crop_arrays
+from reproject import reproject_adaptive
+from astropy.io import fits
+from reproject.mosaicking import find_optimal_celestial_wcs
+from astropy.wcs import WCS
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -46,12 +50,212 @@ The output is a stacked image for the n input images. This operation is commonly
                     'type': Format.FITS,
                     'minimum': Stack.MINIMUM_NUMBER_OF_INPUTS,
                     'maximum': Stack.MAXIMUM_NUMBER_OF_INPUTS,
+                },
+                'stacking_mode': {
+                    'name': 'Stacking Mode',
+                    'description': 'Choose simple stacking or reprojection before stacking',
+                    'type': 'select',
+                    'options': ['simple', 'reproject'],
+                    'default': 'simple'
                 }
             }
         }
         return description
+    
+    def find_optimal_reference(self, images):
+        """
+        images: list of InputDataHandler
+        returns: filepath to optimal reference FITS
+        """
+
+        image_hdus = []
+        hdulists = []
+        try:
+            for img in images:
+                hdul = fits.open(img.fits_file, memmap=True)
+                hdulists.append(hdul)
+                ## idx is the index of the first HDU with data, which is what we want to use for WCS reprojection
+                idx = next((i for i,h in enumerate(hdul) if getattr(h, "data", None) is not None), None)
+                if idx is None:
+                    ## improve this error
+                    raise RuntimeError(f"No image HDU found in {img.fits_file}")
+                image_hdus.append(hdul[idx])
+
+            wcs_opt, shape_out = find_optimal_celestial_wcs(image_hdus)
+            return wcs_opt, shape_out
+        
+        finally:
+            for hdulist in hdulists:
+                try:
+                    hdulist.close()
+                except Exception:
+                    pass
+
+    def crop_bbox_from_footprint(self, footprint: np.ndarray):
+        """
+        Return a bbox (r0,r1,c0,c1) such that the bbox edges contain no invalid pixels.
+        footprint: 2D array where non-zero means covered.
+        """
+        mask = footprint != 0
+        if not mask.any():
+            raise ValueError("Empty footprint")
+
+        # start with the loose envelope (any valid somewhere)
+        rows = np.where(mask.any(axis=1))[0]
+        cols = np.where(mask.any(axis=0))[0]
+        r0, r1 = rows[0], rows[-1] + 1
+        c0, c1 = cols[0], cols[-1] + 1
+
+        # now shrink until the *edges* are fully valid
+        while True:
+            changed = False
+
+            # top edge
+            if r0 < r1 and not mask[r0, c0:c1].all():
+                r0 += 1
+                changed = True
+
+            # bottom edge
+            if r0 < r1 and not mask[r1 - 1, c0:c1].all():
+                r1 -= 1
+                changed = True
+
+            # left edge
+            if c0 < c1 and not mask[r0:r1, c0].all():
+                c0 += 1
+                changed = True
+
+            # right edge
+            if c0 < c1 and not mask[r0:r1, c1 - 1].all():
+                c1 -= 1
+                changed = True
+
+            if r0 >= r1 or c0 >= c1:
+                raise ValueError("No rectangular region without invalid pixels on the edges")
+
+            if not changed:
+                break
+
+        log.info(f'crop bbox from footprint (shrunk): {r0}, {r1}, {c0}, {c1}')
+        return r0, r1, c0, c1
+    
+    def intersect_bboxes(self, bboxes):
+        """
+        bboxes: iterable of (r0,r1,c0,c1). Returns intersection bbox.
+        """
+        r0 = max(b[0] for b in bboxes)
+        r1 = min(b[1] for b in bboxes)
+        c0 = max(b[2] for b in bboxes)
+        c1 = min(b[3] for b in bboxes)
+        if r0 >= r1 or c0 >= c1:
+            raise ValueError("No overlapping valid region across images")
+        log.info(f'intersection bbox: {r0}, {r1}, {c0}, {c1}')
+        return r0, r1, c0, c1
+
+    def _common_valid_mask(self, images, footprints):
+        """
+        Return boolean mask (shape HxW) that's True where FOR ALL images:
+        - footprint indicates valid (non-zero)
+        - image value is finite
+        """
+        if len(images) != len(footprints):
+            raise ValueError("images and footprints must match")
+        masks = []
+        for im, fp in zip(images, footprints):
+            # footprint may be float (fractional coverage). treat >0 as valid.
+            masks.append((fp != 0) & np.isfinite(im))
+        common = np.logical_and.reduce(masks)
+        return common
+
+    def _shrink_bbox_to_all_valid(self, mask, bbox):
+        """
+        Starting from bbox = (r0,r1,c0,c1), shrink edges inward while any pixel
+        on that edge is False in mask. Stops when the sub-rect is all True or
+        becomes empty (raises).
+        """
+        r0, r1, c0, c1 = bbox
+        # sanity
+        if r0 < 0 or c0 < 0 or r1 > mask.shape[0] or c1 > mask.shape[1]:
+            raise ValueError("bbox out of bounds")
+
+        # shrink top
+        while r0 < r1:
+            if mask[r0, c0:c1].all():
+                break
+            r0 += 1
+
+        # shrink bottom
+        while r1 > r0:
+            if mask[r1 - 1, c0:c1].all():
+                break
+            r1 -= 1
+
+        # shrink left
+        while c0 < c1:
+            if mask[r0:r1, c0].all():
+                break
+            c0 += 1
+
+        # shrink right
+        while c1 > c0:
+            if mask[r0:r1, c1 - 1].all():
+                break
+            c1 -= 1
+
+        if r0 >= r1 or c0 >= c1:
+            raise ValueError("No rectangular region without holes after shrinking")
+
+        return r0, r1, c0, c1
+
+    def crop(self, img, bbox):
+        r0, r1, c0, c1 = bbox
+        return np.ascontiguousarray(img[r0:r1, c0:c1])
+
+    def prepare_for_sum(self, images, footprints):
+        """
+        images: list of 2D float arrays (len=3)
+        footprints: list of 2D {0,1} arrays (len=3)
+        Returns: cropped_images, common_bbox
+        """
+
+
+        per_bbox = [self.crop_bbox_from_footprint(fp) for fp in footprints]
+        common_bbox = self.intersect_bboxes(per_bbox)
+        cropped = [self.crop(im, common_bbox) for im in images]
+
+        for i, imc in enumerate(cropped):
+            if not np.isfinite(imc).all():
+            # This means there are NaNs inside the intersection region (not just edges).
+                log.info(f"Image {i} still contains NaNs after cropping; NaNs are not only on edges.")
+
+
+        log.info(f'cropped: {cropped[0].shape}, common_bbox: {common_bbox}')
+        return cropped, common_bbox
+
+    def reproject_images_to_reference(self, input_fits, optimized_wcs, optimized_shape):
+        """
+        images: list of InputDataHandler
+        returns: list of numpy arrays, all in same WCS/shape
+        """
+        reprojected_arrays = []
+        footprints = []
+        for img in input_fits:
+            array, footprint = reproject_adaptive(
+                img.sci_hdu,
+                optimized_wcs,
+                shape_out=optimized_shape,
+                return_footprint=True,
+                conserve_flux=True,
+                bad_value_mode='ignore',
+                boundary_mode='ignore'
+            )
+            reprojected_arrays.append(array)
+            footprints.append(footprint)
+
+        return reprojected_arrays, footprints
 
     def operate(self, submitter: User):
+        stacking_mode = self.input_data.get("stacking_mode")
         input_files = self._validate_inputs(
             input_key='input_files',
             minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS
@@ -64,15 +268,29 @@ The output is a stacked image for the n input images. This operation is commonly
             input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
             self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_MIDPOINT'] * (index / len(input_files)))
 
-        cropped_data, _ = crop_arrays([image.sci_data for image in input_fits_list])
-        self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_PERCENTAGE_COMPLETION'])
+        if stacking_mode == "reproject":
+            optimized_wcs, optimized_shape = self.find_optimal_reference(input_fits_list)
+            arrays, footprints = self.reproject_images_to_reference(input_fits_list, optimized_wcs, optimized_shape)
+            cropped_data, _ = self.prepare_for_sum(arrays, footprints)
 
-        stacked_sum = np.sum(cropped_data, axis=0)
+            optimized_header = optimized_wcs.to_header()
+            header = input_fits_list[0].sci_hdu.header.copy()
+            header.update(optimized_header)
+
+        else:
+            arrays = [image.sci_data for image in input_fits_list]
+            cropped_data, _ = crop_arrays(arrays)
+            header = input_fits_list[0].sci_hdu.header.copy()
+
+        self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_PERCENTAGE_COMPLETION'])
+        
+        stacked_sum = np.sum(np.stack([np.nan_to_num(a, nan=0.0) for a in cropped_data]), axis=0)
+
         self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_OUTPUT_PERCENTAGE_COMPLETION'])
 
-        output = FITSOutputHandler(self.cache_key, stacked_sum, self.temp, comment).create_and_save_data_products(Format.FITS)
-
+        output = FITSOutputHandler(self.cache_key, stacked_sum, self.temp, comment, data_header=header).create_and_save_data_products(Format.FITS)
         log.info(f'Stacked output: {output}')
+
         self.set_output(output)
         self.set_operation_progress(Stack.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])
         self.set_status('COMPLETED')
