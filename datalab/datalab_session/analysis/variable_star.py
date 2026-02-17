@@ -45,7 +45,6 @@ def variable_star(input: dict, user: User):
       continue
 
     target_source = find_target_source(cat_hdu, target_ra, target_dec)
-
     if target_source is None:
       log.info(f"No source found matching target coordinates: RA={target_ra}, DEC={target_dec} in image {basename}")
       excluded_images.append(basename)
@@ -53,10 +52,12 @@ def variable_star(input: dict, user: User):
 
     try:
       mag = target_source['mag']
+      print(f'mag: {mag}')
       magerr = target_source['magerr']
     except KeyError as e:
       # If mag or magerr is not present, fallback convert flux to mag
       mag, magerr = flux_to_mag(target_source['flux'], target_source['fluxerr'])
+      print(f'flux mag: {mag}')
       flux_fallback = True
     except Exception as e:
       log.warning(f"Invalid magnitude or magnitude error for target in image {basename}")
@@ -69,6 +70,7 @@ def variable_star(input: dict, user: User):
       'julian_date': Time(image.get("observation_date")).jd,
       'observation_date': image.get("observation_date")
     })
+    print(f'light_curve: {light_curve}')
   
   try:
     frequency, power, period, fap = calculate_period(light_curve)

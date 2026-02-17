@@ -211,6 +211,7 @@ The output is a stacked image for the n input images. This operation is commonly
         input_fits_list = []
         for index, input in enumerate(input_files, start=1):
             input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
+            log.info(f'input fits list in normalization: {input_fits_list}')
             self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_MIDPOINT'] * (index / len(input_files)))
 
         if stacking_mode == "reproject":

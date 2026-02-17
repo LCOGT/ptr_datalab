@@ -2,11 +2,9 @@ import tempfile
 import os
 import numpy as np
 from astropy.io import fits
-
 from datalab.datalab_session.utils.file_utils import create_jpgs, temp_file_manager
 from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 from datalab.datalab_session.utils.filecache import FileCache
-
 
 class FITSOutputHandler():
   """A class to handle FITS output files and create jpgs.
@@ -65,6 +63,7 @@ class FITSOutputHandler():
       # Create the output FITS file
       fits_output_path = fits_output_file.name
       hdu_list.writeto(fits_output_path, overwrite=True)
+
       FileCache().add_file_to_cache(fits_output_path)
 
       # Create jpgs if not provided

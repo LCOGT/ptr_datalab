@@ -57,6 +57,7 @@ The output is a median image for the n input images. This operation is commonly 
         input_fits_list = []
         for index, input in enumerate(input_list, start=1):
             input_fits_list.append(InputDataHandler(submitter, input['basename'], input['source']))
+            log.info(f'input fits list: {input_fits_list}')
             self.set_operation_progress(Median.PROGRESS_STEPS['MEDIAN_MIDPOINT'] * (index / len(input_list)))
 
         cropped_data, shape = crop_arrays([image.sci_data for image in input_fits_list], flatten=True)
@@ -64,8 +65,7 @@ The output is a median image for the n input images. This operation is commonly 
         median = np.reshape(median, shape)
 
         self.set_operation_progress(Median.PROGRESS_STEPS['MEDIAN_CALCULATION_PERCENTAGE_COMPLETION'])
-
-        output = FITSOutputHandler(self.cache_key, median, self.temp, comment).create_and_save_data_products(Format.FITS)
+        output = FITSOutputHandler(self.cache_key, median, self.temp, comment, data_header=input_fits_list[0].sci_hdu.header.copy()).create_and_save_data_products(Format.FITS)
         log.info(f'Median output: {output}')
         self.set_output(output)
         self.set_operation_progress(Median.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])
