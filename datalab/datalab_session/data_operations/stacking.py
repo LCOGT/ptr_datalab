@@ -151,62 +151,7 @@ The output is a stacked image for the n input images. This operation is commonly
             raise ValueError("No overlapping valid region across images")
         log.info(f'intersection bbox: {r0}, {r1}, {c0}, {c1}')
         return r0, r1, c0, c1
-
-    def _common_valid_mask(self, images, footprints):
-        """
-        Return boolean mask (shape HxW) that's True where FOR ALL images:
-        - footprint indicates valid (non-zero)
-        - image value is finite
-        """
-        if len(images) != len(footprints):
-            raise ValueError("images and footprints must match")
-        masks = []
-        for im, fp in zip(images, footprints):
-            # footprint may be float (fractional coverage). treat >0 as valid.
-            masks.append((fp != 0) & np.isfinite(im))
-        common = np.logical_and.reduce(masks)
-        return common
-
-    def _shrink_bbox_to_all_valid(self, mask, bbox):
-        """
-        Starting from bbox = (r0,r1,c0,c1), shrink edges inward while any pixel
-        on that edge is False in mask. Stops when the sub-rect is all True or
-        becomes empty (raises).
-        """
-        r0, r1, c0, c1 = bbox
-        # sanity
-        if r0 < 0 or c0 < 0 or r1 > mask.shape[0] or c1 > mask.shape[1]:
-            raise ValueError("bbox out of bounds")
-
-        # shrink top
-        while r0 < r1:
-            if mask[r0, c0:c1].all():
-                break
-            r0 += 1
-
-        # shrink bottom
-        while r1 > r0:
-            if mask[r1 - 1, c0:c1].all():
-                break
-            r1 -= 1
-
-        # shrink left
-        while c0 < c1:
-            if mask[r0:r1, c0].all():
-                break
-            c0 += 1
-
-        # shrink right
-        while c1 > c0:
-            if mask[r0:r1, c1 - 1].all():
-                break
-            c1 -= 1
-
-        if r0 >= r1 or c0 >= c1:
-            raise ValueError("No rectangular region without holes after shrinking")
-
-        return r0, r1, c0, c1
-
+    
     def crop(self, img, bbox):
         r0, r1, c0, c1 = bbox
         return np.ascontiguousarray(img[r0:r1, c0:c1])
