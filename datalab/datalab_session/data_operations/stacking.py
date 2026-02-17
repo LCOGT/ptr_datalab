@@ -65,7 +65,7 @@ The output is a stacked image for the n input images. This operation is commonly
     def find_optimal_reference(self, images):
         """
         images: list of InputDataHandler
-        returns: filepath to optimal reference FITS
+        returns: optimized_wcs, optimized_shape
         """
 
         image_hdus = []
@@ -77,7 +77,6 @@ The output is a stacked image for the n input images. This operation is commonly
                 ## idx is the index of the first HDU with data, which is what we want to use for WCS reprojection
                 idx = next((i for i,h in enumerate(hdul) if getattr(h, "data", None) is not None), None)
                 if idx is None:
-                    ## improve this error
                     raise RuntimeError(f"No image HDU found in {img.fits_file}")
                 image_hdus.append(hdul[idx])
 
