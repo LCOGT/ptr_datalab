@@ -229,7 +229,7 @@ The output is a stacked image for the n input images. This operation is commonly
 
         self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_PERCENTAGE_COMPLETION'])
         
-        stacked_sum = np.sum(np.stack([np.nan_to_num(a, nan=0.0) for a in cropped_data]), axis=0)
+        stacked_sum = np.nansum(np.stack(cropped_data), axis=0)
 
         self.set_operation_progress(Stack.PROGRESS_STEPS['STACKING_OUTPUT_PERCENTAGE_COMPLETION'])
 
