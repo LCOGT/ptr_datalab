@@ -6,7 +6,7 @@ authors = ["Jon <jnation@lco.global>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<4.0"
+python = ">=3.11,<4.0"
 Django = "^4.2.7"
 djangorestframework = "^3.14.0"
 django-filter = "^23.3.0"
@@ -33,6 +33,7 @@ requests = "^2.32.3"
 aiohttp = "^3.12.2"
 retrying = "^1.4.2"
 dramatiq = "<2.0"
+reproject = "^0.19.0"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.4.3"
