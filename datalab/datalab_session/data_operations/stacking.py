@@ -89,7 +89,8 @@ The output is a stacked image for the n input images. This operation is commonly
         c0, c1 = cols[0], cols[-1] + 1
 
         # now shrink until the *edges* are fully valid
-        while True:
+        changed = True
+        while changed:
             changed = False
 
             # top edge
