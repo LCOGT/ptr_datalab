@@ -171,9 +171,7 @@ The output is a stacked image for the n input images. This operation is commonly
                 optimized_wcs,
                 shape_out=optimized_shape,
                 return_footprint=True,
-                conserve_flux=True,
-                bad_value_mode='ignore',
-                boundary_mode='ignore'
+                conserve_flux=True
             )
             reprojected_arrays.append(array)
             footprints.append(footprint)
