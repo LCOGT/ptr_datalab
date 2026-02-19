@@ -68,27 +68,10 @@ The output is a stacked image for the n input images. This operation is commonly
         returns: optimized_wcs, optimized_shape
         """
 
-        image_hdus = []
-        hdulists = []
-        try:
-            for img in images:
-                hdul = fits.open(img.fits_file, memmap=True)
-                hdulists.append(hdul)
-                ## idx is the index of the first HDU with data, which is what we want to use for WCS reprojection
-                idx = next((i for i,h in enumerate(hdul) if getattr(h, "data", None) is not None), None)
-                if idx is None:
-                    raise RuntimeError(f"No image HDU found in {img.fits_file}")
-                image_hdus.append(hdul[idx])
+        image_hdus = [img.sci_hdu for img in images]
 
-            wcs_opt, shape_out = find_optimal_celestial_wcs(image_hdus)
-            return wcs_opt, shape_out
-        
-        finally:
-            for hdulist in hdulists:
-                try:
-                    hdulist.close()
-                except Exception:
-                    pass
+        wcs_opt, shape_out = find_optimal_celestial_wcs(image_hdus)
+        return wcs_opt, shape_out
 
     def crop_bbox_from_footprint(self, footprint: np.ndarray):
         """
@@ -167,19 +150,18 @@ The output is a stacked image for the n input images. This operation is commonly
         common_bbox = self.intersect_bboxes(per_bbox)
         cropped = [self.crop(im, common_bbox) for im in images]
 
-        for i, imc in enumerate(cropped):
-            if not np.isfinite(imc).all():
-            # This means there are NaNs inside the intersection region (not just edges).
-                log.info(f"Image {i} still contains NaNs after cropping; NaNs are not only on edges.")
-
-
         log.info(f'cropped: {cropped[0].shape}, common_bbox: {common_bbox}')
         return cropped, common_bbox
 
     def reproject_images_to_reference(self, input_fits, optimized_wcs, optimized_shape):
         """
-        images: list of InputDataHandler
-        returns: list of numpy arrays, all in same WCS/shape
+        input_fits: list of InputDataHandler
+        optimized_wcs: WCS object for the optimal reference frame
+        optimized_shape: (ny, nx) shape 
+
+        returns:
+            reprojected_arrays: list of 2D float arrays reprojected to the optimal reference frame
+            footprints: list of 2D  numpy arrays indicating valid data regions in
         """
         reprojected_arrays = []
         footprints = []
