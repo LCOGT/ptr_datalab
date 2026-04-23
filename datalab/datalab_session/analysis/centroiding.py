@@ -203,7 +203,7 @@ def _background_value(
   )
 
 
-def centroid_like_aij(
+def centroid(
   image: np.ndarray,
   x_click: float,
   y_click: float,
@@ -359,7 +359,7 @@ def centroiding(input: dict, user: 'User'):
     y_points=[input['y']],
   )
 
-  result = centroid_like_aij(
+  result = centroid(
     image,
     x_click=float(x_points[0]),
     y_click=float(y_points[0]),

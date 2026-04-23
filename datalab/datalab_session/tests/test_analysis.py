@@ -53,11 +53,11 @@ class TestAnalysis(TestCase):
 
         self.assertEqual(output, self.test_source_catalog_data)
 
-    def test_centroid_like_aij_finds_pixel_center(self):
+    def test_centroid_finds_pixels_center(self):
         image = np.zeros((21, 21), dtype=float)
         image[10, 10] = 100.0
 
-        result = centroiding.centroid_like_aij(
+        result = centroiding.centroid(
             image,
             x_click=10.0,
             y_click=10.0,
@@ -81,8 +81,7 @@ class TestAnalysis(TestCase):
         fits_image = np.zeros((80, 120), dtype=float)
         fits_image[48, 36] = 1200.0
         mock_get_hdu.return_value = SimpleNamespace(data=fits_image)
-
-        output = centroiding.centroiding({
+        input_data = {
             'basename': 'fits_1',
             'height': 160,
             'width': 240,
@@ -92,7 +91,9 @@ class TestAnalysis(TestCase):
             'r_back1': 4.0,
             'r_back2': 5.0,
             'source': 'archive',
-        }, None)
+        }
+
+        output = centroiding.centroiding(input_data, None)
 
         self.assertTrue(output['success'])
         self.assertAlmostEqual(output['x'], 73.0, places=9)
@@ -104,7 +105,7 @@ class TestAnalysis(TestCase):
 
     @mock.patch('datalab.datalab_session.analysis.centroiding.get_hdu')
     @mock.patch('datalab.datalab_session.analysis.centroiding.FileCache')
-    def test_centroiding_returns_ra_dec_when_wcs_is_available(self, mock_file_cache, mock_get_hdu):
+    def test_centroiding_returns_ra_dec(self, mock_file_cache, mock_get_hdu):
         mock_instance = mock_file_cache.return_value
         mock_instance.get_fits.return_value = self.analysis_fits_1_path
 
@@ -122,8 +123,7 @@ class TestAnalysis(TestCase):
         header['CD2_1'] = 0.0
         header['CD2_2'] = 0.01
         mock_get_hdu.return_value = SimpleNamespace(data=fits_image, header=header)
-
-        output = centroiding.centroiding({
+        input_data = {
             'basename': 'fits_1',
             'height': 160,
             'width': 240,
@@ -133,7 +133,9 @@ class TestAnalysis(TestCase):
             'r_back1': 4.0,
             'r_back2': 5.0,
             'source': 'archive',
-        }, None)
+        }
+
+        output = centroiding.centroiding(input_data, None)
 
         self.assertTrue(output['success'])
         self.assertAlmostEqual(output['x'], 73.0, places=9)

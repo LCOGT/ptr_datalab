@@ -39,26 +39,26 @@ class TestOperationsApi(APITestCase):
         fits_image = np.zeros((80, 120), dtype=float)
         fits_image[48, 36] = 1200.0
         mock_get_hdu.return_value = SimpleNamespace(data=fits_image)
+        data = {
+            'basename': 'fits_1',
+            'height': 160,
+            'width': 240,
+            'x': 72.0,
+            'y': 96.0,
+            'radius': 3.0,
+            'r_back1': 4.0,
+            'r_back2': 5.0,
+            'source': 'archive',
+        }
 
-        response = self.client.post(
-            reverse('analysis', args=('centroiding',)),
-            data={
-                'basename': 'fits_1',
-                'height': 160,
-                'width': 240,
-                'x': 72.0,
-                'y': 96.0,
-                'radius': 3.0,
-                'r_back1': 4.0,
-                'r_back2': 5.0,
-                'source': 'archive',
-            },
-            format='json',
-        )
+        response = self.client.post(reverse('analysis', args=('centroiding',)), data=data, format='json')
+        response_data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()['success'])
-        self.assertAlmostEqual(response.json()['x'], 73.0, places=9)
-        self.assertAlmostEqual(response.json()['y'], 97.0, places=9)
-        self.assertEqual(response.json()['background'], 0.0)
-        self.assertEqual(response.json()['peak'], 1200.0)
+        self.assertTrue(response_data['success'])
+        self.assertAlmostEqual(response_data['x'], 73.0, places=9)
+        self.assertAlmostEqual(response_data['y'], 97.0, places=9)
+        self.assertEqual(response_data['background'], 0.0)
+        self.assertEqual(response_data['peak'], 1200.0)
+        self.assertIsNone(response_data['ra'])
+        self.assertIsNone(response_data['dec'])
