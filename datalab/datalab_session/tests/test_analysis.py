@@ -71,6 +71,7 @@ class TestAnalysis(TestCase):
         self.assertAlmostEqual(result.y, 10.5, places=9)
         self.assertEqual(result.background, 0.0)
         self.assertEqual(result.peak, 100.0)
+        self.assertEqual(result.message, 'Centroid calculation completed.')
 
     @mock.patch('datalab.datalab_session.analysis.centroiding.get_hdu')
     @mock.patch('datalab.datalab_session.analysis.centroiding.FileCache')
@@ -100,6 +101,7 @@ class TestAnalysis(TestCase):
         self.assertAlmostEqual(output['y'], 97.0, places=9)
         self.assertEqual(output['background'], 0.0)
         self.assertEqual(output['peak'], 1200.0)
+        self.assertEqual(output['message'], 'Centroid calculation completed.')
         self.assertIsNone(output['ra'])
         self.assertIsNone(output['dec'])
 
@@ -140,5 +142,36 @@ class TestAnalysis(TestCase):
         self.assertTrue(output['success'])
         self.assertAlmostEqual(output['x'], 73.0, places=9)
         self.assertAlmostEqual(output['y'], 97.0, places=9)
+        self.assertEqual(output['message'], 'Centroid calculation completed.')
         self.assertIsNotNone(output['ra'])
         self.assertIsNotNone(output['dec'])
+
+    def test_centroid_returns_message_when_no_valid_pixels_in_box(self):
+        image = np.full((21, 21), np.nan, dtype=float)
+
+        result = centroiding.centroid(
+            image,
+            x_click=10.0,
+            y_click=10.0,
+            radius=3.0,
+            r_back1=4.0,
+            r_back2=5.0,
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.message, 'No valid pixels in centroid box.')
+
+    def test_centroid_returns_message_when_zero_weight(self):
+        image = np.zeros((21, 21), dtype=float)
+
+        result = centroiding.centroid(
+            image,
+            x_click=10.0,
+            y_click=10.0,
+            radius=3.0,
+            r_back1=4.0,
+            r_back2=5.0,
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.message, 'Centroid calculation has zero weight in both dimensions.')

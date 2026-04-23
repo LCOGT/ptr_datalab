@@ -60,5 +60,6 @@ class TestOperationsApi(APITestCase):
         self.assertAlmostEqual(response_data['y'], 97.0, places=9)
         self.assertEqual(response_data['background'], 0.0)
         self.assertEqual(response_data['peak'], 1200.0)
+        self.assertEqual(response_data['message'], 'Centroid calculation completed.')
         self.assertIsNone(response_data['ra'])
         self.assertIsNone(response_data['dec'])
