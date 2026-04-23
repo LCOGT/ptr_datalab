@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 import math
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,9 @@ from datalab.datalab_session.utils.filecache import FileCache
 if TYPE_CHECKING:
   from django.contrib.auth.models import User
 
+
+log = logging.getLogger()
+log.setLevel(logging.INFO)
 
 PIXELCENTER = 0.5
 
@@ -40,6 +44,7 @@ class CentroidResult:
   background: float
   peak: float
   success: bool = True
+  message: str | None = None
 
 
 def _pixel(image: np.ndarray, x: int, y: int) -> float:
@@ -203,6 +208,17 @@ def _background_value(
   )
 
 
+def _failed_centroid(
+  x: float,
+  y: float,
+  background: float,
+  peak: float,
+  message: str,
+) -> CentroidResult:
+  log.warning(f"Centroiding failed: {message}")
+  return CentroidResult(x, y, background, peak, success=False, message=message)
+
+
 def centroid(
   image: np.ndarray,
   x_click: float,
@@ -256,7 +272,13 @@ def centroid(
           samples += 1
 
     if samples == 0:
-      return CentroidResult(x_start, y_start, background_model.mean, background_model.peak, success=False)
+      return _failed_centroid(
+        x_start,
+        y_start,
+        background_model.mean,
+        background_model.peak,
+        "No valid pixels in centroid box.",
+      )
 
     i_bar = total_signal / (i2 - i1 + 1)
     j_bar = total_signal / (j2 - j1 + 1)
@@ -287,8 +309,30 @@ def centroid(
         weight_j += delta
         y_delta += delta * dj
 
-    if weight_i == 0.0 or weight_j == 0.0:
-      return CentroidResult(x_start, y_start, background_model.mean, background_model.peak, success=False)
+    if weight_i == 0.0 and weight_j == 0.0:
+      return _failed_centroid(
+        x_start,
+        y_start,
+        background_model.mean,
+        background_model.peak,
+        "Centroid calculation has zero weight in both dimensions.",
+      )
+    if weight_i == 0.0:
+      return _failed_centroid(
+        x_start,
+        y_start,
+        background_model.mean,
+        background_model.peak,
+        "Centroid calculation has zero weight in the x dimension.",
+      )
+    if weight_j == 0.0:
+      return _failed_centroid(
+        x_start,
+        y_start,
+        background_model.mean,
+        background_model.peak,
+        "Centroid calculation has zero weight in the y dimension.",
+      )
 
     x_delta /= weight_i
     y_delta /= weight_j
@@ -297,7 +341,13 @@ def centroid(
       abs(x_center + x_delta - x_start) > width
       or abs(y_center + y_delta - y_start) > height
     ):
-      return CentroidResult(x_start, y_start, background_model.mean, background_model.peak, success=False)
+      return _failed_centroid(
+        x_start,
+        y_start,
+        background_model.mean,
+        background_model.peak,
+        "Centroid repositioning exceeded centroid box size.",
+      )
 
     if abs(x_delta) < 0.01 and abs(y_delta) < 0.01:
       still_moving = False
@@ -322,7 +372,13 @@ def centroid(
 
     iteration -= 1
 
-  return CentroidResult(x_center, y_center, background_model.mean, background_model.peak)
+  return CentroidResult(
+    x_center,
+    y_center,
+    background_model.mean,
+    background_model.peak,
+    message="Centroid calculation completed.",
+  )
 
 
 def centroiding(input: dict, user: 'User'):
@@ -348,6 +404,10 @@ def centroiding(input: dict, user: 'User'):
     raise ClientAlertException(f'Error: {e}')
 
   image = np.asarray(sci_hdu.data, dtype=float)
+  if image.ndim != 2:
+    message = f"Centroiding requires a 2D image, received shape {image.shape}."
+    log.error(message)
+    raise ClientAlertException(message)
 
   fits_height, fits_width = image.shape
   x_points, y_points = scale_points(
@@ -390,6 +450,7 @@ def centroiding(input: dict, user: 'User'):
     ra = float(sky_coord.ra.deg)
     dec = float(sky_coord.dec.deg)
   except (AttributeError, IndexError, KeyError, TypeError, ValueError, WcsError):
+    log.info(f"No valid WCS solution for centroiding on {input['basename']}")
     pass
 
   return {
@@ -400,4 +461,5 @@ def centroiding(input: dict, user: 'User'):
     'background': result.background,
     'peak': result.peak,
     'success': result.success,
+    'message': result.message,
   }
