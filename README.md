@@ -167,3 +167,7 @@ Available Operations are introspected from the `data_operations` directory and m
 
 #### Delete Operation from a Datasession
 `DELETE /api/datasessions/datasession_id/operations/operation_id/`
+
+
+### ACKNOWLEDGMENT
+The centroiding logic in this project was adapted from AstroImageJ’s implementation. We appreciate the AstroImageJ project and its contributors for the original work that informed this code.

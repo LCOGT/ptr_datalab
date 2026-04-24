@@ -5,6 +5,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 
 from datalab.datalab_session.data_operations.utils import available_operations
+from datalab.datalab_session.analysis.centroiding import centroiding
 from datalab.datalab_session.analysis.line_profile import line_profile
 from datalab.datalab_session.analysis.source_catalog import source_catalog
 from datalab.datalab_session.analysis.get_tif import get_tif
@@ -32,6 +33,7 @@ class AnalysisView(RetrieveAPIView):
     """ View to handle analysis actions and return the results. """
 
     ACTIONS = {
+        "centroiding": centroiding,
         "line-profile": line_profile,
         "source-catalog": source_catalog,
         "get-tif": get_tif,
