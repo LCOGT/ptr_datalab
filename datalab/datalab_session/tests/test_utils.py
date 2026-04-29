@@ -1,5 +1,6 @@
 from datalab.datalab_session.utils.file_utils import *
 from datalab.datalab_session.utils.s3_utils import *
+from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
 class FileUtilsTestClass(FileExtendedTestCase):
@@ -73,3 +74,13 @@ class FileUtilsTestClass(FileExtendedTestCase):
     # flip y
     scaled_points = scale_points(10, 10, 20, 20, x_points, y_points, flip_y=True)
     self.assertEqual(scaled_points[1].tolist(), [12, 10, 8])
+
+  def test_flux_to_mag(self):
+    mag, magerr = flux_to_mag(100.0, 5.0)
+
+    self.assertAlmostEqual(mag, -5.0)
+    self.assertAlmostEqual(magerr, 0.05428681023790647)
+
+  def test_flux_to_mag_rejects_non_positive_flux(self):
+    self.assertEqual(flux_to_mag(0.0, 5.0), (None, None))
+    self.assertEqual(flux_to_mag(-1.0, 5.0), (None, None))
