@@ -66,9 +66,10 @@ class TestAnalysis(TestCase):
             self.assertIn('magerr', result)
 
         with fits.open(self.analysis_fits_1_path) as hdul:
+            flux = hdul['CAT'].data['flux'][0]
             fluxerr = hdul['CAT'].data['fluxerr'][0]
 
-        expected_mag, expected_magerr = flux_to_mag(output[0]['flux'], fluxerr)
+        expected_mag, expected_magerr = flux_to_mag(flux, fluxerr)
         self.assertAlmostEqual(output[0]['mag'], expected_mag)
         self.assertAlmostEqual(output[0]['magerr'], expected_magerr)
 
