@@ -34,7 +34,8 @@ def source_catalog(input: dict, user: User):
   
   cat_hdu = get_hdu(file_path, 'CAT')
   sci_hdu = get_hdu(file_path, 'SCI')
-
+  print(cat_hdu.columns)
+  print(sci_hdu.data)
   DECIMALS_OF_PRECISION = 6
   MAX_SOURCE_CATALOG_SIZE = min(len(cat_hdu.data["x"]), 1000)
 
@@ -47,6 +48,8 @@ def source_catalog(input: dict, user: User):
   y = cat_hdu.data["y"][:MAX_SOURCE_CATALOG_SIZE]
   flux = cat_hdu.data["flux"][:MAX_SOURCE_CATALOG_SIZE]
   fluxerr = cat_hdu.data["fluxerr"][:MAX_SOURCE_CATALOG_SIZE]
+  mag, magerr = flux_to_mag(flux, fluxerr)
+
   # ra, dec values may or may not be present in the CAT hdu
   if "ra" in cat_hdu.data.names and "dec" in cat_hdu.data.names:
     ra = cat_hdu.data["ra"][:MAX_SOURCE_CATALOG_SIZE]
@@ -64,15 +67,14 @@ def source_catalog(input: dict, user: User):
   # create the list of source catalog objects
   source_catalog_data = []
   for i in range(MAX_SOURCE_CATALOG_SIZE):
-    mag, magerr = flux_to_mag(flux[i], fluxerr[i])
     source_data = {
       "x_win": x_points[i],
       "y_win": y_points[i],
       "x": x[i],
       "y": y[i],
       "flux": flux[i].astype(int),
-      "mag": mag,
-      "magerr": magerr,
+      "mag": mag[i],
+      "magerr": magerr[i],
     }
     if ra is not None and dec is not None:
       source_data["ra"] = f'%.{DECIMALS_OF_PRECISION}f' % (ra[i])

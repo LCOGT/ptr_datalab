@@ -84,3 +84,11 @@ class FileUtilsTestClass(FileExtendedTestCase):
   def test_flux_to_mag_rejects_non_positive_flux(self):
     self.assertEqual(flux_to_mag(0.0, 5.0), (None, None))
     self.assertEqual(flux_to_mag(-1.0, 5.0), (None, None))
+
+  def test_flux_to_mag_supports_arrays(self):
+    mag, magerr = flux_to_mag(np.array([100.0, 0.0]), np.array([5.0, 1.0]))
+
+    self.assertAlmostEqual(mag[0], -5.0)
+    self.assertAlmostEqual(magerr[0], 0.05428681023790647)
+    self.assertTrue(np.isnan(mag[1]))
+    self.assertTrue(np.isnan(magerr[1]))
