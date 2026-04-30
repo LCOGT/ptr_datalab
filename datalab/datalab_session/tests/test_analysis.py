@@ -8,8 +8,6 @@ import numpy as np
 from numpy.testing import assert_almost_equal
 
 from datalab.datalab_session.analysis import centroiding, line_profile, source_catalog
-from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
-
 class TestAnalysis(TestCase):
     analysis_test_path = 'datalab/datalab_session/tests/test_files/analysis/'
     analysis_fits_1_path = f'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
@@ -66,10 +64,9 @@ class TestAnalysis(TestCase):
             self.assertIn('magerr', result)
 
         with fits.open(self.analysis_fits_1_path) as hdul:
-            flux = hdul['CAT'].data['flux'][0]
-            fluxerr = hdul['CAT'].data['fluxerr'][0]
+            expected_mag = hdul['CAT'].data['mag'][0]
+            expected_magerr = hdul['CAT'].data['magerr'][0]
 
-        expected_mag, expected_magerr = flux_to_mag(flux, fluxerr)
         self.assertAlmostEqual(output[0]['mag'], expected_mag)
         self.assertAlmostEqual(output[0]['magerr'], expected_magerr)
 

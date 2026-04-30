@@ -47,7 +47,13 @@ def source_catalog(input: dict, user: User):
   y = cat_hdu.data["y"][:MAX_SOURCE_CATALOG_SIZE]
   flux = cat_hdu.data["flux"][:MAX_SOURCE_CATALOG_SIZE]
   fluxerr = cat_hdu.data["fluxerr"][:MAX_SOURCE_CATALOG_SIZE]
-  mag, magerr = flux_to_mag(flux, fluxerr)
+  flux_fallback = False
+  if "mag" in cat_hdu.data.names and "magerr" in cat_hdu.data.names:
+    mag = cat_hdu.data["mag"][:MAX_SOURCE_CATALOG_SIZE]
+    magerr = cat_hdu.data["magerr"][:MAX_SOURCE_CATALOG_SIZE]
+  else:
+    mag, magerr = flux_to_mag(flux, fluxerr)
+    flux_fallback = True
 
   # ra, dec values may or may not be present in the CAT hdu
   if "ra" in cat_hdu.data.names and "dec" in cat_hdu.data.names:
@@ -74,6 +80,7 @@ def source_catalog(input: dict, user: User):
       "flux": flux[i].astype(int),
       "mag": mag[i],
       "magerr": magerr[i],
+      "flux_fallback": flux_fallback
     }
     if ra is not None and dec is not None:
       source_data["ra"] = f'%.{DECIMALS_OF_PRECISION}f' % (ra[i])
