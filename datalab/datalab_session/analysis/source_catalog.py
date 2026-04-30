@@ -34,8 +34,7 @@ def source_catalog(input: dict, user: User):
   
   cat_hdu = get_hdu(file_path, 'CAT')
   sci_hdu = get_hdu(file_path, 'SCI')
-  print(cat_hdu.columns)
-  print(sci_hdu.data)
+
   DECIMALS_OF_PRECISION = 6
   MAX_SOURCE_CATALOG_SIZE = min(len(cat_hdu.data["x"]), 1000)
 
