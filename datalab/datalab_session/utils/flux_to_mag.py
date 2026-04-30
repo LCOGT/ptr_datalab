@@ -1,29 +1,46 @@
 import numpy as np
 
+conversion_factor = 2.5
+flux2mag = conversion_factor / np.log(10)
+
+
+def _calculate_mag(flux, fluxerr):
+  mag = -conversion_factor * np.log10(flux)
+  magerr = flux2mag * (fluxerr / flux)
+
+  return mag, magerr
+
+
+def flux_to_mag_scalar(flux, fluxerr):
+  """
+  Convert scalar flux and fluxerr values to magnitude and magnitude error.
+  """
+  if flux <= 0:
+    return None, None
+
+  mag, magerr = _calculate_mag(flux, fluxerr)
+
+  return float(mag), float(magerr)
+
+
+def flux_to_mag_array(flux, fluxerr):
+  """
+  Convert flux and fluxerr arrays to magnitude and magnitude error arrays.
+  """
+  mag = np.full(flux.shape, np.nan, dtype=float)
+  magerr = np.full(flux.shape, np.nan, dtype=float)
+  valid_flux = flux > 0
+
+  mag[valid_flux], magerr[valid_flux] = _calculate_mag(flux[valid_flux], fluxerr[valid_flux])
+
+  return mag, magerr
+
 
 def flux_to_mag(flux, fluxerr):
   """
   Convert flux and fluxerr to magnitude and magnitude error.
   """
-  conversion_factor = 2.5
-  flux2mag = conversion_factor / np.log(10)
+  if np.isscalar(flux):
+    return flux_to_mag_scalar(flux, fluxerr)
 
-  flux_array = np.asarray(flux)
-  fluxerr_array = np.asarray(fluxerr)
-
-  if flux_array.ndim == 0:
-    if flux_array <= 0:
-      return None, None
-
-    mag = -conversion_factor * np.log10(flux_array)
-    magerr = flux2mag * (fluxerr_array / flux_array)
-    return float(mag), float(magerr)
-
-  mag = np.full(flux_array.shape, np.nan, dtype=float)
-  magerr = np.full(flux_array.shape, np.nan, dtype=float)
-  valid_flux = flux_array > 0
-
-  mag[valid_flux] = -conversion_factor * np.log10(flux_array[valid_flux])
-  magerr[valid_flux] = flux2mag * (fluxerr_array[valid_flux] / flux_array[valid_flux])
-
-  return mag, magerr
+  return flux_to_mag_array(flux, fluxerr)
