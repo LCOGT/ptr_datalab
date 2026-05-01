@@ -8,7 +8,6 @@ import numpy as np
 from numpy.testing import assert_almost_equal
 
 from datalab.datalab_session.analysis import centroiding, line_profile, source_catalog
-
 class TestAnalysis(TestCase):
     analysis_test_path = 'datalab/datalab_session/tests/test_files/analysis/'
     analysis_fits_1_path = f'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
@@ -51,7 +50,25 @@ class TestAnalysis(TestCase):
             'source': 'archive'
             }, None)
 
-        self.assertEqual(output, self.test_source_catalog_data)
+        self.assertEqual(len(output), len(self.test_source_catalog_data))
+
+        for result, expected in zip(output, self.test_source_catalog_data):
+            self.assertEqual(result['x_win'], expected['x_win'])
+            self.assertEqual(result['y_win'], expected['y_win'])
+            self.assertEqual(result['x'], expected['x'])
+            self.assertEqual(result['y'], expected['y'])
+            self.assertEqual(result['flux'], expected['flux'])
+            self.assertEqual(result['ra'], expected['ra'])
+            self.assertEqual(result['dec'], expected['dec'])
+            self.assertIn('mag', result)
+            self.assertIn('magerr', result)
+
+        with fits.open(self.analysis_fits_1_path) as hdul:
+            expected_mag = hdul['CAT'].data['mag'][0]
+            expected_magerr = hdul['CAT'].data['magerr'][0]
+
+        self.assertAlmostEqual(output[0]['mag'], expected_mag)
+        self.assertAlmostEqual(output[0]['magerr'], expected_magerr)
 
     def test_centroid_finds_pixels_center(self):
         image = np.zeros((21, 21), dtype=float)

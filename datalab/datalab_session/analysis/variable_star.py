@@ -7,6 +7,7 @@ import numpy as np
 
 from datalab.datalab_session.utils.file_utils import get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
+from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -107,21 +108,6 @@ def find_target_source(cat_hdu, target_ra, target_dec):
       return source
 
   return None
-
-def flux_to_mag(flux, fluxerr):
-  """
-  Convert flux and fluxerr to magnitude and magnitude error.
-  """
-  CONVERSION_FACTOR = 2.5
-  FLUX2MAG = CONVERSION_FACTOR / np.log(10)
-
-  if flux <= 0:
-    return None, None
-  
-  mag = -CONVERSION_FACTOR * np.log10(flux)
-  magerr = FLUX2MAG * (fluxerr / flux)
-  
-  return mag, magerr
 
 def calculate_period(light_curve):
   """
