@@ -8,6 +8,9 @@ import numpy as np
 from numpy.testing import assert_almost_equal
 
 from datalab.datalab_session.analysis import centroiding, line_profile, source_catalog
+from datalab.datalab_session.data_operations import light_curve as light_curve_module
+
+
 class TestAnalysis(TestCase):
     analysis_test_path = 'datalab/datalab_session/tests/test_files/analysis/'
     analysis_fits_1_path = f'datalab/datalab_session/tests/test_files/fits_1.fits.fz'
@@ -69,6 +72,58 @@ class TestAnalysis(TestCase):
 
         self.assertAlmostEqual(output[0]['mag'], expected_mag)
         self.assertAlmostEqual(output[0]['magerr'], expected_magerr)
+
+    @mock.patch('datalab.datalab_session.data_operations.light_curve.find_target_source')
+    @mock.patch('datalab.datalab_session.data_operations.light_curve.get_hdu')
+    @mock.patch('datalab.datalab_session.data_operations.light_curve.FileCache')
+    def test_light_curve_uses_catalog_magnitude(self, mock_file_cache, mock_get_hdu, mock_find_target_source):
+        mock_file_cache.return_value.get_fits.return_value = self.analysis_fits_1_path
+        mock_get_hdu.return_value = SimpleNamespace()
+        mock_find_target_source.return_value = {
+            'mag': 15.2,
+            'magerr': 0.03,
+        }
+
+        output = light_curve_module.light_curve({
+            'target_coords': {'ra': 10.0, 'dec': 20.0},
+            'images': [{
+                'basename': 'fits_1',
+                'observation_date': '2024-01-01T00:00:00',
+            }],
+            'source': 'archive',
+        }, None)
+
+        self.assertEqual(output['excluded_images'], [])
+        self.assertFalse(output['flux_fallback'])
+        self.assertEqual(len(output['light_curve']), 1)
+        self.assertEqual(output['light_curve'][0]['mag'], 15.2)
+        self.assertEqual(output['light_curve'][0]['magerr'], 0.03)
+
+    @mock.patch('datalab.datalab_session.data_operations.light_curve.find_target_source')
+    @mock.patch('datalab.datalab_session.data_operations.light_curve.get_hdu')
+    @mock.patch('datalab.datalab_session.data_operations.light_curve.FileCache')
+    def test_light_curve_falls_back_to_flux(self, mock_file_cache, mock_get_hdu, mock_find_target_source):
+        mock_file_cache.return_value.get_fits.return_value = self.analysis_fits_1_path
+        mock_get_hdu.return_value = SimpleNamespace()
+        mock_find_target_source.return_value = {
+            'flux': 100.0,
+            'fluxerr': 5.0,
+        }
+
+        output = light_curve_module.light_curve({
+            'target_coords': {'ra': 10.0, 'dec': 20.0},
+            'images': [{
+                'basename': 'fits_1',
+                'observation_date': '2024-01-01T00:00:00',
+            }],
+            'source': 'archive',
+        }, None)
+
+        self.assertEqual(output['excluded_images'], [])
+        self.assertTrue(output['flux_fallback'])
+        self.assertEqual(len(output['light_curve']), 1)
+        self.assertAlmostEqual(output['light_curve'][0]['mag'], -5.0)
+        self.assertAlmostEqual(output['light_curve'][0]['magerr'], 0.05428681023790647)
 
     def test_centroid_finds_pixels_center(self):
         image = np.zeros((21, 21), dtype=float)
