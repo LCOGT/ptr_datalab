@@ -9,6 +9,7 @@ import numpy as np
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.data_operations.color_image import Color_Image
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.data_operations.light_curve import LightCurve
 from datalab.datalab_session.data_operations.median import Median
 from datalab.datalab_session.data_operations.stacking import Stack
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
@@ -220,6 +221,51 @@ class TestMedianOperation(FileExtendedTestCase):
         
         with self.assertRaises(ClientAlertException):
             median.operate(None)
+
+
+class TestLightCurveOperation(FileExtendedTestCase):
+
+    @mock.patch('datalab.datalab_session.data_operations.light_curve.light_curve')
+    def test_operate(self, mock_light_curve):
+        mock_light_curve.return_value = {
+            'target_coords': {'ra': 10.0, 'dec': 20.0},
+            'light_curve': [{
+                'mag': 15.2,
+                'magerr': 0.03,
+                'julian_date': 2460310.5,
+                'observation_date': '2024-01-01T00:00:00',
+            }],
+            'flux_fallback': False,
+            'excluded_images': [],
+        }
+        input_data = {
+            'source': {'ra': 10.0, 'dec': 20.0},
+            'input_files': [{
+                'basename': 'fits_1',
+                'source': 'local',
+                'filter': 'rp',
+                'observation_date': '2024-01-01T00:00:00',
+            }],
+        }
+
+        light_curve = LightCurve(input_data)
+        light_curve.operate(None)
+        output = light_curve.get_output()
+
+        self.assertEqual(light_curve.get_operation_progress(), 1.0)
+        self.assertEqual(light_curve.get_status(), 'COMPLETED')
+        self.assertEqual(output['output_data'][0]['source'], input_data['source'])
+        self.assertEqual(output['output_data'][0]['filter'], 'rp')
+        self.assertEqual(output['output_data'][0]['light_curve'], mock_light_curve.return_value['light_curve'])
+
+    def test_not_enough_files(self):
+        light_curve = LightCurve({
+            'source': {'ra': 10.0, 'dec': 20.0},
+            'input_files': [],
+        })
+
+        with self.assertRaises(ClientAlertException):
+            light_curve.operate(None)
 
 
 class TestColorImageOperation(FileExtendedTestCase):
