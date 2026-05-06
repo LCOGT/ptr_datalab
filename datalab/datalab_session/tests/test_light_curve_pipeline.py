@@ -4,6 +4,8 @@ import math
 import os
 import tempfile
 import unittest
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -16,6 +18,9 @@ from datalab.datalab_session.data_operations.light_curve_pipeline import (
     generate_light_curve,
     reset_backend_dependencies,
 )
+
+
+APERTURE_PHOTOMETRY_TEST_DIR = Path(__file__).resolve().parent / "test_files" / "aperture_photometry"
 
 
 def gaussian_star(
@@ -497,6 +502,42 @@ class TestLightCurvePipeline(unittest.TestCase):
 
         self.assertEqual(len(result.light_curve_rows), 1)
         self.assertGreaterEqual(len(result.selected_comparison_stars), 5)
+
+    def test_real_compressed_fits_aperture_photometry_prints_diagnostics_and_results(self) -> None:
+        reset_backend_dependencies()
+        fits_paths = sorted(str(path) for path in APERTURE_PHOTOMETRY_TEST_DIR.glob("*.fits.fz"))
+        self.assertEqual(len(fits_paths), 3)
+
+        result = generate_light_curve(
+            fits_paths,
+            target_ra_deg=199.10004,
+            target_dec_deg=42.03237,
+            aperture_radius_px=7.73,
+            annulus_inner_radius_px=12.89,
+            annulus_outer_radius_px=19.33,
+        )
+
+        print("\nLight curve diagnostics:")
+        for diagnostic in result.diagnostics:
+            print(f"  - {diagnostic}")
+
+        print("\nSelected comparison stars:")
+        for star in result.selected_comparison_stars:
+            print(f"  - {asdict(star)}")
+
+        print("\nLight curve results:")
+        for row in result.light_curve_rows:
+            print(f"  - {asdict(row)}")
+
+        self.assertEqual(len(result.light_curve_rows), 3)
+        self.assertGreaterEqual(len(result.selected_comparison_stars), 5)
+        self.assertTrue(all(math.isfinite(row.target_centroid_x) for row in result.light_curve_rows))
+        self.assertTrue(all(math.isfinite(row.target_centroid_y) for row in result.light_curve_rows))
+        self.assertTrue(all(math.isfinite(row.target_differential_flux) for row in result.light_curve_rows))
+        self.assertTrue(all(
+            12.0 <= row.target_calibrated_apparent_magnitude <= 12.7
+            for row in result.light_curve_rows
+        ))
 
     def test_default_fits_dependencies_reject_missing_cat(self) -> None:
         reset_backend_dependencies()

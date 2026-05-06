@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import math
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Sequence
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import numpy as np
+from astropy.coordinates import Angle
 from astropy.io import fits
 from astropy.wcs import WCS
 
@@ -25,6 +29,9 @@ CENTROID_TOLERANCE_PX = 0.01
 DEFAULT_GAIN = 1.0
 DEFAULT_READ_NOISE = 0.0
 MAX_ACCEPTABLE_VARIABILITY = 0.05
+AAVSO_VSP_CHART_URL = "https://app.aavso.org/vsp/api/chart/"
+AAVSO_VSP_TIMEOUT_SECONDS = 10.0
+AAVSO_VSP_MAG_LIMIT = 18.0
 
 
 class LightCurveError(ValueError):
@@ -163,7 +170,7 @@ _BACKEND_DEPENDENCIES = BackendDependencies(
     get_dark_contribution=lambda _path, _header: 0.0,
     get_gain=lambda _path, header: _header_float(header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
     get_read_noise=lambda _path, header: _header_float(header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
-    query_aavso=None,
+    query_aavso=lambda ra_deg, dec_deg, radius_deg: _query_aavso_vsp(ra_deg, dec_deg, radius_deg),
 )
 
 
@@ -183,7 +190,7 @@ def reset_backend_dependencies() -> None:
             get_dark_contribution=lambda _path, _header: 0.0,
             get_gain=lambda _path, header: _header_float(header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
             get_read_noise=lambda _path, header: _header_float(header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
-            query_aavso=None,
+            query_aavso=lambda ra_deg, dec_deg, radius_deg: _query_aavso_vsp(ra_deg, dec_deg, radius_deg),
         )
     )
 
@@ -259,6 +266,68 @@ def _header_float(header: Mapping[str, Any], keys: Sequence[str], default: float
     return default
 
 
+def _query_aavso_vsp(ra_deg: float, dec_deg: float, radius_deg: float) -> Sequence[Mapping[str, Any]]:
+    fov_arcmin = max(1.0, 2.0 * float(radius_deg) * 60.0)
+    query = urlencode(
+        {
+            "ra": f"{float(ra_deg):.8f}",
+            "dec": f"{float(dec_deg):.8f}",
+            "fov": f"{fov_arcmin:.3f}",
+            "maglimit": f"{AAVSO_VSP_MAG_LIMIT:.1f}",
+        }
+    )
+    request = Request(
+        f"{AAVSO_VSP_CHART_URL}?{query}",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "ptr-datalab/0.1",
+        },
+    )
+    with urlopen(request, timeout=AAVSO_VSP_TIMEOUT_SECONDS) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    photometry = payload.get("photometry", [])
+    if not isinstance(photometry, list):
+        raise LightCurveError("AAVSO VSP response did not include a photometry list.")
+
+    rows: list[dict[str, Any]] = []
+    for source in photometry:
+        if not isinstance(source, Mapping):
+            continue
+        try:
+            ra = _parse_aavso_ra(source.get("ra"))
+            dec = _parse_aavso_dec(source.get("dec"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(ra) and math.isfinite(dec):
+            rows.append(
+                {
+                    "ra_deg": ra,
+                    "dec_deg": dec,
+                    "label": source.get("label"),
+                    "auid": source.get("auid"),
+                }
+            )
+    return rows
+
+
+def _parse_aavso_ra(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if ":" in text:
+        return float(Angle(text, unit="hourangle").degree)
+    return float(text)
+
+
+def _parse_aavso_dec(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if ":" in text:
+        return float(Angle(text, unit="deg").degree)
+    return float(text)
+
+
 def generate_light_curve(
     fits_paths: list[str],
     target_ra_deg: float,
@@ -322,9 +391,6 @@ def generate_light_curve(
     )
     diagnostics.extend(selection.diagnostics)
 
-    frame_results: list[FrameResult] = []
-    light_curve_rows: list[LightCurveRow] = []
-
     ensemble_reference_flux = sum(
         10 ** (-0.4 * star.reference_magnitude)
         for star in selection.selected_stars
@@ -332,6 +398,8 @@ def generate_light_curve(
     if ensemble_reference_flux <= 0.0:
         raise LightCurveError("Comparison-star magnitude calibration produced a non-positive ensemble reference flux.")
 
+    frame_results: list[FrameResult] = []
+    light_curve_rows: list[LightCurveRow] = []
     for frame in frames:
         target = target_measurements[frame.fits_path]
         comparison_measurements = tuple(
@@ -355,8 +423,18 @@ def generate_light_curve(
             _safe_fraction(target_variance, target.net_source_counts * target.net_source_counts)
             + _safe_fraction(ensemble_variance, ensemble_flux * ensemble_flux)
         )
-        calibrated_mag = -2.5 * math.log10(target_rel_flux * ensemble_reference_flux)
-        calibrated_mag_sigma = (2.5 / math.log(10.0)) * _safe_fraction(target_rel_flux_sigma, abs(target_rel_flux))
+        calibrated_flux = target_rel_flux * ensemble_reference_flux
+        if calibrated_flux > 0.0:
+            calibrated_mag = -2.5 * math.log10(calibrated_flux)
+            calibrated_mag_sigma = (2.5 / math.log(10.0)) * _safe_fraction(
+                target_rel_flux_sigma, abs(target_rel_flux)
+            )
+        else:
+            diagnostics.append(
+                f"calibration warning: target calibrated flux is non-positive for frame {frame.fits_path}"
+            )
+            calibrated_mag = math.nan
+            calibrated_mag_sigma = math.nan
 
         frame_results.append(
             FrameResult(
@@ -747,7 +825,14 @@ def _select_by_aavso(
         return [], diagnostics
 
     search_radius_deg = _effective_search_radius_deg(frames[0], target_ra_deg, target_dec_deg)
-    aavso_rows = _BACKEND_DEPENDENCIES.query_aavso(target_ra_deg, target_dec_deg, search_radius_deg)
+    try:
+        aavso_rows = _BACKEND_DEPENDENCIES.query_aavso(target_ra_deg, target_dec_deg, search_radius_deg)
+    except Exception as exc:
+        diagnostics.append(f"rejected AAVSO strategy: AAVSO query failed: {exc}")
+        return [], diagnostics
+    diagnostics.append(
+        f"AAVSO strategy: query returned {len(aavso_rows)} rows within {search_radius_deg:.6f} deg"
+    )
     matched_ids = {
         candidate["candidate_id"]
         for candidate in catalog
@@ -757,6 +842,10 @@ def _select_by_aavso(
             for row in aavso_rows
         )
     }
+    diagnostics.append(
+        f"AAVSO strategy: matched {len(matched_ids)} of {len(catalog)} full-coverage catalog candidates "
+        f"within {DEFAULT_AAVSO_MATCH_ARCSEC:.1f} arcsec"
+    )
     if not matched_ids:
         diagnostics.append("rejected AAVSO strategy: no AAVSO matches found in the second HDU catalog")
         return [], diagnostics
@@ -779,7 +868,18 @@ def _select_by_aavso(
             candidate.candidate_id,
         ),
     )
-    return ranked[:max_comparisons], diagnostics
+    selected = ranked[:max_comparisons]
+    diagnostics.append(
+        f"AAVSO strategy: selected {len(selected)} comparison stars after photometry ranking"
+    )
+    for star in selected:
+        diagnostics.append(
+            "AAVSO selected comparison "
+            f"{star.candidate_id}: RA={star.ra_deg:.6f}, Dec={star.dec_deg:.6f}, "
+            f"reference_mag={star.reference_magnitude:.3f}, variability_score={star.variability_score:.6f}, "
+            f"isolation_px={star.isolation_px:.2f}, target_separation_px={star.target_separation_px:.2f}"
+        )
+    return selected, diagnostics
 
 
 def _select_by_variability(
