@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import math
 import os
+import base64
+from io import BytesIO
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -10,6 +12,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
+from PIL import Image, ImageDraw, ImageFont
 
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.file_utils import get_hdu
@@ -57,6 +60,9 @@ DEFAULT_ANNULUS_INNER_RADIUS_PX = 12.73
 DEFAULT_ANNULUS_OUTER_RADIUS_PX = 19.10
 DEFAULT_MIN_COMPARISONS = 5
 DEFAULT_MAX_COMPARISONS = 10
+AIJ_COMP_BRIGHTNESS_TO_DISTANCE_WEIGHT = 50.0
+AIJ_COMP_UPPER_BRIGHTNESS_PERCENT = 150.0
+AIJ_COMP_LOWER_BRIGHTNESS_PERCENT = 50.0
 
 
 class AperturePhotometry(BaseDataOperation):
@@ -228,6 +234,7 @@ class AperturePhotometry(BaseDataOperation):
                         _dataclass_to_plain_dict(star) for star in result.selected_comparison_stars
                     ],
                     'diagnostics': _diagnostics_by_fits_basename(result),
+                    'diagnostic_images': _diagnostic_images_by_fits_basename(result),
                 }
             ]
         }
@@ -289,6 +296,17 @@ def _diagnostics_by_fits_basename(result: Any) -> dict[str, list[str]]:
     ]
     diagnostics = list(getattr(result, "diagnostics", []))
     return {basename: list(diagnostics) for basename in basenames}
+
+
+def _diagnostic_images_by_fits_basename(result: Any) -> dict[str, str]:
+    grouped = getattr(result, "diagnostic_images_by_fits_basename", None)
+    if grouped is None:
+        return {}
+    return {
+        str(basename): str(image_base64)
+        for basename, image_base64 in grouped.items()
+        if image_base64
+    }
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -389,6 +407,7 @@ class LightCurveResult:
     light_curve_rows: list[LightCurveRow]
     diagnostics: list[str]
     diagnostics_by_fits_basename: dict[str, list[str]]
+    diagnostic_images_by_fits_basename: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -563,8 +582,6 @@ def generate_light_curve(
             f"background={target.mean_background_per_pixel:.6f}, peak={target.peak_pixel_value:.6f}"
         )
 
-    target_mag_proxy = _target_magnitude_proxy(target_measurements.values())
-    log.info(f"Aperture Photometry target magnitude proxy: {target_mag_proxy:.6f}")
     catalog, catalog_diagnostics = _build_field_star_catalog(
         frames=frames,
         target_ra_deg=target_ra_deg,
@@ -576,11 +593,20 @@ def generate_light_curve(
         "Aperture Photometry comparison catalog built: "
         f"valid_candidates={len(catalog)}, catalog_diagnostics={len(catalog_diagnostics)}"
     )
-
+    target_catalog_flux = _target_catalog_flux_proxy(
+        frames=frames,
+        target_measurements=target_measurements,
+        target_ra_deg=target_ra_deg,
+        target_dec_deg=target_dec_deg,
+    )
+    log.info(
+        "Aperture Photometry target catalog flux proxy: "
+        f"{_format_float(target_catalog_flux, precision=6)}"
+    )
     selection = _select_comparison_stars(
         frames=frames,
         catalog=catalog,
-        target_mag_proxy=target_mag_proxy,
+        target_catalog_flux=target_catalog_flux,
         aperture_radius_px=aperture_radius_px,
         annulus_inner_radius_px=annulus_inner_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
@@ -609,6 +635,7 @@ def generate_light_curve(
 
     frame_results: list[FrameResult] = []
     light_curve_rows: list[LightCurveRow] = []
+    diagnostic_images_by_fits_basename: dict[str, str] = {}
     for frame in frames:
         target = target_measurements[frame.fits_path]
         comparison_measurements = tuple(
@@ -668,6 +695,12 @@ def generate_light_curve(
         )
         diagnostics.extend(frame_diagnostics)
         diagnostics_by_fits_basename[os.path.basename(frame.fits_path)].extend(frame_diagnostics)
+        diagnostic_images_by_fits_basename[os.path.basename(frame.fits_path)] = _candidate_overlay_jpeg_base64(
+            frame=frame,
+            stars=selection.selected_stars,
+            measurements=comparison_measurements,
+            aperture_radius_px=aperture_radius_px,
+        )
 
         frame_results.append(
             FrameResult(
@@ -705,6 +738,7 @@ def generate_light_curve(
         light_curve_rows=light_curve_rows,
         diagnostics=diagnostics,
         diagnostics_by_fits_basename=diagnostics_by_fits_basename,
+        diagnostic_images_by_fits_basename=diagnostic_images_by_fits_basename,
     )
 
 
@@ -863,22 +897,91 @@ def _measure_target(
     )
 
 
-def _target_magnitude_proxy(measurements: Iterable[TargetMeasurement]) -> float:
-    instrumental_mags = [
-        -2.5 * math.log10(measurement.net_source_counts)
-        for measurement in measurements
-        if measurement.net_source_counts > 0
-    ]
-    if not instrumental_mags:
-        raise LightCurveError("Target photometry never produced positive source counts.")
-    return float(np.median(np.asarray(instrumental_mags, dtype=float)))
-
-
 def _format_reference_magnitude_source_counts(stars: Iterable[ComparisonStar]) -> str:
     counts: dict[str, int] = {}
     for star in stars:
         counts[star.reference_magnitude_source] = counts.get(star.reference_magnitude_source, 0) + 1
     return ", ".join(f"{source}={count}" for source, count in sorted(counts.items()))
+
+
+def _candidate_overlay_jpeg_base64(
+    *,
+    frame: FrameContext,
+    stars: Sequence[ComparisonStar],
+    measurements: Sequence[ComparisonMeasurement],
+    aperture_radius_px: float,
+) -> str:
+    image = _normalize_image_for_jpeg(frame.image)
+    draw = ImageDraw.Draw(image)
+    font = _diagnostic_overlay_font(frame.width, frame.height)
+    stars_by_id = {star.candidate_id: star for star in stars}
+    min_dimension = max(min(frame.width, frame.height), 1)
+    radius = max(float(aperture_radius_px), min_dimension * 0.018, 14.0)
+    line_width = max(3, int(round(min_dimension * 0.004)))
+    label_padding = max(3, int(round(min_dimension * 0.004)))
+
+    for measurement in measurements:
+        if measurement.candidate_id not in stars_by_id:
+            continue
+        x = float(measurement.x)
+        y = float(measurement.y)
+        if not math.isfinite(x) or not math.isfinite(y):
+            continue
+
+        label = measurement.candidate_id
+        halo_bbox = (x - radius, y - radius, x + radius, y + radius)
+        draw.ellipse(
+            halo_bbox,
+            outline=(0, 0, 0),
+            width=line_width + 2,
+        )
+        draw.ellipse(
+            halo_bbox,
+            outline=(255, 0, 0),
+            width=line_width,
+        )
+
+        label_x = x + radius + label_padding
+        label_y = y - radius - label_padding
+        label_bbox = draw.textbbox((label_x, label_y), label, font=font)
+        label_width = label_bbox[2] - label_bbox[0]
+        label_height = label_bbox[3] - label_bbox[1]
+        if label_x + label_width + label_padding > frame.width:
+            label_x = max(x - radius - label_width - label_padding, 0)
+        if label_y < 0:
+            label_y = min(y + radius + label_padding, max(frame.height - label_height - label_padding, 0))
+        draw.text((label_x, label_y), label, fill=(255, 0, 0), font=font)
+
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=90)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def _normalize_image_for_jpeg(image_data: np.ndarray) -> Image.Image:
+    finite = np.asarray(image_data, dtype=float)
+    finite_values = finite[np.isfinite(finite)]
+    if finite_values.size:
+        zmin, zmax = np.percentile(finite_values, (1, 99.7))
+    else:
+        zmin, zmax = 0.0, 1.0
+    if not math.isfinite(float(zmin)) or not math.isfinite(float(zmax)) or zmax <= zmin:
+        zmin = float(np.nanmin(finite_values)) if finite_values.size else 0.0
+        zmax = float(np.nanmax(finite_values)) if finite_values.size else 1.0
+    if zmax <= zmin:
+        zmax = zmin + 1.0
+
+    scaled = np.clip((finite - zmin) / (zmax - zmin), 0.0, 1.0)
+    scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
+    gray = (scaled * 255.0).astype(np.uint8)
+    return Image.fromarray(gray).convert("RGB")
+
+
+def _diagnostic_overlay_font(width: int, height: int) -> ImageFont.ImageFont:
+    font_size = max(32, min(160, int(round(min(width, height) * 0.05))))
+    try:
+        return ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+    except OSError:
+        return ImageFont.load_default()
 
 
 def _comparison_star_validation_diagnostics(
@@ -893,7 +996,7 @@ def _comparison_star_validation_diagnostics(
 ) -> list[str]:
     diagnostics = [
         (
-            "comparison star identifier | calculated flux | FITS source catalog flux | "
+            "comparison star identifier | RA | Dec | calculated flux | FITS source catalog flux | "
             "calculated magnitude | FITS source catalog magnitude"
         ),
     ]
@@ -907,10 +1010,12 @@ def _comparison_star_validation_diagnostics(
         diagnostics.append(
             "comparison-star validation row: "
             f"{star.candidate_id} | "
-            f"{_format_float(measurement.net_source_counts, precision=6)} | "
-            f"{_format_float(fits_catalog_flux, precision=6)} | "
-            f"{_format_float(calculated_magnitude, precision=6)} | "
-            f"{_format_float(fits_catalog_mag, precision=6)}"
+            f"{_format_float(star.ra_deg, precision=4)} | "
+            f"{_format_float(star.dec_deg, precision=4)} | "
+            f"{_format_float(measurement.net_source_counts, precision=0)} | "
+            f"{_format_float(fits_catalog_flux, precision=0)} | "
+            f"{_format_float(calculated_magnitude, precision=3)} | "
+            f"{_format_float(fits_catalog_mag, precision=3)}"
         )
     return diagnostics
 
@@ -938,6 +1043,47 @@ def _nearest_source_catalog_row(
             row["dec_deg"],
         ),
     )
+
+
+def _target_catalog_flux_proxy(
+    *,
+    frames: Sequence[FrameContext],
+    target_measurements: Mapping[str, TargetMeasurement],
+    target_ra_deg: float,
+    target_dec_deg: float,
+) -> float | None:
+    target_catalog_fluxes: list[float] = []
+    for frame in frames:
+        target = target_measurements.get(frame.fits_path)
+        if target is None:
+            continue
+        try:
+            centroid_ra_deg, centroid_dec_deg = _BACKEND_DEPENDENCIES.pixel_to_world(frame.header, target.x, target.y)
+        except Exception:
+            centroid_ra_deg = target_ra_deg
+            centroid_dec_deg = target_dec_deg
+        target_row = _nearest_source_catalog_row(
+            frame=frame,
+            ra_deg=centroid_ra_deg,
+            dec_deg=centroid_dec_deg,
+        )
+        if target_row is None:
+            continue
+        distance_arcsec = _angular_distance_arcsec(
+            centroid_ra_deg,
+            centroid_dec_deg,
+            target_row["ra_deg"],
+            target_row["dec_deg"],
+        )
+        if distance_arcsec > DEFAULT_CROSSMATCH_ARCSEC:
+            continue
+        flux = _optional_float(target_row.get("flux"))
+        if math.isfinite(flux) and flux > 0.0:
+            target_catalog_fluxes.append(flux)
+
+    if not target_catalog_fluxes:
+        return None
+    return float(np.median(np.asarray(target_catalog_fluxes, dtype=float)))
 
 
 def _flux_to_magnitude(flux: float, zero_point: float) -> float:
@@ -1108,7 +1254,7 @@ def _select_comparison_stars(
     *,
     frames: Sequence[FrameContext],
     catalog: Sequence[dict[str, Any]],
-    target_mag_proxy: float,
+    target_catalog_flux: float | None,
     aperture_radius_px: float,
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
@@ -1118,7 +1264,7 @@ def _select_comparison_stars(
     selected, diagnostics = _select_by_source_catalog(
         frames=frames,
         catalog=catalog,
-        target_mag_proxy=target_mag_proxy,
+        target_catalog_flux=target_catalog_flux,
         aperture_radius_px=aperture_radius_px,
         annulus_inner_radius_px=annulus_inner_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
@@ -1138,7 +1284,7 @@ def _select_by_source_catalog(
     *,
     frames: Sequence[FrameContext],
     catalog: Sequence[dict[str, Any]],
-    target_mag_proxy: float,
+    target_catalog_flux: float | None,
     aperture_radius_px: float,
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
@@ -1152,18 +1298,75 @@ def _select_by_source_catalog(
         annulus_outer_radius_px=annulus_outer_radius_px,
     )
     ranked = sorted(
-        [candidate for candidate in enriched if candidate.variability_score <= MAX_ACCEPTABLE_VARIABILITY],
-        key=lambda candidate: _source_catalog_sort_key(candidate, target_mag_proxy),
+        enriched,
+        key=lambda candidate: _source_catalog_sort_key(candidate, target_catalog_flux, frames),
     )
     return ranked[:max_comparisons], []
 
 
-def _source_catalog_sort_key(candidate: ComparisonStar, target_mag_proxy: float) -> tuple[float, float, str]:
+def _source_catalog_sort_key(
+    candidate: ComparisonStar,
+    target_catalog_flux: float | None,
+    frames: Sequence[FrameContext],
+) -> tuple[float, str]:
     return (
-        abs(candidate.reference_magnitude - target_mag_proxy),
-        -candidate.isolation_px,
+        -_astroimagej_comparison_weight(candidate, target_catalog_flux, _image_diagonal_px(frames)),
         candidate.candidate_id,
     )
+
+
+def _astroimagej_comparison_weight(
+    candidate: ComparisonStar,
+    target_catalog_flux: float | None,
+    image_diagonal_px: float,
+) -> float:
+    brightness_weight = AIJ_COMP_BRIGHTNESS_TO_DISTANCE_WEIGHT / 100.0
+    distance_weight = 1.0 - brightness_weight
+    norm_brightness = _astroimagej_normalized_brightness(candidate, target_catalog_flux)
+    norm_distance = 1.0
+    if math.isfinite(image_diagonal_px) and image_diagonal_px > 0.0:
+        norm_distance = 1.0 - (candidate.target_separation_px / image_diagonal_px)
+    return brightness_weight * norm_brightness + distance_weight * norm_distance
+
+
+def _astroimagej_normalized_brightness(candidate: ComparisonStar, target_catalog_flux: float | None) -> float:
+    candidate_flux = _candidate_catalog_flux(candidate)
+    if (
+        target_catalog_flux is None
+        or not math.isfinite(target_catalog_flux)
+        or target_catalog_flux <= 0.0
+        or not math.isfinite(candidate_flux)
+        or candidate_flux <= 0.0
+    ):
+        return 0.0
+
+    if candidate_flux <= target_catalog_flux:
+        return 1.0 - (
+            (target_catalog_flux - candidate_flux)
+            / (target_catalog_flux * (1.0 - (AIJ_COMP_LOWER_BRIGHTNESS_PERCENT / 100.0)))
+        )
+    return 1.0 - (
+        (candidate_flux - target_catalog_flux)
+        / (target_catalog_flux * ((AIJ_COMP_UPPER_BRIGHTNESS_PERCENT / 100.0) - 1.0))
+    )
+
+
+def _candidate_catalog_flux(candidate: ComparisonStar) -> float:
+    candidate_fluxes = [
+        _optional_float(row.get("flux"))
+        for row in candidate.source_catalog_by_frame.values()
+    ]
+    candidate_fluxes = [flux for flux in candidate_fluxes if math.isfinite(flux) and flux > 0.0]
+    if not candidate_fluxes:
+        return math.nan
+    return float(np.median(np.asarray(candidate_fluxes, dtype=float)))
+
+
+def _image_diagonal_px(frames: Sequence[FrameContext]) -> float:
+    if not frames:
+        return math.nan
+    frame = frames[0]
+    return math.sqrt((frame.width * frame.width) + (frame.height * frame.height))
 
 
 def _measure_and_rank_candidates(
