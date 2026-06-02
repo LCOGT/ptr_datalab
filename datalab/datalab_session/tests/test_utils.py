@@ -1,6 +1,9 @@
 from datalab.datalab_session.utils.file_utils import *
 from datalab.datalab_session.utils.s3_utils import *
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag, flux_to_mag_array, flux_to_mag_scalar
+from datalab.datalab_session.utils.geometry import angular_distance_arcsec, distance_pixels
+from datalab.datalab_session.utils.photometry import fractional_pixel_overlap, measure_aperture
+from datalab.datalab_session.utils.wcs_utils import pixel_to_world, world_to_pixel
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
 class FileUtilsTestClass(FileExtendedTestCase):
@@ -106,3 +109,50 @@ class FileUtilsTestClass(FileExtendedTestCase):
     self.assertAlmostEqual(magerr[0], 0.05428681023790647)
     self.assertTrue(np.isnan(mag[1]))
     self.assertTrue(np.isnan(magerr[1]))
+
+  def test_geometry_distance_helpers(self):
+    self.assertEqual(distance_pixels(0.0, 0.0, 3.0, 4.0), 5.0)
+    self.assertAlmostEqual(angular_distance_arcsec(10.0, 20.0, 10.0, 20.001), 3.6, places=3)
+
+  def test_fractional_pixel_overlap(self):
+    self.assertEqual(fractional_pixel_overlap(5, 5, 5.5, 5.5, 1.0), 1.0)
+    self.assertEqual(fractional_pixel_overlap(8, 8, 5.5, 5.5, 1.0), 0.0)
+
+  def test_measure_aperture(self):
+    image = np.full((21, 21), 10.0, dtype=float)
+    image[10, 10] = 110.0
+
+    result = measure_aperture(
+      image=image,
+      x_center=10.5,
+      y_center=10.5,
+      aperture_radius_px=2.0,
+      annulus_inner_radius_px=4.0,
+      annulus_outer_radius_px=6.0,
+      gain=1.0,
+      read_noise=0.0,
+      dark=0.0,
+    )
+
+    self.assertGreater(result["net_source_counts"], 0.0)
+    self.assertEqual(result["mean_background_per_pixel"], 10.0)
+    self.assertEqual(result["peak_pixel_value"], 110.0)
+
+  def test_wcs_pixel_world_helpers(self):
+    header = fits.Header()
+    header['CTYPE1'] = 'RA---TAN'
+    header['CTYPE2'] = 'DEC--TAN'
+    header['CRVAL1'] = 150.0
+    header['CRVAL2'] = 2.0
+    header['CRPIX1'] = 1.0
+    header['CRPIX2'] = 1.0
+    header['CD1_1'] = 0.01
+    header['CD1_2'] = 0.0
+    header['CD2_1'] = 0.0
+    header['CD2_2'] = 0.01
+
+    x, y = world_to_pixel(header, 150.0, 2.0)
+    ra, dec = pixel_to_world(header, x, y)
+
+    self.assertAlmostEqual(ra, 150.0)
+    self.assertAlmostEqual(dec, 2.0)

@@ -9,7 +9,7 @@ from astropy.io import fits
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.data_operations.aperture_photometry import AperturePhotometry, LightCurveRow
+from datalab.datalab_session.data_operations.aperture_photometry import AperturePhotometry
 from datalab.datalab_session.data_operations.color_image import Color_Image
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.data_operations.light_curve import LightCurve
@@ -17,6 +17,7 @@ from datalab.datalab_session.data_operations.median import Median
 from datalab.datalab_session.data_operations.stacking import Stack
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 from datalab.datalab_session.utils.format import Format
+from datalab.datalab_session.utils.aperture_light_curve import LightCurveRow
 
 wizard_description = {
             'name': 'SampleDataOperation',
@@ -319,6 +320,10 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             ],
             selected_comparison_stars=[],
             diagnostics=('loaded 1 frame', 'selected 5 comparison stars'),
+            diagnostics_by_fits_basename={
+                'fits_1.fits': ['loaded 1 frame', 'selected 5 comparison stars'],
+            },
+            diagnostic_images_by_fits_basename={},
         )
         input_data = self.valid_input_data()
 
@@ -354,29 +359,45 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         input_data = self.valid_input_data()
         del input_data['aperture_radius_px']
 
-        with self.assertRaisesRegex(ClientAlertException, 'requires aperture_radius_px'):
+        with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
             AperturePhotometry(input_data).operate(None)
 
     def test_operate_requires_annulus_inner_radius(self):
         input_data = self.valid_input_data()
         del input_data['annulus_inner_radius_px']
 
-        with self.assertRaisesRegex(ClientAlertException, 'requires annulus_inner_radius_px'):
+        with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
             AperturePhotometry(input_data).operate(None)
 
     def test_operate_requires_annulus_outer_radius(self):
         input_data = self.valid_input_data()
         del input_data['annulus_outer_radius_px']
 
-        with self.assertRaisesRegex(ClientAlertException, 'requires annulus_outer_radius_px'):
+        with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
             AperturePhotometry(input_data).operate(None)
 
-    def test_operate_requires_filter(self):
+    def test_operate_allows_missing_filter(self):
         input_data = self.valid_input_data()
         del input_data['input_files'][0]['filter']
 
-        with self.assertRaisesRegex(ClientAlertException, 'requires a filter'):
+        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.InputDataHandler') as mock_input_data_handler, \
+                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
+                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
+                mock.patch.object(AperturePhotometry, 'set_status'):
+            mock_input_data_handler.return_value = SimpleNamespace(fits_file='/tmp/fits_1.fits')
+            mock_generate_light_curve.return_value = SimpleNamespace(
+                light_curve_rows=[],
+                selected_comparison_stars=[],
+                diagnostics=[],
+                diagnostics_by_fits_basename={},
+                diagnostic_images_by_fits_basename={},
+            )
+
             AperturePhotometry(input_data).operate(None)
+
+        output = mock_set_output.call_args.args[0]
+        self.assertEqual(output['output_data'][0]['filter'], 'None')
 
 
 class TestColorImageOperation(FileExtendedTestCase):
