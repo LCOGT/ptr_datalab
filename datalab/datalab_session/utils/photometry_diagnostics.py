@@ -10,12 +10,16 @@ from PIL import Image, ImageDraw, ImageFont
 
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
+COMPARISON_STAR_COLOR = (0, 173, 239)
+TARGET_COLOR = (243, 131, 33)
+
 
 def candidate_overlay_jpeg_base64(
     *,
     frame: Any,
     stars: Sequence[Any],
     measurements: Sequence[Any],
+    target_measurement: Any,
     aperture_radius_px: float,
 ) -> str:
     image = _normalize_image_for_jpeg(frame.image)
@@ -31,14 +35,14 @@ def candidate_overlay_jpeg_base64(
         if measurement.candidate_id not in stars_by_id:
             continue
         x = float(measurement.x)
-        y = float(measurement.y)
+        y = _display_y(float(measurement.y), frame.height)
         if not math.isfinite(x) or not math.isfinite(y):
             continue
 
         label = measurement.candidate_id
         halo_bbox = (x - radius, y - radius, x + radius, y + radius)
         draw.ellipse(halo_bbox, outline=(0, 0, 0), width=line_width + 2)
-        draw.ellipse(halo_bbox, outline=(255, 0, 0), width=line_width)
+        draw.ellipse(halo_bbox, outline=COMPARISON_STAR_COLOR, width=line_width)
 
         label_x = x + radius + label_padding
         label_y = y - radius - label_padding
@@ -49,7 +53,19 @@ def candidate_overlay_jpeg_base64(
             label_x = max(x - radius - label_width - label_padding, 0)
         if label_y < 0:
             label_y = min(y + radius + label_padding, max(frame.height - label_height - label_padding, 0))
-        draw.text((label_x, label_y), label, fill=(255, 0, 0), font=font)
+        draw.text((label_x, label_y), label, fill=COMPARISON_STAR_COLOR, font=font)
+
+    target_x = float(target_measurement.x)
+    target_y = _display_y(float(target_measurement.y), frame.height)
+    if math.isfinite(target_x) and math.isfinite(target_y):
+        target_bbox = (
+            target_x - radius,
+            target_y - radius,
+            target_x + radius,
+            target_y + radius,
+        )
+        draw.ellipse(target_bbox, outline=(0, 0, 0), width=line_width + 2)
+        draw.ellipse(target_bbox, outline=TARGET_COLOR, width=line_width)
 
     buffer = BytesIO()
     image.save(buffer, format="JPEG", quality=90)
@@ -105,7 +121,12 @@ def _normalize_image_for_jpeg(image_data: np.ndarray) -> Image.Image:
     scaled = np.clip((finite - zmin) / (zmax - zmin), 0.0, 1.0)
     scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
     gray = (scaled * 255.0).astype(np.uint8)
+    gray = np.flip(gray, axis=0)
     return Image.fromarray(gray).convert("RGB")
+
+
+def _display_y(y: float, height: int) -> float:
+    return float(height - 1) - y
 
 
 def _diagnostic_overlay_font(width: int, height: int) -> ImageFont.ImageFont:

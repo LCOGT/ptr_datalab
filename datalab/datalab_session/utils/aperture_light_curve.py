@@ -310,6 +310,7 @@ def generate_light_curve(
             frame=frame,
             stars=selection.selected_stars,
             measurements=comparison_measurements,
+            target_measurement=target,
             aperture_radius_px=aperture_radius_px,
         )
 

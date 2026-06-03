@@ -501,12 +501,26 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertEqual(image.format, "JPEG")
         self.assertEqual(image.size, (80, 80))
         rgb = np.asarray(image.convert("RGB"))
-        overlay_pixels = np.count_nonzero(
-            (rgb[:, :, 0] > 200) &
-            (rgb[:, :, 1] < 120) &
-            (rgb[:, :, 2] < 120)
+        blue_overlay_pixels = np.count_nonzero(
+            (rgb[:, :, 0] < 80) &
+            (rgb[:, :, 1] > 130) &
+            (rgb[:, :, 2] > 180)
         )
-        self.assertGreater(overlay_pixels, 50)
+        orange_target_pixels = np.count_nonzero(
+            (rgb[:, :, 0] > 180) &
+            (rgb[:, :, 1] > 80) &
+            (rgb[:, :, 1] < 170) &
+            (rgb[:, :, 2] < 90)
+        )
+        self.assertGreater(blue_overlay_pixels, 50)
+        self.assertGreater(orange_target_pixels, 10)
+        orange_rows = np.argwhere(
+            (rgb[:, :, 0] > 180) &
+            (rgb[:, :, 1] > 80) &
+            (rgb[:, :, 1] < 170) &
+            (rgb[:, :, 2] < 90)
+        )[:, 0]
+        self.assertGreater(float(np.mean(orange_rows)), 40.0)
 
     def test_determinism(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
