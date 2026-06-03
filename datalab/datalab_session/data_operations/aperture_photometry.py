@@ -16,7 +16,6 @@ from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
     generate_light_curve,
 )
-from datalab.datalab_session.utils.serialization import json_safe_value
 
 
 log = logging.getLogger()
@@ -146,9 +145,9 @@ class AperturePhotometry(BaseDataOperation):
                 {
                     'source': source,
                     'filter': filter_value,
-                    'light_curve': [json_safe_value(asdict(row)) for row in result.light_curve_rows],
+                    'light_curve': [asdict(row) for row in result.light_curve_rows],
                     'selected_comparison_stars': [
-                        json_safe_value(asdict(star)) for star in result.selected_comparison_stars
+                        asdict(star) for star in result.selected_comparison_stars
                     ],
                     'diagnostics': result.diagnostics_by_fits_basename,
                     'diagnostic_images': result.diagnostic_images_by_fits_basename,

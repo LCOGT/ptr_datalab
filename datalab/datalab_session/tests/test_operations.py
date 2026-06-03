@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import shutil
 from types import SimpleNamespace
 from unittest import mock
+import math
 import os
 
 from astropy.io import fits
@@ -349,10 +350,10 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
                 'fits_1.fits': ['loaded 1 frame', 'selected 5 comparison stars'],
             },
         )
-        self.assertIsNone(output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude'])
-        self.assertIsNone(
+        self.assertTrue(math.isnan(output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude']))
+        self.assertTrue(math.isnan(
             output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude_uncertainty']
-        )
+        ))
         mock_set_status.assert_called_once_with('COMPLETED')
 
     def test_operate_requires_aperture_radius(self):

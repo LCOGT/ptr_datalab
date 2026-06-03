@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 import numpy as np
+from astropy.wcs import WCS
 
 from datalab.datalab_session.utils.comparison_stars import (
     ComparisonMeasurement,
@@ -30,7 +31,6 @@ from datalab.datalab_session.utils.photometry_diagnostics import (
     comparison_star_validation_diagnostics,
 )
 from datalab.datalab_session.utils.photometry import measure_aperture
-from datalab.datalab_session.utils.wcs_utils import header_float, pixel_to_world, world_to_pixel
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -53,6 +53,24 @@ DEFAULT_MAX_COMPARISONS = 10
 
 class LightCurveError(ValueError):
     pass
+
+
+def _world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:
+    x, y = WCS(dict(header)).world_to_pixel_values(float(ra_deg), float(dec_deg))
+    return float(x), float(y)
+
+
+def _pixel_to_world(header: Mapping[str, Any], x: float, y: float) -> tuple[float, float]:
+    ra, dec = WCS(dict(header)).pixel_to_world_values(float(x), float(y))
+    return float(ra), float(dec)
+
+
+def _header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: float) -> float:
+    for key in keys:
+        if key in header:
+            return float(header[key])
+    return default
+
 
 @dataclass(frozen=True)
 class FrameContext:
@@ -415,8 +433,11 @@ def _parse_date_obs(value: Any, fits_path: str) -> datetime:
 
 def _validate_wcs(header: Mapping[str, Any], fits_path: str, shape: tuple[int, int]) -> None:
     try:
-        world_to_pixel(header, float(header.get("CRVAL1", 0.0)), float(header.get("CRVAL2", 0.0)), error_class=LightCurveError)
-        pixel_to_world(header, shape[1] / 2.0, shape[0] / 2.0, error_class=LightCurveError)
+        wcs = WCS(dict(header))
+        if not wcs.has_celestial:
+            raise ValueError("missing celestial WCS")
+        _world_to_pixel(header, float(header.get("CRVAL1", 0.0)), float(header.get("CRVAL2", 0.0)))
+        _pixel_to_world(header, shape[1] / 2.0, shape[0] / 2.0)
     except Exception as exc:  # pragma: no cover - error path covered by tests
         raise LightCurveError(f"Missing or unusable WCS in {fits_path}.") from exc
 
@@ -443,7 +464,7 @@ def _measure_target(
     annulus_outer_radius_px: float,
 ) -> TargetMeasurement:
     try:
-        initial_x, initial_y = world_to_pixel(frame.header, target_ra_deg, target_dec_deg, error_class=LightCurveError)
+        initial_x, initial_y = _world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
     except Exception as exc:
         raise LightCurveError(f"Target WCS localization failed for {frame.fits_path}.") from exc
     log.info(
@@ -473,8 +494,8 @@ def _measure_target(
         aperture_radius_px=aperture_radius_px,
         annulus_inner_radius_px=annulus_inner_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
-        gain=header_float(frame.header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
-        read_noise=header_float(frame.header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
+        gain=_header_float(frame.header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
+        read_noise=_header_float(frame.header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
         dark=0.0,
         error_class=LightCurveError,
     )
@@ -528,7 +549,7 @@ def _target_catalog_flux_proxy(
         if target is None:
             continue
         try:
-            centroid_ra_deg, centroid_dec_deg = pixel_to_world(frame.header, target.x, target.y, error_class=LightCurveError)
+            centroid_ra_deg, centroid_dec_deg = _pixel_to_world(frame.header, target.x, target.y)
         except Exception:
             centroid_ra_deg = target_ra_deg
             centroid_dec_deg = target_dec_deg
@@ -574,7 +595,7 @@ def _build_field_star_catalog(
 ) -> list[dict[str, Any]]:
     clusters: list[dict[str, Any]] = []
     target_pixels = {
-        frame.fits_path: world_to_pixel(frame.header, target_ra_deg, target_dec_deg, error_class=LightCurveError)
+        frame.fits_path: _world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
         for frame in frames
     }
 
@@ -588,7 +609,7 @@ def _build_field_star_catalog(
         rejected_for_target = 0
         rejected_for_edge = 0
         for row in rows:
-            x, y = world_to_pixel(frame.header, row["ra_deg"], row["dec_deg"], error_class=LightCurveError)
+            x, y = _world_to_pixel(frame.header, row["ra_deg"], row["dec_deg"])
             row["frame_path"] = frame.fits_path
             row["pixel_x"] = x
             row["pixel_y"] = y

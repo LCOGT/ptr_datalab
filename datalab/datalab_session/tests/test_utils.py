@@ -3,7 +3,6 @@ from datalab.datalab_session.utils.s3_utils import *
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag, flux_to_mag_array, flux_to_mag_scalar
 from datalab.datalab_session.utils.geometry import angular_distance_arcsec, distance_pixels
 from datalab.datalab_session.utils.photometry import fractional_pixel_overlap, measure_aperture
-from datalab.datalab_session.utils.wcs_utils import pixel_to_world, world_to_pixel
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
 class FileUtilsTestClass(FileExtendedTestCase):
@@ -137,22 +136,3 @@ class FileUtilsTestClass(FileExtendedTestCase):
     self.assertGreater(result["net_source_counts"], 0.0)
     self.assertEqual(result["mean_background_per_pixel"], 10.0)
     self.assertEqual(result["peak_pixel_value"], 110.0)
-
-  def test_wcs_pixel_world_helpers(self):
-    header = fits.Header()
-    header['CTYPE1'] = 'RA---TAN'
-    header['CTYPE2'] = 'DEC--TAN'
-    header['CRVAL1'] = 150.0
-    header['CRVAL2'] = 2.0
-    header['CRPIX1'] = 1.0
-    header['CRPIX2'] = 1.0
-    header['CD1_1'] = 0.01
-    header['CD1_2'] = 0.0
-    header['CD2_1'] = 0.0
-    header['CD2_2'] = 0.01
-
-    x, y = world_to_pixel(header, 150.0, 2.0)
-    ra, dec = pixel_to_world(header, x, y)
-
-    self.assertAlmostEqual(ra, 150.0)
-    self.assertAlmostEqual(dec, 2.0)
