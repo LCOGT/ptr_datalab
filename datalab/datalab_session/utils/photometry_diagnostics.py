@@ -39,7 +39,7 @@ def candidate_overlay_jpeg_base64(
         if not math.isfinite(x) or not math.isfinite(y):
             continue
 
-        label = measurement.candidate_id
+        label = _overlay_label(measurement.candidate_id)
         halo_bbox = (x - radius, y - radius, x + radius, y + radius)
         draw.ellipse(halo_bbox, outline=(0, 0, 0), width=line_width + 2)
         draw.ellipse(halo_bbox, outline=COMPARISON_STAR_COLOR, width=line_width)
@@ -53,7 +53,12 @@ def candidate_overlay_jpeg_base64(
             label_x = max(x - radius - label_width - label_padding, 0)
         if label_y < 0:
             label_y = min(y + radius + label_padding, max(frame.height - label_height - label_padding, 0))
-        draw.text((label_x, label_y), label, fill=COMPARISON_STAR_COLOR, font=font)
+        draw.text(
+            (label_x, label_y),
+            label,
+            fill=COMPARISON_STAR_COLOR,
+            font=font,
+        )
 
     target_x = float(target_measurement.x)
     target_y = _display_y(float(target_measurement.y), frame.height)
@@ -130,11 +135,18 @@ def _display_y(y: float, height: int) -> float:
 
 
 def _diagnostic_overlay_font(width: int, height: int) -> ImageFont.ImageFont:
-    font_size = max(32, min(160, int(round(min(width, height) * 0.05))))
+    font_size = max(48, min(360, int(round(min(width, height) * 0.09))))
     try:
         return ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
     except OSError:
         return ImageFont.load_default()
+
+
+def _overlay_label(candidate_id: str) -> str:
+    for prefix in ("cand-", "comp-"):
+        if candidate_id.startswith(prefix):
+            return candidate_id[len(prefix):]
+    return candidate_id
 
 
 def _flux_to_magnitude(flux: float, zero_point: float) -> float:
