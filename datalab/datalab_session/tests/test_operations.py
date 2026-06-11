@@ -301,7 +301,8 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         mock_input_data_handler,
         mock_generate_light_curve,
     ):
-        mock_input_data_handler.return_value = SimpleNamespace(fits_file='/tmp/fits_1.fits')
+        input_handler = SimpleNamespace(fits_file='/tmp/fits_1.fits')
+        mock_input_data_handler.return_value = input_handler
         mock_generate_light_curve.return_value = SimpleNamespace(
             light_curve_rows=[
                 LightCurveRow(
@@ -332,7 +333,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         aperture_photometry.operate(None)
 
         mock_generate_light_curve.assert_called_once_with(
-            fits_paths=['/tmp/fits_1.fits'],
+            input_handlers=[input_handler],
             target_ra_deg=10.0,
             target_dec_deg=20.0,
             aperture_radius_px=7.64,

@@ -143,6 +143,9 @@ class TestAnalysis(TestCase):
         self.assertAlmostEqual(result.y, 10.5, places=9)
         self.assertEqual(result.background, 0.0)
         self.assertEqual(result.peak, 100.0)
+        self.assertIsNotNone(result.background_model)
+        self.assertEqual(result.background_model.source_peak, 100.0)
+        self.assertGreater(result.background_model.effective_pixels, 0.0)
         self.assertEqual(result.message, 'Centroid calculation completed.')
 
     @mock.patch('datalab.datalab_session.analysis.centroiding.get_hdu')

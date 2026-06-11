@@ -8,6 +8,7 @@ import base64
 from io import BytesIO
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -21,7 +22,7 @@ from datalab.datalab_session.utils.comparison_stars import (
 from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
     _extract_candidate_row,
-    _load_and_validate_frames,
+    _validated_frame_contexts,
     generate_light_curve,
 )
 from datalab.datalab_session.utils.geometry import angular_distance_arcsec
@@ -30,11 +31,11 @@ from datalab.datalab_session.utils.geometry import angular_distance_arcsec
 APERTURE_PHOTOMETRY_TEST_DIR = Path(__file__).resolve().parent / "test_files" / "aperture_photometry"
 
 def print_nearest_fits_catalog_target_matches(
-    fits_paths: list[str],
+    input_handlers: list[Any],
     target_ra_deg: float,
     target_dec_deg: float,
 ) -> None:
-    frames = sorted(_load_and_validate_frames(fits_paths), key=lambda frame: frame.date_obs)
+    frames = _validated_frame_contexts(input_handlers)
     print("\nNearest FITS catalog rows to target:")
     for frame in frames:
         candidates = [
@@ -175,8 +176,8 @@ class TestAperturePhotometry(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def write_frames(self, frames: dict[str, dict[str, Any]]) -> list[str]:
-        paths: list[str] = []
+    def write_frames(self, frames: dict[str, dict[str, Any]]) -> list[Any]:
+        input_handlers: list[Any] = []
         for name, frame in frames.items():
             path = os.path.join(self.temp_dir.name, name)
             header = fits.Header()
@@ -188,8 +189,19 @@ class TestAperturePhotometry(unittest.TestCase):
             ]
             hdus.append(self._cat_hdu(frame["second_hdu"]))
             fits.HDUList(hdus).writeto(path, overwrite=True)
-            paths.append(path)
-        return paths
+            input_handlers.append(self.input_handler_for_path(path))
+        return input_handlers
+
+    def input_handler_for_path(self, path: str) -> Any:
+        with fits.open(path) as hdul:
+            hdus = {hdu.name: hdu.copy() for hdu in hdul}
+            hdus["PRIMARY"] = hdul[0].copy()
+        return SimpleNamespace(
+            fits_file=path,
+            sci_hdu=hdus["SCI"],
+            sci_data=hdus["SCI"].data,
+            get_hdu=lambda extension=None, hdus=hdus: hdus[extension or "SCI"],
+        )
 
     def _cat_hdu(self, rows: list[dict[str, Any]]) -> fits.BinTableHDU:
         if not rows:
@@ -565,8 +577,9 @@ class TestAperturePhotometry(unittest.TestCase):
         ])
         hdul.writeto(path, overwrite=True)
         try:
+            input_handler = self.input_handler_for_path(path)
             result = generate_light_curve(
-                [path],
+                [input_handler],
                 target_ra_deg=target_ra,
                 target_dec_deg=target_dec,
                 aperture_radius_px=4.0,
@@ -605,17 +618,18 @@ class TestAperturePhotometry(unittest.TestCase):
     def test_real_compressed_fits_aperture_photometry_prints_diagnostics_and_results(self) -> None:
         fits_paths = sorted(str(path) for path in APERTURE_PHOTOMETRY_TEST_DIR.glob("*.fits.fz"))
         self.assertEqual(len(fits_paths), 3)
+        input_handlers = [self.input_handler_for_path(path) for path in fits_paths]
         target_ra_deg = 199.150264
         target_dec_deg = 42.093592
 
         print_nearest_fits_catalog_target_matches(
-            fits_paths,
+            input_handlers,
             target_ra_deg=target_ra_deg,
             target_dec_deg=target_dec_deg,
         )
 
         result = generate_light_curve(
-            fits_paths,
+            input_handlers,
             target_ra_deg=target_ra_deg,
             target_dec_deg=target_dec_deg,
             aperture_radius_px=7.64,
@@ -656,8 +670,9 @@ class TestAperturePhotometry(unittest.TestCase):
             fits.ImageHDU(data=np.zeros((20, 20), dtype=float), header=header, name="SCI"),
         ]).writeto(path, overwrite=True)
         try:
+            input_handler = self.input_handler_for_path(path)
             with self.assertRaisesRegex(LightCurveError, "requires at least 1 valid input file"):
-                generate_light_curve([path], 100.0, 20.0, 2.0, 3.0, 5.0)
+                generate_light_curve([input_handler], 100.0, 20.0, 2.0, 3.0, 5.0)
         finally:
             os.remove(path)
 

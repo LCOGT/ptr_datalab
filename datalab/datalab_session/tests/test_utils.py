@@ -2,6 +2,7 @@ from datalab.datalab_session.utils.file_utils import *
 from datalab.datalab_session.utils.s3_utils import *
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag, flux_to_mag_array, flux_to_mag_scalar
 from datalab.datalab_session.utils.geometry import angular_distance_arcsec, distance_pixels
+from datalab.datalab_session.utils.centroiding import BackgroundModel, _fit_plane
 from datalab.datalab_session.utils.photometry import fractional_pixel_overlap, measure_aperture
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
@@ -126,8 +127,12 @@ class FileUtilsTestClass(FileExtendedTestCase):
       x_center=10.5,
       y_center=10.5,
       aperture_radius_px=2.0,
-      annulus_inner_radius_px=4.0,
-      annulus_outer_radius_px=6.0,
+      background_model=BackgroundModel(
+        mean=10.0,
+        peak=100.0,
+        source_peak=110.0,
+        effective_pixels=64.0,
+      ),
       gain=1.0,
       read_noise=0.0,
       dark=0.0,
@@ -136,3 +141,31 @@ class FileUtilsTestClass(FileExtendedTestCase):
     self.assertGreater(result["net_source_counts"], 0.0)
     self.assertEqual(result["mean_background_per_pixel"], 10.0)
     self.assertEqual(result["peak_pixel_value"], 110.0)
+    self.assertEqual(result["effective_background_pixels"], 64.0)
+
+  def test_fit_plane_accepts_point_tuples(self):
+    points = [
+      (0.0, 0.0, 4.0),
+      (1.0, 0.0, 6.0),
+      (0.0, 1.0, 1.0),
+      (2.0, 1.0, 5.0),
+      (-1.0, 2.0, -4.0),
+    ]
+
+    plane = _fit_plane(points)
+
+    self.assertIsNotNone(plane)
+    assert plane is not None
+    self.assertAlmostEqual(plane.c0, 4.0)
+    self.assertAlmostEqual(plane.c1, 2.0)
+    self.assertAlmostEqual(plane.c2, -3.0)
+
+  def test_fit_plane_rejects_degenerate_points(self):
+    points = [
+      (0.0, 0.0, 4.0),
+      (1.0, 1.0, 5.0),
+      (2.0, 2.0, 6.0),
+      (3.0, 3.0, 7.0),
+    ]
+
+    self.assertIsNone(_fit_plane(points))
