@@ -1,16 +1,13 @@
 import math
-from typing import Any
 
 import numpy as np
 
+from datalab.datalab_session.utils.centroiding import BackgroundModel
+
 ## Measure_aperture does the following:
-# 1. It defines a circular annulus around the source position and collects the pixel values
-#    within the annulus to estimate the background level. It performs iterative sigma clipping
-#    to exclude outliers from the background estimation.
-# 2. It defines a circular aperture around the source position and calculates the total flux
-#    within the aperture, accounting for fractional pixel overlap. It also identifies the peak
-#    pixel value within the aperture.
-# 3. It computes the net source counts by subtracting the estimated background contribution from
+# 1. It defines a circular aperture around the source position and calculates the total flux
+#    within the aperture, accounting for fractional pixel overlap.
+# 2. It computes the net source counts by subtracting the estimated background contribution from
 #    the total flux in the aperture. It also calculates the uncertainty in the source measurement
 #    based on the source counts, background level, and instrumental parameters (gain, read noise, dark current).
 def measure_aperture(
@@ -19,8 +16,7 @@ def measure_aperture(
     x_center: float,
     y_center: float,
     aperture_radius_px: float,
-    annulus_inner_radius_px: float,
-    annulus_outer_radius_px: float,
+    background_model: BackgroundModel,
     gain: float,
     read_noise: float,
     dark: float,
@@ -28,48 +24,11 @@ def measure_aperture(
 ) -> dict[str, float]:
     height, width = image.shape
     source_radius = aperture_radius_px
-    annulus_inner_r2 = annulus_inner_radius_px * annulus_inner_radius_px
-    annulus_outer_r2 = annulus_outer_radius_px * annulus_outer_radius_px
-
-    min_x = max(int(math.floor(x_center - annulus_outer_radius_px - 1)), 0)
-    max_x = min(int(math.ceil(x_center + annulus_outer_radius_px + 1)), width - 1)
-    min_y = max(int(math.floor(y_center - annulus_outer_radius_px - 1)), 0)
-    max_y = min(int(math.ceil(y_center + annulus_outer_radius_px + 1)), height - 1)
-
-    annulus_pixels: list[float] = []
-    for j in range(min_y, max_y + 1):
-        dy = j - y_center + 0.5
-        for i in range(min_x, max_x + 1):
-            dx = i - x_center + 0.5
-            r2 = dx * dx + dy * dy
-            if annulus_inner_r2 <= r2 <= annulus_outer_r2:
-                value = float(image[j, i])
-                if math.isfinite(value):
-                    annulus_pixels.append(value)
-
-    if not annulus_pixels:
+    bck_cnt = float(max(int(background_model.effective_pixels), 1))
+    if background_model.effective_pixels <= 0.0:
         raise error_class("Background annulus does not contain any valid pixels.")
 
-    clipped = np.asarray(annulus_pixels, dtype=float)
-    back_mean = 0.0
-    back2_mean = 0.0
-    previous_back_mean = 0.0
-    for iteration in range(9):
-        back_stdev = math.sqrt(max(0.0, back2_mean - back_mean * back_mean))
-        lower = back_mean - 2.0 * back_stdev
-        upper = back_mean + 2.0 * back_stdev
-        used = clipped if iteration == 0 else clipped[(clipped >= lower) & (clipped <= upper)]
-        if used.size:
-            back_mean = float(np.mean(used))
-            back2_mean = float(np.mean(used * used))
-        if abs(previous_back_mean - back_mean) < 0.1:
-            clipped = used
-            break
-        previous_back_mean = back_mean
-        clipped = used
-
-    mean_background_per_pixel = max(back_mean, 0.0)
-    peak = -math.inf
+    mean_background_per_pixel = max(background_model.mean, 0.0)
     source_sum = 0.0
     source_area = 0.0
 
@@ -87,8 +46,6 @@ def measure_aperture(
                 continue
             source_sum += value * fraction
             source_area += fraction
-            if value > peak:
-                peak = value
 
     if source_area <= 0.0:
         raise error_class("Source aperture does not contain any valid pixels.")
@@ -98,8 +55,7 @@ def measure_aperture(
     src = max(net_source, 0.0)
     bck = mean_background_per_pixel
     s_cnt = max(source_area, 0.0)
-    src_cnt = source_area if clipped.size > 0 else 0.0
-    bck_cnt = float(max(int(clipped.size), 1))
+    src_cnt = source_area
     source_uncertainty = math.sqrt(
         (src * gain)
         + s_cnt * (1.0 + src_cnt / bck_cnt) * (bck * gain + dark + read_noise * read_noise + gain * gain * 0.083521)
@@ -109,7 +65,7 @@ def measure_aperture(
         "net_source_counts": net_source,
         "source_uncertainty": source_uncertainty,
         "mean_background_per_pixel": mean_background_per_pixel,
-        "peak_pixel_value": peak,
+        "peak_pixel_value": background_model.source_peak,
         "effective_source_pixels": source_area,
         "effective_background_pixels": bck_cnt,
     }
