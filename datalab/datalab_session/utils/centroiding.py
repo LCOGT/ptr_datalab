@@ -8,7 +8,7 @@ import numpy as np
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
-PIXELCENTER = 0.5
+HALF_PIXEL = 0.5
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,8 @@ class BackgroundModel:
   mean: float
   peak: float
   plane: PlaneModel | None = None
+  source_peak: float = math.nan
+  effective_pixels: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class CentroidResult:
   y: float
   background: float
   peak: float
+  background_model: BackgroundModel | None = None
   success: bool = True
   message: str | None = None
 
@@ -54,9 +57,9 @@ def _source_max(image: np.ndarray, x_center: float, y_center: float, radius: flo
 
   source_max = -math.inf
   for j in range(j1, j2 + 1):
-    dj = j - y_center + PIXELCENTER
+    dj = j - y_center + HALF_PIXEL
     for i in range(i1, i2 + 1):
-      di = i - x_center + PIXELCENTER
+      di = i - x_center + HALF_PIXEL
       if di * di + dj * dj <= radius2:
         value = _pixel(image, i, j)
         if not math.isnan(value) and value > source_max:
@@ -68,47 +71,16 @@ def _fit_plane(points: list[tuple[float, float, float]]) -> PlaneModel | None:
   if len(points) < 4:
     return None
 
-  sum_1 = float(len(points))
-  sum_x = sum(x for x, _, _ in points)
-  sum_y = sum(y for _, y, _ in points)
-  sum_xx = sum(x * x for x, _, _ in points)
-  sum_yy = sum(y * y for _, y, _ in points)
-  sum_xy = sum(x * y for x, y, _ in points)
-  sum_z = sum(z for _, _, z in points)
-  sum_xz = sum(x * z for x, _, z in points)
-  sum_yz = sum(y * z for _, y, z in points)
-
-  matrix = [
-    [sum_1, sum_x, sum_y, sum_z],
-    [sum_x, sum_xx, sum_xy, sum_xz],
-    [sum_y, sum_xy, sum_yy, sum_yz],
-  ]
-
- ## Solve the linear system using Gaussian elimination with partial pivoting.
-  for pivot in range(3):
-    pivot_row = max(range(pivot, 3), key=lambda row: abs(matrix[row][pivot]))
-    if abs(matrix[pivot_row][pivot]) < 1e-12:
-      return None
-    if pivot_row != pivot:
-      matrix[pivot], matrix[pivot_row] = matrix[pivot_row], matrix[pivot]
-
-    pivot_value = matrix[pivot][pivot]
-    for col in range(pivot, 4):
-      matrix[pivot][col] /= pivot_value
-
-    for row in range(3):
-      if row == pivot:
-        continue
-      factor = matrix[row][pivot]
-      if factor == 0.0:
-        continue
-      for col in range(pivot, 4):
-        matrix[row][col] -= factor * matrix[pivot][col]
-
-  return PlaneModel(matrix[0][3], matrix[1][3], matrix[2][3])
+  pts = np.asarray(points, dtype=float)
+  x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+  design = np.column_stack((np.ones_like(x), x, y))
+  coefficients, _, rank, _ = np.linalg.lstsq(design, z, rcond=None)
+  if rank < 3:
+    return None
+  return PlaneModel(*coefficients)
 
 
-def _background(
+def calculate_background_model(
   image: np.ndarray,
   x_center: float,
   y_center: float,
@@ -120,7 +92,7 @@ def _background(
 ) -> BackgroundModel:
   source_max = _source_max(image, x_center, y_center, radius)
   if r_back2 <= r_back1:
-    return BackgroundModel(0.0, source_max)
+    return BackgroundModel(0.0, source_max, source_peak=source_max)
 
   r12 = r_back1 * r_back1
   r22 = r_back2 * r_back2
@@ -132,9 +104,9 @@ def _background(
   annulus_pixels: list[tuple[float, float, float]] = []
   if remove_background_stars:
     for j in range(j1, j2 + 1):
-      dj = j - y_center + PIXELCENTER
+      dj = j - y_center + HALF_PIXEL
       for i in range(i1, i2 + 1):
-        di = i - x_center + PIXELCENTER
+        di = i - x_center + HALF_PIXEL
         radius2 = di * di + dj * dj
         if r12 <= radius2 <= r22:
           value = _pixel(image, i, j)
@@ -169,9 +141,9 @@ def _background(
 
   kept: list[tuple[float, float, float]] = []
   for j in range(j1, j2 + 1):
-    dj = j - y_center + PIXELCENTER
+    dj = j - y_center + HALF_PIXEL
     for i in range(i1, i2 + 1):
-      di = i - x_center + PIXELCENTER
+      di = i - x_center + HALF_PIXEL
       radius2 = di * di + dj * dj
       if r12 <= radius2 <= r22:
         value = _pixel(image, i, j)
@@ -182,7 +154,13 @@ def _background(
 
   background = sum(value for _, _, value in kept) / len(kept) if kept else 0.0
   plane = _fit_plane(kept) if use_plane_background else None
-  return BackgroundModel(background, source_max - background, plane)
+  return BackgroundModel(
+    background,
+    source_max - background,
+    plane,
+    source_peak=source_max,
+    effective_pixels=float(len(kept)),
+  )
 
 
 def _background_value(
@@ -195,20 +173,27 @@ def _background_value(
   if background_model.plane is None:
     return background_model.mean
   return background_model.plane.value_at(
-    i - x_center + PIXELCENTER,
-    j - y_center + PIXELCENTER,
+    i - x_center + HALF_PIXEL,
+    j - y_center + HALF_PIXEL,
   )
 
 
 def _failed_centroid(
   x: float,
   y: float,
-  background: float,
-  peak: float,
+  background_model: BackgroundModel,
   message: str,
 ) -> CentroidResult:
   log.warning(f"Centroiding failed: {message}")
-  return CentroidResult(x, y, background, peak, success=False, message=message)
+  return CentroidResult(
+    x,
+    y,
+    background_model.mean,
+    background_model.peak,
+    background_model=background_model,
+    success=False,
+    message=message,
+  )
 
 
 def centroid(
@@ -237,7 +222,7 @@ def centroid(
 
   x_start = x_center
   y_start = y_center
-  background_model = _background(
+  background_model = calculate_background_model(
     image,
     x_center,
     y_center,
@@ -267,8 +252,7 @@ def centroid(
       return _failed_centroid(
         x_start,
         y_start,
-        background_model.mean,
-        background_model.peak,
+        background_model,
         "No valid pixels in centroid box.",
       )
 
@@ -278,7 +262,7 @@ def centroid(
     weight_i = 0.0
     for i in range(i1, i2 + 1):
       column_signal = 0.0
-      di = i - x_center + PIXELCENTER
+      di = i - x_center + HALF_PIXEL
       for j in range(j1, j2 + 1):
         value = _pixel(image, i, j)
         if not math.isnan(value):
@@ -291,7 +275,7 @@ def centroid(
     weight_j = 0.0
     for j in range(j1, j2 + 1):
       row_signal = 0.0
-      dj = j - y_center + PIXELCENTER
+      dj = j - y_center + HALF_PIXEL
       for i in range(i1, i2 + 1):
         value = _pixel(image, i, j)
         if not math.isnan(value):
@@ -305,24 +289,21 @@ def centroid(
       return _failed_centroid(
         x_start,
         y_start,
-        background_model.mean,
-        background_model.peak,
+        background_model,
         "Centroid calculation has zero weight in both dimensions.",
       )
     if weight_i == 0.0:
       return _failed_centroid(
         x_start,
         y_start,
-        background_model.mean,
-        background_model.peak,
+        background_model,
         "Centroid calculation has zero weight in the x dimension.",
       )
     if weight_j == 0.0:
       return _failed_centroid(
         x_start,
         y_start,
-        background_model.mean,
-        background_model.peak,
+        background_model,
         "Centroid calculation has zero weight in the y dimension.",
       )
 
@@ -336,8 +317,7 @@ def centroid(
       return _failed_centroid(
         x_start,
         y_start,
-        background_model.mean,
-        background_model.peak,
+        background_model,
         "Centroid repositioning exceeded centroid box size.",
       )
 
@@ -351,7 +331,7 @@ def centroid(
       i2 = i1 + width
       j1 = int(y_center) - height // 2
       j2 = j1 + height
-      background_model = _background(
+      background_model = calculate_background_model(
         image,
         x_center,
         y_center,
@@ -369,5 +349,6 @@ def centroid(
     y_center,
     background_model.mean,
     background_model.peak,
+    background_model=background_model,
     message="Centroid calculation completed.",
   )
