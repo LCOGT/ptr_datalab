@@ -118,12 +118,12 @@ class AperturePhotometry(BaseDataOperation):
             annulus_outer_radius_px = float(self.input_data['annulus_outer_radius_px'])
             min_comparisons = int(self.input_data.get('min_comparisons', DEFAULT_MIN_COMPARISONS))
             max_comparisons = int(self.input_data.get('max_comparisons', DEFAULT_MAX_COMPARISONS))
-            fits_paths = [
-                InputDataHandler(submitter, input_file['basename'], input_file.get('source')).fits_file
+            input_handlers = [
+                InputDataHandler(submitter, input_file['basename'], input_file.get('source'))
                 for input_file in input_files
             ]
             result = generate_light_curve(
-                fits_paths=fits_paths,
+                input_handlers=input_handlers,
                 target_ra_deg=target_ra,
                 target_dec_deg=target_dec,
                 aperture_radius_px=aperture_radius_px,
