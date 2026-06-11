@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 import numpy as np
-from astropy.wcs import WCS
 
 from datalab.datalab_session.utils.centroiding import centroid
+from datalab.datalab_session.utils.fits_metadata import header_float, world_to_pixel
 from datalab.datalab_session.utils.photometry import measure_aperture
 
 
@@ -16,18 +16,6 @@ DEFAULT_READ_NOISE = 0.0
 AIJ_COMP_BRIGHTNESS_TO_DISTANCE_WEIGHT = 50.0
 AIJ_COMP_UPPER_BRIGHTNESS_PERCENT = 150.0
 AIJ_COMP_LOWER_BRIGHTNESS_PERCENT = 50.0
-
-
-def _world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:
-    x, y = WCS(dict(header)).world_to_pixel_values(float(ra_deg), float(dec_deg))
-    return float(x), float(y)
-
-
-def _header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: float) -> float:
-    for key in keys:
-        if key in header:
-            return float(header[key])
-    return default
 
 
 @dataclass(frozen=True)
@@ -108,7 +96,7 @@ def measure_candidate_on_frame(
     annulus_outer_radius_px: float,
     error_class: type[Exception] = ValueError,
 ) -> ComparisonMeasurement:
-    x, y = _world_to_pixel(frame.header, candidate.ra_deg, candidate.dec_deg)
+    x, y = world_to_pixel(frame.header, candidate.ra_deg, candidate.dec_deg)
     centroid_result = centroid(
         image=frame.image,
         x_click=x,
@@ -124,10 +112,9 @@ def measure_candidate_on_frame(
         x_center=centroid_result.x,
         y_center=centroid_result.y,
         aperture_radius_px=aperture_radius_px,
-        annulus_inner_radius_px=annulus_inner_radius_px,
-        annulus_outer_radius_px=annulus_outer_radius_px,
-        gain=_header_float(frame.header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
-        read_noise=_header_float(frame.header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
+        background_model=centroid_result.background_model,
+        gain=header_float(frame.header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
+        read_noise=header_float(frame.header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
         dark=0.0,
         error_class=error_class,
     )
