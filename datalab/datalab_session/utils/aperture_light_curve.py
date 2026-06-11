@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import math
 import os
@@ -9,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 from astropy.wcs import WCS
+from dateutil.parser import ParserError, parse as parse_date
 
 from datalab.datalab_session.utils.comparison_stars import (
     ComparisonMeasurement,
@@ -17,14 +16,12 @@ from datalab.datalab_session.utils.comparison_stars import (
     select_comparison_stars,
 )
 from datalab.datalab_session.utils.centroiding import centroid
-from datalab.datalab_session.utils.fits_utils import load_fits_cat_rows, load_fits_image_data, load_fits_primary_header
+from datalab.datalab_session.utils.fits_metadata import header_float, world_to_pixel
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 from datalab.datalab_session.utils.geometry import (
     angular_distance_arcsec,
     distance_pixels,
     minimum_angular_neighbor_distance_arcsec,
-    too_close_to_edges,
-    too_close_to_target,
 )
 from datalab.datalab_session.utils.photometry_diagnostics import (
     candidate_overlay_jpeg_base64,
@@ -55,21 +52,9 @@ class LightCurveError(ValueError):
     pass
 
 
-def _world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:
-    x, y = WCS(dict(header)).world_to_pixel_values(float(ra_deg), float(dec_deg))
-    return float(x), float(y)
-
-
 def _pixel_to_world(header: Mapping[str, Any], x: float, y: float) -> tuple[float, float]:
     ra, dec = WCS(dict(header)).pixel_to_world_values(float(x), float(y))
     return float(ra), float(dec)
-
-
-def _header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: float) -> float:
-    for key in keys:
-        if key in header:
-            return float(header[key])
-    return default
 
 
 @dataclass(frozen=True)
@@ -130,7 +115,7 @@ class LightCurveResult:
 
 
 def generate_light_curve(
-    fits_paths: list[str],
+    input_handlers: list[Any],
     target_ra_deg: float,
     target_dec_deg: float,
     aperture_radius_px: float,
@@ -142,7 +127,7 @@ def generate_light_curve(
 ) -> LightCurveResult:
     log.info(
         "Aperture Photometry pipeline starting: "
-        f"fits_count={len(fits_paths)}, target_ra={target_ra_deg:.8f}, target_dec={target_dec_deg:.8f}, "
+        f"fits_count={len(input_handlers)}, target_ra={target_ra_deg:.8f}, target_dec={target_dec_deg:.8f}, "
         f"aperture_radius_px={aperture_radius_px:.3f}, "
         f"annulus_inner_radius_px={annulus_inner_radius_px:.3f}, "
         f"annulus_outer_radius_px={annulus_outer_radius_px:.3f}, "
@@ -150,7 +135,7 @@ def generate_light_curve(
         f"min_comparisons={min_comparisons}, max_comparisons={max_comparisons}"
     )
     _validate_inputs(
-        fits_paths=fits_paths,
+        input_handlers=input_handlers,
         aperture_radius_px=aperture_radius_px,
         annulus_inner_radius_px=annulus_inner_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
@@ -160,14 +145,7 @@ def generate_light_curve(
     )
 
     diagnostics: list[str] = []
-    frames = _load_and_validate_frames(fits_paths)
-    if not frames:
-        raise LightCurveError("Aperture photometry requires at least 1 valid input file.")
-    frames = sorted(frames, key=lambda frame: frame.date_obs)
-    log.info(
-        "Aperture Photometry frames loaded and sorted: "
-        f"frame_count={len(frames)}, ordered_paths={[frame.fits_path for frame in frames]}"
-    )
+    frames = _validated_frame_contexts(input_handlers)
 
     diagnostics_by_fits_basename: dict[str, list[str]] = {
         os.path.basename(frame.fits_path): []
@@ -356,7 +334,7 @@ def generate_light_curve(
 
 def _validate_inputs(
     *,
-    fits_paths: Sequence[str],
+    input_handlers: Sequence[Any],
     aperture_radius_px: float,
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
@@ -364,8 +342,8 @@ def _validate_inputs(
     min_comparisons: int,
     max_comparisons: int,
 ) -> None:
-    if not fits_paths:
-        raise LightCurveError("fits_paths must be a non-empty list.")
+    if not input_handlers:
+        raise LightCurveError("input_handlers must be a non-empty list.")
     if aperture_radius_px <= 0:
         raise LightCurveError("aperture_radius_px must be > 0.")
     if annulus_inner_radius_px <= aperture_radius_px:
@@ -378,19 +356,30 @@ def _validate_inputs(
         raise LightCurveError("comparison_strategy must be 'auto' or 'variability_first'.")
 
 
-def _load_and_validate_frames(fits_paths: Sequence[str]) -> list[FrameContext]:
+def _validated_frame_contexts(input_handlers: Sequence[Any]) -> list[FrameContext]:
     frames: list[FrameContext] = []
-    for fits_path in fits_paths:
-        log.info(f"Aperture Photometry loading FITS frame: {fits_path}")
+    for input_handler in input_handlers:
+        fits_path = input_handler.fits_file
+        log.info(f"Aperture Photometry validating FITS frame: {fits_path}")
         try:
-            image = np.asarray(load_fits_image_data(fits_path, error_class=LightCurveError), dtype=float)
+            image = np.asarray(input_handler.sci_data, dtype=float)
             if image.ndim != 2:
                 raise LightCurveError(f"Primary image for {fits_path} is not a 2D array.")
-            header = load_fits_primary_header(fits_path, error_class=LightCurveError)
-            date_obs = _parse_date_obs(header.get("DATE-OBS"), fits_path)
-            second_hdu_rows = tuple(load_fits_cat_rows(fits_path, error_class=LightCurveError))
+
+            header = dict(input_handler.sci_hdu.header)
+            date_obs_value = header.get("DATE-OBS")
+            if not isinstance(date_obs_value, str) or not date_obs_value.strip():
+                raise LightCurveError(f"Missing DATE-OBS in {fits_path}.")
+            try:
+                date_obs = parse_date(date_obs_value)
+            except (ParserError, TypeError, ValueError, OverflowError) as exc:
+                raise LightCurveError(f"Malformed DATE-OBS in {fits_path}: {date_obs_value!r}") from exc
+            if date_obs.tzinfo is None:
+                date_obs = date_obs.replace(tzinfo=timezone.utc)
+            second_hdu_rows = tuple(_cat_rows(input_handler.get_hdu("CAT").data))
             if not second_hdu_rows:
                 raise LightCurveError(f"Second HDU is missing or empty for {fits_path}.")
+
             _validate_wcs(header, fits_path, image.shape)
             _validate_second_hdu(second_hdu_rows, fits_path)
             log.info(
@@ -411,34 +400,51 @@ def _load_and_validate_frames(fits_paths: Sequence[str]) -> list[FrameContext]:
             )
         except LightCurveError as exc:
             log.warning(
-                "Aperture Photometry ignoring input frame after load/validation error: "
+                "Aperture Photometry ignoring input frame after validation error: "
                 f"frame={fits_path}, error={exc}"
             )
+        except Exception as exc:
+            log.warning(
+                "Aperture Photometry ignoring input frame after validation error: "
+                f"frame={fits_path}, error={exc}"
+            )
+
+    if not frames:
+        raise LightCurveError("Aperture photometry requires at least 1 valid input file.")
+
+    frames = sorted(frames, key=lambda frame: frame.date_obs)
+    log.info(
+        "Aperture Photometry frames validated and sorted: "
+        f"frame_count={len(frames)}, ordered_paths={[frame.fits_path for frame in frames]}"
+    )
     return frames
 
 
-def _parse_date_obs(value: Any, fits_path: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise LightCurveError(f"Missing DATE-OBS in {fits_path}.")
-    text = value.strip()
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError as exc:
-        raise LightCurveError(f"Malformed DATE-OBS in {fits_path}: {value!r}") from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
+def _cat_rows(data: Any) -> list[dict[str, Any]]:
+    if data is None:
+        return []
+    names = list(data.names or [])
+    return [
+        {
+            name: data[name][index].item() if hasattr(data[name][index], "item") else data[name][index]
+            for name in names
+        }
+        for index in range(len(data))
+    ]
 
 
 def _validate_wcs(header: Mapping[str, Any], fits_path: str, shape: tuple[int, int]) -> None:
     try:
-        wcs = WCS(dict(header))
+        wcs = WCS(dict(header)).celestial
         if not wcs.has_celestial:
             raise ValueError("missing celestial WCS")
-        _world_to_pixel(header, float(header.get("CRVAL1", 0.0)), float(header.get("CRVAL2", 0.0)))
-        _pixel_to_world(header, shape[1] / 2.0, shape[0] / 2.0)
+
+        center_x = shape[1] / 2.0
+        center_y = shape[0] / 2.0
+        skycoord = wcs.pixel_to_world(center_x, center_y)
+        roundtrip_x, roundtrip_y = wcs.world_to_pixel(skycoord)
+        if not all(math.isfinite(value) for value in (roundtrip_x, roundtrip_y)):
+            raise ValueError("celestial WCS produced non-finite coordinates")
     except Exception as exc:  # pragma: no cover - error path covered by tests
         raise LightCurveError(f"Missing or unusable WCS in {fits_path}.") from exc
 
@@ -465,7 +471,7 @@ def _measure_target(
     annulus_outer_radius_px: float,
 ) -> TargetMeasurement:
     try:
-        initial_x, initial_y = _world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
+        initial_x, initial_y = world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
     except Exception as exc:
         raise LightCurveError(f"Target WCS localization failed for {frame.fits_path}.") from exc
     log.info(
@@ -493,10 +499,9 @@ def _measure_target(
         x_center=centroid_result.x,
         y_center=centroid_result.y,
         aperture_radius_px=aperture_radius_px,
-        annulus_inner_radius_px=annulus_inner_radius_px,
-        annulus_outer_radius_px=annulus_outer_radius_px,
-        gain=_header_float(frame.header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
-        read_noise=_header_float(frame.header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
+        background_model=centroid_result.background_model,
+        gain=header_float(frame.header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
+        read_noise=header_float(frame.header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
         dark=0.0,
         error_class=LightCurveError,
     )
@@ -596,7 +601,7 @@ def _build_field_star_catalog(
 ) -> list[dict[str, Any]]:
     clusters: list[dict[str, Any]] = []
     target_pixels = {
-        frame.fits_path: _world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
+        frame.fits_path: world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
         for frame in frames
     }
 
@@ -609,27 +614,43 @@ def _build_field_star_catalog(
                 log.warning(f"rejected comparison candidate in {frame.fits_path}: {exc}")
         rejected_for_target = 0
         rejected_for_edge = 0
-        for row in rows:
-            x, y = _world_to_pixel(frame.header, row["ra_deg"], row["dec_deg"])
-            row["frame_path"] = frame.fits_path
-            row["pixel_x"] = x
-            row["pixel_y"] = y
+        if not rows:
+            log.info(
+                "Aperture Photometry comparison candidates processed: "
+                f"frame={frame.fits_path}, extracted_rows=0, "
+                "rejected_too_close_to_target=0, "
+                f"rejected_too_close_to_edge=0, clusters_so_far={len(clusters)}"
+            )
+            continue
 
-        for row in rows:
+        ra_values = np.asarray([row["ra_deg"] for row in rows], dtype=float)
+        dec_values = np.asarray([row["dec_deg"] for row in rows], dtype=float)
+        x_values, y_values = WCS(dict(frame.header)).world_to_pixel_values(ra_values, dec_values)
+        x_values = np.asarray(x_values, dtype=float)
+        y_values = np.asarray(y_values, dtype=float)
+        for row, x, y in zip(rows, x_values, y_values):
+            row["frame_path"] = frame.fits_path
+            row["pixel_x"] = float(x)
+            row["pixel_y"] = float(y)
+
+        target_x, target_y = target_pixels[frame.fits_path]
+        target_limit_px = max(TARGET_PROXIMITY_FACTOR * aperture_radius_px, annulus_outer_radius_px)
+        too_close_to_target_mask = np.hypot(x_values - target_x, y_values - target_y) <= target_limit_px
+        too_close_to_edge_mask = (
+            (x_values - annulus_outer_radius_px < EDGE_MARGIN_PX)
+            | (y_values - annulus_outer_radius_px < EDGE_MARGIN_PX)
+            | (x_values + annulus_outer_radius_px >= frame.width - EDGE_MARGIN_PX)
+            | (y_values + annulus_outer_radius_px >= frame.height - EDGE_MARGIN_PX)
+        )
+
+        rejected_for_target = int(np.count_nonzero(too_close_to_target_mask))
+        rejected_for_edge = int(np.count_nonzero(~too_close_to_target_mask & too_close_to_edge_mask))
+
+        for row, target_rejected, edge_rejected in zip(rows, too_close_to_target_mask, too_close_to_edge_mask):
+            if target_rejected or edge_rejected:
+                continue
             x = row["pixel_x"]
             y = row["pixel_y"]
-            if too_close_to_target(
-                candidate_xy=(x, y),
-                target_xy=target_pixels[frame.fits_path],
-                annulus_outer_radius_px=annulus_outer_radius_px,
-                aperture_radius_px=aperture_radius_px,
-                target_proximity_factor=TARGET_PROXIMITY_FACTOR,
-            ):
-                rejected_for_target += 1
-                continue
-            if too_close_to_edges(x, y, frame.width, frame.height, annulus_outer_radius_px, EDGE_MARGIN_PX):
-                rejected_for_edge += 1
-                continue
 
             matched = False
             for cluster in clusters:
