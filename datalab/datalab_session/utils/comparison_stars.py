@@ -63,6 +63,11 @@ def select_comparison_stars(
     max_comparisons: int,
     error_class: type[Exception] = ValueError,
 ) -> ComparisonSelectionResult:
+    """
+        Selected comparison stars from source catalog candidates.
+
+        Returns the sleected comparison star ensemble and diagnostics for the frontend.
+    """
     selected = _select_by_source_catalog(
         frames=frames,
         catalog=catalog,
@@ -96,6 +101,11 @@ def measure_candidate_on_frame(
     annulus_outer_radius_px: float,
     error_class: type[Exception] = ValueError,
 ) -> ComparisonMeasurement:
+    """
+        Converts a comp star candidate to pixel coordinates, centroids it, and measures aperture photometry on a single FITS frame.
+
+        Returns the comp star measurement for a single frame.
+    """
     x, y = world_to_pixel(frame.header, candidate.ra_deg, candidate.dec_deg)
     centroid_result = centroid(
         image=frame.image,
@@ -137,6 +147,11 @@ def astroimagej_comparison_weight(
     target_catalog_flux: float | None,
     image_diagonal_px: float,
 ) -> float:
+    """
+        Calculates comparison star weight based on brightness and distance from the target, following the AstroImageJ strategy.
+
+        Returns the comp star measurement for a single frame.
+    """
     brightness_weight = AIJ_COMP_BRIGHTNESS_TO_DISTANCE_WEIGHT / 100.0
     distance_weight = 1.0 - brightness_weight
     norm_brightness = _astroimagej_normalized_brightness(candidate, target_catalog_flux)
@@ -145,8 +160,6 @@ def astroimagej_comparison_weight(
         norm_distance = 1.0 - (candidate.target_separation_px / image_diagonal_px)
     return brightness_weight * norm_brightness + distance_weight * norm_distance
 
-
-_astroimagej_comparison_weight = astroimagej_comparison_weight
 
 
 def _select_by_source_catalog(
@@ -160,6 +173,11 @@ def _select_by_source_catalog(
     max_comparisons: int,
     error_class: type[Exception],
 ) -> list[ComparisonStar]:
+    """
+        Measures and ranks source catalog candidates across frames.
+
+        Returns the strongest comp star candidates based on variability and brightness/distance weighting.
+    """
     enriched = _measure_and_rank_candidates(
         frames=frames,
         catalog=catalog,
@@ -186,6 +204,11 @@ def _source_catalog_sort_key(
 
 
 def _astroimagej_normalized_brightness(candidate: ComparisonStar, target_catalog_flux: float | None) -> float:
+    """
+        Calculates how closely a candidate's catalog flux matches the target catalog flux.
+
+        Returns a normalize brightness score between 0.0 and 1.0, where 1.0 indicates a perfect match.
+    """
     candidate_flux = _candidate_catalog_flux(candidate)
     if (
         target_catalog_flux is None
@@ -234,6 +257,11 @@ def _measure_and_rank_candidates(
     annulus_outer_radius_px: float,
     error_class: type[Exception],
 ) -> list[ComparisonStar]:
+    """
+        Measures each candidate across all frames and calcaltes variability scores.
+
+        Returns comp star candidates that have valid positive measurements across all frames.
+    """
     measured_candidates: list[tuple[dict[str, Any], ComparisonStar, np.ndarray]] = []
     for candidate in sorted(catalog, key=lambda row: row["candidate_id"]):
         reference_magnitude = float(candidate.get("reference_magnitude", candidate["second_hdu_magnitude"]))

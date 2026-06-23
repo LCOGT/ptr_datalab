@@ -23,6 +23,11 @@ log.setLevel(logging.INFO)
 
 
 class AperturePhotometry(BaseDataOperation):
+    """
+        Builds a calibrated aperture photometry light curve for a target source across input images, using comparison stars from the source catalog.
+
+        Returns light curve rows and diagnositc data for the frontend.
+    """
     MINIMUM_NUMBER_OF_INPUTS = 1
     MAXIMUM_NUMBER_OF_INPUTS = 999
     PROGRESS_STEPS = {
@@ -99,6 +104,11 @@ class AperturePhotometry(BaseDataOperation):
         }
 
     def operate(self, submitter: User):
+        """
+            Runs aperture photometry for the submitted source and input FITS files.
+            
+            Returns a calibrated light curve and diagnostic data for the frontend.
+        """
         source = self.input_data.get('source')
         if not source:
             raise ClientAlertException(f'Operation {self.name()} requires a source.')

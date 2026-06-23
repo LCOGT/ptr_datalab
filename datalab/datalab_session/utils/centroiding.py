@@ -13,16 +13,28 @@ HALF_PIXEL = 0.5
 
 @dataclass(frozen=True)
 class PlaneModel:
+  """
+    Linear background plane model of the form z = c0 + c1 * x + c2 * y.
+    Fitted from annulus pixels.
+  """
+
   c0: float
   c1: float
   c2: float
 
   def value_at(self, x: float, y: float) -> float:
+    """
+      Returns the value of the plane at the given (x, y) coordinates.
+    """
     return self.c0 + self.c1 * x + self.c2 * y
 
 
 @dataclass(frozen=True)
 class BackgroundModel:
+  """ 
+    Background estimate for an aperture photometry measurement. 
+    Describes only the background. Source brightness values are calculated separately.
+  """
   mean: float
   plane: PlaneModel | None = None
   effective_pixels: float = 0.0
@@ -30,6 +42,17 @@ class BackgroundModel:
 
 @dataclass(frozen=True)
 class CentroidResult:
+  """
+    Result of centroiding a source.
+
+    x: centroid x coordinate in FITS pixel coords
+    y: centroid y coordinate in FITS pixel coords
+    background: estimated background value at the centroid position
+    peak: estimated peak value of the source (background subtracted)
+    background_model: background model used for the centroiding and photometry
+    success: whether the centroiding was successful
+    message: optional message describing the result or any issues encountered
+  """
   x: float
   y: float
   background: float
@@ -40,6 +63,9 @@ class CentroidResult:
 
 ## Returns the pixel value at the given coordinates, or NaN if the coordinates are out of bounds.
 def _pixel(image: np.ndarray, x: int, y: int) -> float:
+  """
+    Returns the pixel value at the given coordinates, or NaN if the coordinates are out of bounds.
+  """
   if y < 0 or y >= image.shape[0] or x < 0 or x >= image.shape[1]:
     return math.nan
   return float(image[y, x])
@@ -47,6 +73,9 @@ def _pixel(image: np.ndarray, x: int, y: int) -> float:
 
 ## Finds the brightest pixel value within a circular aperture.
 def _aperture_peak(image: np.ndarray, x_center: float, y_center: float, radius: float) -> float:
+  """
+    Returns the brightest valid pixel value within a circular aperture.
+  """
   radius2 = radius * radius
   i1 = int(x_center - radius)
   i2 = int(x_center + radius)
@@ -64,8 +93,11 @@ def _aperture_peak(image: np.ndarray, x_center: float, y_center: float, radius: 
           peak = value
   return peak
 
-## Fits a plane to the given points using least squares. Returns None if the points are degenerate.
 def _fit_plane(points: list[tuple[float, float, float]]) -> PlaneModel | None:
+  """
+    Fits a linear background plane to sampled points in the form (x, y, z) using least squares.
+    Returns a PlaneModel if successful, or None if the fit fails (e.g., not enough points or rank deficiency).
+  """
   if len(points) < 4:
     return None
 
@@ -88,6 +120,10 @@ def calculate_background_model(
   remove_background_stars: bool,
   use_plane_background: bool,
 ) -> BackgroundModel:
+  """
+    Calculates the local background from the annulus around the source.
+    Returns a BackgroundModel containing the mean background value, an optional fitted plane, and the number of effective pixels used in the calculation.
+  """
   if r_back2 <= r_back1:
     return BackgroundModel(mean=0.0)
 
@@ -165,6 +201,9 @@ def _background_value(
   i: int,
   j: int,
 ) -> float:
+  """
+    Returns the background value for a pixel using either the mean or fitted plane from the background model
+  """
   if background_model.plane is None:
     return background_model.mean
   return background_model.plane.value_at(
@@ -180,6 +219,9 @@ def _failed_centroid(
   background_model: BackgroundModel,
   message: str,
 ) -> CentroidResult:
+  """
+    Builds a failed centroid result while preserving the original click position and diagnostics.
+  """
   log.warning(f"Centroiding failed: {message}")
   return CentroidResult(
     x,
@@ -204,6 +246,13 @@ def centroid(
   remove_background_stars: bool = True,
   use_plane_background: bool = False,
 ) -> CentroidResult:
+  """
+    Finds a centroid (AIJ-style) around an initial source position (x_click, y_click).
+
+    Input coords are in FITS pixel coordinates.
+
+    Returns a CentroidResult containing the centroid position, localbackground estimate, peak value, and any relevant messages.
+  """
   image = np.asarray(image, dtype=float)
   x_center = x_click
   y_center = y_click

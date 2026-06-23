@@ -59,6 +59,9 @@ def _pixel_to_world(header: Mapping[str, Any], x: float, y: float) -> tuple[floa
 
 @dataclass(frozen=True)
 class FrameContext:
+    """
+        Validates FITS frame data needed by the aperture photometry pipeline.
+    """
     fits_path: str
     date_obs: datetime
     header: Mapping[str, Any]
@@ -70,6 +73,9 @@ class FrameContext:
 
 @dataclass(frozen=True)
 class TargetMeasurement:
+    """
+        Aperture measurement for the target source in a single frame.
+    """
     x: float
     y: float
     net_source_counts: float
@@ -82,6 +88,9 @@ class TargetMeasurement:
 
 @dataclass(frozen=True)
 class FrameResult:
+    """
+        Target and comp star measurements for a single FITS frame.
+    """
     fits_path: str
     date_obs: datetime
     target_measurement: TargetMeasurement
@@ -90,6 +99,9 @@ class FrameResult:
 
 @dataclass(frozen=True)
 class LightCurveRow:
+    """
+        A single row of the calibrated light curve for the target source.
+    """
     fits_path: str
     date_obs: datetime
     target_centroid_x: float
@@ -106,6 +118,9 @@ class LightCurveRow:
 
 @dataclass(frozen=True)
 class LightCurveResult:
+    """
+        Complete aperture photometry result returned by the generate_light_curve function, including light curve rows, selected comparison stars, and diagnostics.
+    """
     frames: list[FrameResult]
     selected_comparison_stars: list[ComparisonStar]
     light_curve_rows: list[LightCurveRow]
@@ -125,6 +140,12 @@ def generate_light_curve(
     min_comparisons: int = 5,
     max_comparisons: int = 10,
 ) -> LightCurveResult:
+    """
+        Generates a calibrated target light curve from input FITS files, using comparison stars from the source catalog.
+
+        Validates frames, measures the target, builds a comp star catalog,
+        selects a comparison ensemble, and produces calibrated light curve rows with diagnostics for the frontend.
+    """
     log.info(
         "Aperture Photometry pipeline starting: "
         f"fits_count={len(input_handlers)}, target_ra={target_ra_deg:.8f}, target_dec={target_dec_deg:.8f}, "
@@ -470,6 +491,11 @@ def _measure_target(
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
 ) -> TargetMeasurement:
+    """
+        Converts the target RA and Dec to pixel coordinates, centroids the source, and measures aperture photometry.
+
+        Returns the target measurement for a single frame.
+    """
     try:
         initial_x, initial_y = world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
     except Exception as exc:
@@ -549,6 +575,11 @@ def _target_catalog_flux_proxy(
     target_ra_deg: float,
     target_dec_deg: float,
 ) -> float | None:
+    """
+        Estimates the target source catalog flux from nearby catalog matches across frames.
+
+        Returns the median matched catalog flux, or None if no valid match is found.
+    """
     target_catalog_fluxes: list[float] = []
     for frame in frames:
         target = target_measurements.get(frame.fits_path)
@@ -599,6 +630,11 @@ def _build_field_star_catalog(
     aperture_radius_px: float,
     annulus_outer_radius_px: float,
 ) -> list[dict[str, Any]]:
+    """
+        Builds comp star candidates from the source catalogs across valid frames.
+
+        Reutrns candidates that are present in all frames and are not too close to the target or the edge of the image.
+    """
     clusters: list[dict[str, Any]] = []
     target_pixels = {
         frame.fits_path: world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
@@ -727,6 +763,11 @@ def _build_field_star_catalog(
 
 
 def _extract_candidate_row(row: Mapping[str, Any], fits_path: str) -> dict[str, Any]:
+    """
+        Extracts and validates RA, Dec, magnitude, and flux from a source catalog row.
+
+        Returns a normalized candidate row dictionary.
+    """
     required_keys = (
         SOURCE_CATALOG_RA_KEY,
         SOURCE_CATALOG_DEC_KEY,

@@ -22,6 +22,11 @@ def measure_aperture(
     dark: float,
     error_class: type[Exception] = ValueError,
 ) -> dict[str, float]:
+    """
+        Measures source counts and uncertainty within a circular aperture, accounting for background subtraction and instrumental noise.
+
+        Computes the net source counts, source uncertainty, mean background per pixel, peak pixel value, and effective number of pixels in the source and background regions.
+    """
     height, width = image.shape
     source_radius = aperture_radius_px
     bck_cnt = float(max(int(background_model.effective_pixels), 1))
@@ -81,6 +86,9 @@ def fractional_pixel_overlap(
     radius: float,
     substeps: int = 5,
 ) -> float:
+    """
+        Approximates the fractional overlap of a pixel at (i, j) with a circular aperture centered at (x_center, y_center) with the given radius.
+    """
     inside = 0
     total = substeps * substeps
     for sy in range(substeps):
