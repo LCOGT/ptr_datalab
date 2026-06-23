@@ -144,7 +144,6 @@ class TestAnalysis(TestCase):
         self.assertEqual(result.background, 0.0)
         self.assertEqual(result.peak, 100.0)
         self.assertIsNotNone(result.background_model)
-        self.assertEqual(result.background_model.source_peak, 100.0)
         self.assertGreater(result.background_model.effective_pixels, 0.0)
         self.assertEqual(result.message, 'Centroid calculation completed.')
 

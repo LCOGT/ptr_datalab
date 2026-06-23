@@ -129,8 +129,6 @@ class FileUtilsTestClass(FileExtendedTestCase):
       aperture_radius_px=2.0,
       background_model=BackgroundModel(
         mean=10.0,
-        peak=100.0,
-        source_peak=110.0,
         effective_pixels=64.0,
       ),
       gain=1.0,
