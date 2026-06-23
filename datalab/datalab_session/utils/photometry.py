@@ -31,6 +31,7 @@ def measure_aperture(
     mean_background_per_pixel = max(background_model.mean, 0.0)
     source_sum = 0.0
     source_area = 0.0
+    peak_pixel_value = -math.inf
 
     source_min_x = max(int(math.floor(x_center - source_radius - 1)), 0)
     source_max_x = min(int(math.ceil(x_center + source_radius + 1)), width - 1)
@@ -44,6 +45,7 @@ def measure_aperture(
             fraction = fractional_pixel_overlap(i, j, x_center, y_center, source_radius)
             if fraction <= 0.0:
                 continue
+            peak_pixel_value = max(peak_pixel_value, value)
             source_sum += value * fraction
             source_area += fraction
 
@@ -65,7 +67,7 @@ def measure_aperture(
         "net_source_counts": net_source,
         "source_uncertainty": source_uncertainty,
         "mean_background_per_pixel": mean_background_per_pixel,
-        "peak_pixel_value": background_model.source_peak,
+        "peak_pixel_value": peak_pixel_value,
         "effective_source_pixels": source_area,
         "effective_background_pixels": bck_cnt,
     }

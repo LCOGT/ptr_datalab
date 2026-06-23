@@ -24,9 +24,7 @@ class PlaneModel:
 @dataclass(frozen=True)
 class BackgroundModel:
   mean: float
-  peak: float
   plane: PlaneModel | None = None
-  source_peak: float = math.nan
   effective_pixels: float = 0.0
 
 
@@ -47,24 +45,24 @@ def _pixel(image: np.ndarray, x: int, y: int) -> float:
   return float(image[y, x])
 
 
-## Finds the maximum pixel value within a circular region around the center.
-def _source_max(image: np.ndarray, x_center: float, y_center: float, radius: float) -> float:
+## Finds the brightest pixel value within a circular aperture.
+def _aperture_peak(image: np.ndarray, x_center: float, y_center: float, radius: float) -> float:
   radius2 = radius * radius
   i1 = int(x_center - radius)
   i2 = int(x_center + radius)
   j1 = int(y_center - radius)
   j2 = int(y_center + radius)
 
-  source_max = -math.inf
+  peak = -math.inf
   for j in range(j1, j2 + 1):
     dj = j - y_center + HALF_PIXEL
     for i in range(i1, i2 + 1):
       di = i - x_center + HALF_PIXEL
       if di * di + dj * dj <= radius2:
         value = _pixel(image, i, j)
-        if not math.isnan(value) and value > source_max:
-          source_max = value
-  return source_max
+        if not math.isnan(value) and value > peak:
+          peak = value
+  return peak
 
 ## Fits a plane to the given points using least squares. Returns None if the points are degenerate.
 def _fit_plane(points: list[tuple[float, float, float]]) -> PlaneModel | None:
@@ -90,9 +88,8 @@ def calculate_background_model(
   remove_background_stars: bool,
   use_plane_background: bool,
 ) -> BackgroundModel:
-  source_max = _source_max(image, x_center, y_center, radius)
   if r_back2 <= r_back1:
-    return BackgroundModel(0.0, source_max, source_peak=source_max)
+    return BackgroundModel(mean=0.0)
 
   r12 = r_back1 * r_back1
   r22 = r_back2 * r_back2
@@ -155,10 +152,8 @@ def calculate_background_model(
   background = sum(value for _, _, value in kept) / len(kept) if kept else 0.0
   plane = _fit_plane(kept) if use_plane_background else None
   return BackgroundModel(
-    background,
-    source_max - background,
-    plane,
-    source_peak=source_max,
+    mean=background,
+    plane=plane,
     effective_pixels=float(len(kept)),
   )
 
@@ -181,6 +176,7 @@ def _background_value(
 def _failed_centroid(
   x: float,
   y: float,
+  peak: float,
   background_model: BackgroundModel,
   message: str,
 ) -> CentroidResult:
@@ -189,7 +185,7 @@ def _failed_centroid(
     x,
     y,
     background_model.mean,
-    background_model.peak,
+    peak,
     background_model=background_model,
     success=False,
     message=message,
@@ -232,6 +228,8 @@ def centroid(
     remove_background_stars,
     use_plane_background,
   )
+  raw_peak = _aperture_peak(image, x_center, y_center, radius)
+  peak = raw_peak - background_model.mean
 
   still_moving = True
   iteration = 100 if find_centroid else 0
@@ -252,6 +250,7 @@ def centroid(
       return _failed_centroid(
         x_start,
         y_start,
+        peak,
         background_model,
         "No valid pixels in centroid box.",
       )
@@ -289,6 +288,7 @@ def centroid(
       return _failed_centroid(
         x_start,
         y_start,
+        peak,
         background_model,
         "Centroid calculation has zero weight in both dimensions.",
       )
@@ -296,6 +296,7 @@ def centroid(
       return _failed_centroid(
         x_start,
         y_start,
+        peak,
         background_model,
         "Centroid calculation has zero weight in the x dimension.",
       )
@@ -303,6 +304,7 @@ def centroid(
       return _failed_centroid(
         x_start,
         y_start,
+        peak,
         background_model,
         "Centroid calculation has zero weight in the y dimension.",
       )
@@ -317,6 +319,7 @@ def centroid(
       return _failed_centroid(
         x_start,
         y_start,
+        peak,
         background_model,
         "Centroid repositioning exceeded centroid box size.",
       )
@@ -341,6 +344,8 @@ def centroid(
         remove_background_stars,
         use_plane_background,
       )
+      raw_peak = _aperture_peak(image, x_center, y_center, radius)
+      peak = raw_peak - background_model.mean
 
     iteration -= 1
 
@@ -348,7 +353,7 @@ def centroid(
     x_center,
     y_center,
     background_model.mean,
-    background_model.peak,
+    peak,
     background_model=background_model,
     message="Centroid calculation completed.",
   )
