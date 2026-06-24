@@ -232,10 +232,11 @@ def generate_light_curve(
         f"selection_diagnostics={len(selection.diagnostics)}"
     )
 
-    ensemble_reference_flux = sum(
-        10 ** (-0.4 * star.reference_magnitude)
-        for star in selection.selected_stars
+    reference_magnitudes = np.asarray(
+        [star.reference_magnitude for star in selection.selected_stars],
+        dtype=float,
     )
+    ensemble_reference_flux = float(np.sum(10 ** (-0.4 * reference_magnitudes)))
     if ensemble_reference_flux <= 0.0:
         raise LightCurveError("Comparison-star magnitude calibration produced a non-positive ensemble reference flux.")
     ensemble_reference_mag = -2.5 * math.log10(ensemble_reference_flux)
@@ -261,8 +262,16 @@ def generate_light_curve(
             )
             for star in selection.selected_stars
         )
-        ensemble_flux = sum(m.net_source_counts for m in comparison_measurements)
-        ensemble_variance = sum(m.source_uncertainty * m.source_uncertainty for m in comparison_measurements)
+        comparison_counts = np.asarray(
+            [measurement.net_source_counts for measurement in comparison_measurements],
+            dtype=float,
+        )
+        comparison_uncertainties = np.asarray(
+            [measurement.source_uncertainty for measurement in comparison_measurements],
+            dtype=float,
+        )
+        ensemble_flux = float(np.sum(comparison_counts))
+        ensemble_variance = float(np.sum(np.square(comparison_uncertainties)))
         if not math.isfinite(ensemble_flux) or ensemble_flux <= 0.0:
             raise LightCurveError(f"Ensemble comparison flux is invalid for frame {frame.fits_path}.")
 

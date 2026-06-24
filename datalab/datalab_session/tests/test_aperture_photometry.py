@@ -17,7 +17,7 @@ from PIL import Image
 
 from datalab.datalab_session.utils.comparison_stars import (
     ComparisonStar,
-    _astroimagej_comparison_weight,
+    astroimagej_comparison_weight,
 )
 from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
@@ -494,8 +494,8 @@ class TestAperturePhotometry(unittest.TestCase):
         )
 
         self.assertGreater(
-            _astroimagej_comparison_weight(high_weight_candidate, target_catalog_flux=950.0, image_diagonal_px=100.0),
-            _astroimagej_comparison_weight(low_weight_candidate, target_catalog_flux=950.0, image_diagonal_px=100.0),
+            astroimagej_comparison_weight(high_weight_candidate, target_catalog_flux=950.0, image_diagonal_px=100.0),
+            astroimagej_comparison_weight(low_weight_candidate, target_catalog_flux=950.0, image_diagonal_px=100.0),
         )
 
     def test_diagnostic_images_include_labeled_candidate_overlay_jpegs(self) -> None:
