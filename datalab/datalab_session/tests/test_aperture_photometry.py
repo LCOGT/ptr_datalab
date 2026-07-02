@@ -289,14 +289,15 @@ class TestTargetRecenterFallback(FileExtendedTestCase):
         with mock.patch.object(ap, "_iterative_centroid", return_value=(32.0, 30.0)):
             measurement, diagnostics = self._measure()
         self.assertEqual((measurement.x, measurement.y), (32.0, 30.0))
-        self.assertFalse(any("recenter rejected" in m for m in diagnostics))
+        self.assertFalse(any("recenter skipped" in m for m in diagnostics))
 
     def test_recenter_beyond_cap_falls_back_to_wcs(self):
         # Centroid 10px from WCS (> 6px cap) -> fall back to the WCS position.
         with mock.patch.object(ap, "_iterative_centroid", return_value=(40.0, 30.0)):
             measurement, diagnostics = self._measure()
         self.assertEqual((measurement.x, measurement.y), (30.0, 30.0))
-        self.assertTrue(any("recenter rejected" in m and "exceeded" in m for m in diagnostics))
+        self.assertTrue(any("recenter skipped" in m and "exceeded" in m for m in diagnostics))
+        self.assertTrue(any("Frame retained" in m for m in diagnostics))
 
     def test_failed_centroid_falls_back_to_wcs(self):
         with mock.patch.object(ap, "_iterative_centroid", return_value=None):

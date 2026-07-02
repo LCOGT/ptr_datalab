@@ -69,6 +69,14 @@ DEFAULT_READ_NOISE = 0.0
 APERTURE_BACKGROUND_MAX_ITERATIONS = 100
 APERTURE_BACKGROUND_TOLERANCE = 1e-4
 MAX_ACCEPTABLE_VARIABILITY = 1.0
+# A comparison candidate's catalog magnitude and this pipeline's measured instrumental
+# magnitude should differ only by the frame ensemble's zero point, which is common to
+# all well-behaved stars. A candidate whose (catalog_mag - instrumental_mag) departs
+# from the ensemble median by more than this many magnitudes has an unreliable catalog
+# magnitude (usually a blended/mismatched cross-match) and is rejected: it would be
+# selected on its bright measured flux but then bias the catalog-magnitude-weighted
+# zero-point calibration.
+MAX_ZERO_POINT_RESIDUAL_MAG = 0.5
 DEFAULT_APERTURE_RADIUS_PX = 7.64
 DEFAULT_ANNULUS_INNER_RADIUS_PX = 12.73
 DEFAULT_ANNULUS_OUTER_RADIUS_PX = 19.10
@@ -373,6 +381,10 @@ class ComparisonStar:
     variability_score: float
     isolation_px: float
     target_separation_px: float
+    # Median instrumental magnitude (-2.5*log10(net counts)) measured across all
+    # frames with this pipeline's aperture. On the same zero point as the target's
+    # magnitude proxy, so the two are directly comparable for brightness matching.
+    measured_instrumental_magnitude: float = math.inf
 
 
 @dataclass(frozen=True)
@@ -517,6 +529,7 @@ def generate_light_curve(
     annulus_outer_radius_px: float,
     min_comparisons: int = 5,
     max_comparisons: int = 10,
+    aperture_unit: str = "px",
 ) -> LightCurveResult:
     log.info(
         "Aperture Photometry pipeline starting: "
@@ -565,6 +578,7 @@ def generate_light_curve(
             annulus_inner_radius_px=annulus_inner_radius_px,
             annulus_outer_radius_px=annulus_outer_radius_px,
             diagnostics=diagnostics_by_fits_basename[os.path.basename(frame.fits_path)],
+            aperture_unit=aperture_unit,
         )
         for frame in frames
     }
@@ -585,6 +599,7 @@ def generate_light_curve(
         target_dec_deg=target_dec_deg,
         aperture_radius_px=aperture_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
+        aperture_unit=aperture_unit,
     )
     log.info(f"Aperture Photometry comparison catalog built: valid_candidates={len(catalog)}")
 
@@ -597,6 +612,7 @@ def generate_light_curve(
         annulus_outer_radius_px=annulus_outer_radius_px,
         min_comparisons=min_comparisons,
         max_comparisons=max_comparisons,
+        aperture_unit=aperture_unit,
     )
     log.info(
         "Aperture Photometry comparison stars selected: "
@@ -627,6 +643,7 @@ def generate_light_curve(
                 aperture_radius_px=aperture_radius_px,
                 annulus_inner_radius_px=annulus_inner_radius_px,
                 annulus_outer_radius_px=annulus_outer_radius_px,
+                aperture_unit=aperture_unit,
             )
             for star in selected_stars
         )
@@ -829,6 +846,34 @@ def _missing_catalog_column(rows: Sequence[Mapping[str, Any]]) -> str | None:
     return None
 
 
+def _frame_pixel_scale_arcsec(header: Any) -> float:
+    """Arcsec-per-pixel for a frame, from its WCS astrometric solution (preferred) or
+    the nominal PIXSCALE header, so an angular aperture can be sized in pixels."""
+    try:
+        from astropy.wcs.utils import proj_plane_pixel_scales
+
+        scale = float(np.mean(proj_plane_pixel_scales(WCS(header)) * 3600.0))
+        if math.isfinite(scale) and scale > 0.0:
+            return scale
+    except Exception:
+        pass
+    pixscale = header.get("PIXSCALE") if hasattr(header, "get") else None
+    if pixscale is not None and float(pixscale) > 0.0:
+        return float(pixscale)
+    raise LightCurveError("Cannot determine a pixel scale for an arcsec-unit aperture.")
+
+
+def _aperture_px_scale(frame: FrameContext, aperture_unit: str) -> float:
+    """Divisor that converts aperture radii to pixels for a frame. 1.0 when the radii
+    are already pixels; the frame's arcsec/px plate scale when they are an angular size
+    (so the aperture covers the same sky on every telescope regardless of pixel scale)."""
+    if aperture_unit == "px":
+        return 1.0
+    if aperture_unit != "arcsec":
+        raise LightCurveError(f"Unsupported aperture_unit {aperture_unit!r}; expected 'px' or 'arcsec'.")
+    return _frame_pixel_scale_arcsec(frame.header)
+
+
 def _measure_target(
     *,
     frame: FrameContext,
@@ -838,7 +883,12 @@ def _measure_target(
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
     diagnostics: list[str],
+    aperture_unit: str = "px",
 ) -> TargetMeasurement:
+    scale = _aperture_px_scale(frame, aperture_unit)
+    aperture_radius_px = aperture_radius_px / scale
+    annulus_inner_radius_px = annulus_inner_radius_px / scale
+    annulus_outer_radius_px = annulus_outer_radius_px / scale
     try:
         initial_x, initial_y = _BACKEND_DEPENDENCIES.world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
     except Exception as exc:
@@ -866,8 +916,8 @@ def _measure_target(
     if centroid is None:
         x_center, y_center = initial_x, initial_y
         message = (
-            f"Target recenter rejected on {basename}: centroiding failed; "
-            "measured at the WCS position instead."
+            f"Target recenter skipped on {basename}: centroiding failed; "
+            "measured at the WCS position instead. Frame retained."
         )
         diagnostics.append(message)
         log.warning(f"Aperture Photometry {message}")
@@ -876,9 +926,9 @@ def _measure_target(
         if recenter_shift_px > TARGET_RECENTER_MAX_SHIFT_PX:
             x_center, y_center = initial_x, initial_y
             message = (
-                f"Target recenter rejected on {basename}: centroid shift "
+                f"Target recenter skipped on {basename}: centroid shift "
                 f"{recenter_shift_px:.2f}px exceeded the {TARGET_RECENTER_MAX_SHIFT_PX:.2f}px "
-                "limit; measured at the WCS position instead."
+                "limit; measured at the WCS position instead. Frame retained."
             )
             diagnostics.append(message)
             log.warning(f"Aperture Photometry {message}")
@@ -985,6 +1035,7 @@ def _build_field_star_catalog(
     target_dec_deg: float,
     aperture_radius_px: float,
     annulus_outer_radius_px: float,
+    aperture_unit: str = "px",
 ) -> list[dict[str, Any]]:
     clusters: list[dict[str, Any]] = []
     target_pixels = {
@@ -993,6 +1044,9 @@ def _build_field_star_catalog(
     }
 
     for frame in frames:
+        frame_scale = _aperture_px_scale(frame, aperture_unit)
+        frame_aperture_radius_px = aperture_radius_px / frame_scale
+        frame_annulus_outer_radius_px = annulus_outer_radius_px / frame_scale
         rows: list[dict[str, Any]] = []
         for raw_row in frame.second_hdu_rows:
             try:
@@ -1013,12 +1067,12 @@ def _build_field_star_catalog(
             if _too_close_to_target(
                 candidate_xy=(x, y),
                 target_xy=target_pixels[frame.fits_path],
-                annulus_outer_radius_px=annulus_outer_radius_px,
-                aperture_radius_px=aperture_radius_px,
+                annulus_outer_radius_px=frame_annulus_outer_radius_px,
+                aperture_radius_px=frame_aperture_radius_px,
             ):
                 rejected_for_target += 1
                 continue
-            if _too_close_to_edges(x, y, frame.width, frame.height, annulus_outer_radius_px):
+            if _too_close_to_edges(x, y, frame.width, frame.height, frame_annulus_outer_radius_px):
                 rejected_for_edge += 1
                 continue
 
@@ -1129,6 +1183,7 @@ def _select_comparison_stars(
     annulus_outer_radius_px: float,
     min_comparisons: int,
     max_comparisons: int,
+    aperture_unit: str = "px",
 ) -> tuple[ComparisonStar, ...]:
     enriched = _measure_and_rank_candidates(
         frames=frames,
@@ -1136,9 +1191,12 @@ def _select_comparison_stars(
         aperture_radius_px=aperture_radius_px,
         annulus_inner_radius_px=annulus_inner_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
+        aperture_unit=aperture_unit,
     )
+    stable = [candidate for candidate in enriched if candidate.variability_score <= MAX_ACCEPTABLE_VARIABILITY]
+    consistent = _reject_zero_point_outliers(stable)
     ranked = sorted(
-        [candidate for candidate in enriched if candidate.variability_score <= MAX_ACCEPTABLE_VARIABILITY],
+        consistent,
         key=lambda candidate: _source_catalog_sort_key(candidate, target_mag_proxy),
     )
 
@@ -1148,9 +1206,45 @@ def _select_comparison_stars(
     return tuple(ranked[:max_comparisons])
 
 
+def _reject_zero_point_outliers(candidates: Sequence[ComparisonStar]) -> list[ComparisonStar]:
+    # A good comparison star's (catalog_mag - measured_instrumental_mag) equals the
+    # frame ensemble's zero point, common to all such stars. Candidates whose residual
+    # departs from the median by more than MAX_ZERO_POINT_RESIDUAL_MAG have an
+    # untrustworthy catalog magnitude (typically a blended/mismatched cross-match) and
+    # would bias the catalog-magnitude-weighted zero-point calibration, so drop them.
+    # Needs a few stars to estimate a robust median; below that, keep all.
+    if len(candidates) < 3:
+        return list(candidates)
+    residuals = np.asarray(
+        [candidate.reference_magnitude - candidate.measured_instrumental_magnitude for candidate in candidates],
+        dtype=float,
+    )
+    median_residual = float(np.median(residuals))
+    kept = [
+        candidate
+        for candidate, residual in zip(candidates, residuals)
+        if abs(residual - median_residual) <= MAX_ZERO_POINT_RESIDUAL_MAG
+    ]
+    rejected = [candidate for candidate in candidates if candidate not in kept]
+    if rejected:
+        log.info(
+            "Aperture Photometry rejected zero-point-inconsistent comparison candidates: "
+            f"median_residual={median_residual:.4f}, "
+            f"rejected={[(c.candidate_id, round(c.reference_magnitude - c.measured_instrumental_magnitude, 4)) for c in rejected]}"
+        )
+    # Never let the consistency guard empty the pool; if it would, fall back to the
+    # unfiltered set and let the min_comparisons check decide.
+    return kept if len(kept) >= 1 else list(candidates)
+
+
 def _source_catalog_sort_key(candidate: ComparisonStar, target_mag_proxy: float) -> tuple[float, float, str]:
+    # Rank by closeness in brightness to the target. Both sides are instrumental
+    # magnitudes measured by this pipeline (median over frames), so they share a
+    # zero point; comparing the catalog's calibrated reference_magnitude against
+    # the instrumental target_mag_proxy would instead compare across a ~zero-point
+    # offset and collapse to "pick the brightest catalog star".
     return (
-        abs(candidate.reference_magnitude - target_mag_proxy),
+        abs(candidate.measured_instrumental_magnitude - target_mag_proxy),
         -candidate.isolation_px,
         candidate.candidate_id,
     )
@@ -1163,6 +1257,7 @@ def _measure_and_rank_candidates(
     aperture_radius_px: float,
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
+    aperture_unit: str = "px",
 ) -> list[ComparisonStar]:
     measured_candidates: list[tuple[dict[str, Any], ComparisonStar, np.ndarray]] = []
     for candidate in sorted(catalog, key=lambda row: row["candidate_id"]):
@@ -1188,6 +1283,7 @@ def _measure_and_rank_candidates(
                     aperture_radius_px=aperture_radius_px,
                     annulus_inner_radius_px=annulus_inner_radius_px,
                     annulus_outer_radius_px=annulus_outer_radius_px,
+                    aperture_unit=aperture_unit,
                 )
                 for frame in frames
             ]
@@ -1210,7 +1306,7 @@ def _measure_and_rank_candidates(
         variability_mag_matrix = instrumental_mag_matrix
 
     selected: list[ComparisonStar] = []
-    for (candidate, candidate_star, _instrumental_mags), variability_mags in zip(
+    for (candidate, candidate_star, instrumental_mags), variability_mags in zip(
         measured_candidates,
         variability_mag_matrix,
     ):
@@ -1226,6 +1322,7 @@ def _measure_and_rank_candidates(
                 variability_score=variability_score,
                 isolation_px=candidate_star.isolation_px,
                 target_separation_px=candidate_star.target_separation_px,
+                measured_instrumental_magnitude=float(np.median(instrumental_mags)),
             )
         )
     return selected
@@ -1238,7 +1335,12 @@ def _measure_candidate_on_frame(
     aperture_radius_px: float,
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
+    aperture_unit: str = "px",
 ) -> ComparisonMeasurement:
+    scale = _aperture_px_scale(frame, aperture_unit)
+    aperture_radius_px = aperture_radius_px / scale
+    annulus_inner_radius_px = annulus_inner_radius_px / scale
+    annulus_outer_radius_px = annulus_outer_radius_px / scale
     x, y = _BACKEND_DEPENDENCIES.world_to_pixel(frame.header, candidate.ra_deg, candidate.dec_deg)
     centroid = _iterative_centroid(
         image=frame.image,
