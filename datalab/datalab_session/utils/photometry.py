@@ -4,12 +4,6 @@ import numpy as np
 
 from datalab.datalab_session.utils.centroiding import BackgroundModel
 
-## Measure_aperture does the following:
-# 1. It defines a circular aperture around the source position and calculates the total flux
-#    within the aperture, accounting for fractional pixel overlap.
-# 2. It computes the net source counts by subtracting the estimated background contribution from
-#    the total flux in the aperture. It also calculates the uncertainty in the source measurement
-#    based on the source counts, background level, and instrumental parameters (gain, read noise, dark current).
 def measure_aperture(
     *,
     image: np.ndarray,
@@ -23,9 +17,17 @@ def measure_aperture(
     error_class: type[Exception] = ValueError,
 ) -> dict[str, float]:
     """
-        Measures source counts and uncertainty within a circular aperture, accounting for background subtraction and instrumental noise.
+        Measures source counts and uncertainty within a circular aperture, accounting for background
+        subtraction and instrumental noise.
 
-        Computes the net source counts, source uncertainty, mean background per pixel, peak pixel value, and effective number of pixels in the source and background regions.
+        Defines a circular aperture around the source and sums the flux within it, weighting each
+        pixel by its fractional overlap with the aperture. Subtracts the background contribution
+        (from the supplied background_model) to obtain the net source counts, and derives the source
+        uncertainty from the source and background levels and the instrumental parameters (gain,
+        read noise, dark current).
+
+        Returns the net source counts, source uncertainty, mean background per pixel, peak pixel
+        value, and effective number of source and background pixels.
     """
     height, width = image.shape
     source_radius = aperture_radius_px

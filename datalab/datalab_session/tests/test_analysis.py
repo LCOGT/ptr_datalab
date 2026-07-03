@@ -141,7 +141,7 @@ class TestAnalysis(TestCase):
         self.assertTrue(result.success)
         self.assertAlmostEqual(result.x, 10.5, places=9)
         self.assertAlmostEqual(result.y, 10.5, places=9)
-        self.assertEqual(result.background, 0.0)
+        self.assertEqual(result.background_model.mean, 0.0)
         self.assertEqual(result.peak, 100.0)
         self.assertIsNotNone(result.background_model)
         self.assertGreater(result.background_model.effective_pixels, 0.0)

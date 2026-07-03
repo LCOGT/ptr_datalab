@@ -8,6 +8,7 @@ from typing import Any, Sequence
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from datalab.datalab_session.utils.fits_metadata import aperture_unit_scale, optional_float
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
 COMPARISON_STAR_COLOR = (0, 173, 239)
@@ -21,13 +22,15 @@ def candidate_overlay_jpeg_base64(
     measurements: Sequence[Any],
     target_measurement: Any,
     aperture_radius_px: float,
+    aperture_unit: str = "px",
 ) -> str:
     image = _normalize_image_for_jpeg(frame.image)
     draw = ImageDraw.Draw(image)
     font = _diagnostic_overlay_font(frame.width, frame.height)
     stars_by_id = {star.candidate_id: star for star in stars}
     min_dimension = max(min(frame.width, frame.height), 1)
-    radius = max(float(aperture_radius_px), min_dimension * 0.018, 14.0)
+    aperture_radius_px = float(aperture_radius_px) / aperture_unit_scale(frame.header, aperture_unit)
+    radius = max(aperture_radius_px, min_dimension * 0.018, 14.0)
     line_width = max(3, int(round(min_dimension * 0.004)))
     label_padding = max(3, int(round(min_dimension * 0.004)))
 
@@ -95,8 +98,8 @@ def comparison_star_validation_diagnostics(
         star = stars_by_id[measurement.candidate_id]
         catalog_row = star.source_catalog_by_frame.get(frame.fits_path, {})
         calculated_magnitude = _flux_to_magnitude(measurement.net_source_counts, frame_zero_point)
-        fits_catalog_flux = _optional_float(catalog_row.get("flux"))
-        fits_catalog_mag = _optional_float(catalog_row.get("mag"))
+        fits_catalog_flux = optional_float(catalog_row.get("flux"))
+        fits_catalog_mag = optional_float(catalog_row.get("mag"))
         diagnostics.append(
             "comparison-star validation row: "
             f"{star.candidate_id} | "
@@ -154,14 +157,6 @@ def _flux_to_magnitude(flux: float, zero_point: float) -> float:
         return math.nan
     magnitude, _ = flux_to_mag(flux, 0.0)
     return float(magnitude) + zero_point
-
-
-def _optional_float(value: Any) -> float:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return math.nan
-    return result if math.isfinite(result) else math.nan
 
 
 def _format_float(value: float, *, precision: int) -> str:

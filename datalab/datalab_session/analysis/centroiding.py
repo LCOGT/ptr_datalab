@@ -7,12 +7,7 @@ from astropy.wcs import WCS, WcsError
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.file_utils import get_hdu, scale_points
 from datalab.datalab_session.utils.filecache import FileCache
-from datalab.datalab_session.utils.centroiding import (
-  BackgroundModel,
-  CentroidResult,
-  PlaneModel,
-  centroid,
-)
+from datalab.datalab_session.utils.centroiding import centroid
 
 if TYPE_CHECKING:
   from django.contrib.auth.models import User
@@ -98,7 +93,7 @@ def centroiding(input: dict, user: 'User'):
     'y': float(output_y[0]),
     'ra': ra,
     'dec': dec,
-    'background': result.background,
+    'background': result.background_model.mean if result.background_model else 0.0,
     'peak': result.peak,
     'success': result.success,
     'message': result.message,

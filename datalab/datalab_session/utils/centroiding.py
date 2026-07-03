@@ -47,21 +47,19 @@ class CentroidResult:
 
     x: centroid x coordinate in FITS pixel coords
     y: centroid y coordinate in FITS pixel coords
-    background: estimated background value at the centroid position
     peak: estimated peak value of the source (background subtracted)
     background_model: background model used for the centroiding and photometry
+      (the background level is background_model.mean, not duplicated here)
     success: whether the centroiding was successful
     message: optional message describing the result or any issues encountered
   """
   x: float
   y: float
-  background: float
   peak: float
   background_model: BackgroundModel | None = None
   success: bool = True
   message: str | None = None
 
-## Returns the pixel value at the given coordinates, or NaN if the coordinates are out of bounds.
 def _pixel(image: np.ndarray, x: int, y: int) -> float:
   """
     Returns the pixel value at the given coordinates, or NaN if the coordinates are out of bounds.
@@ -71,7 +69,6 @@ def _pixel(image: np.ndarray, x: int, y: int) -> float:
   return float(image[y, x])
 
 
-## Finds the brightest pixel value within a circular aperture.
 def _aperture_peak(image: np.ndarray, x_center: float, y_center: float, radius: float) -> float:
   """
     Returns the brightest valid pixel value within a circular aperture.
@@ -119,10 +116,18 @@ def calculate_background_model(
   r_back2: float,
   remove_background_stars: bool,
   use_plane_background: bool,
+  max_iterations: int = 9,
+  tolerance: float = 0.1,
 ) -> BackgroundModel:
   """
     Calculates the local background from the annulus around the source.
     Returns a BackgroundModel containing the mean background value, an optional fitted plane, and the number of effective pixels used in the calculation.
+
+    max_iterations/tolerance control the 2-sigma star-rejection convergence. The defaults (9, 0.1
+    counts) are AstroImageJ's centroid-background settings. AstroImageJ's photometer uses tighter
+    settings (100, 1e-4) for low background levels; those are exposed here so they can be switched
+    on for near-zero-background inputs (e.g. background-subtracted or difference images) without
+    re-plumbing.
   """
   if r_back2 <= r_back1:
     return BackgroundModel(mean=0.0)
@@ -149,7 +154,7 @@ def calculate_background_model(
     back_mean = 0.0
     back2_mean = 0.0
     previous_back_mean = 0.0
-    for iteration in range(9):
+    for iteration in range(max_iterations):
       back_stdev = math.sqrt(max(0.0, back2_mean - back_mean * back_mean))
       lower = back_mean - 2.0 * back_stdev
       upper = back_mean + 2.0 * back_stdev
@@ -161,7 +166,7 @@ def calculate_background_model(
       if clipped:
         back_mean = sum(clipped) / len(clipped)
         back2_mean = sum(value * value for value in clipped) / len(clipped)
-      if abs(previous_back_mean - back_mean) < 0.1:
+      if abs(previous_back_mean - back_mean) < tolerance:
         break
       previous_back_mean = back_mean
   else:
@@ -226,7 +231,6 @@ def _failed_centroid(
   return CentroidResult(
     x,
     y,
-    background_model.mean,
     peak,
     background_model=background_model,
     success=False,
@@ -401,7 +405,6 @@ def centroid(
   return CentroidResult(
     x_center,
     y_center,
-    background_model.mean,
     peak,
     background_model=background_model,
     message="Centroid calculation completed.",

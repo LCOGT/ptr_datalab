@@ -17,7 +17,8 @@ from PIL import Image
 
 from datalab.datalab_session.utils.comparison_stars import (
     ComparisonStar,
-    astroimagej_comparison_weight,
+    _reject_zero_point_outliers,
+    _source_catalog_sort_key,
 )
 from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
@@ -319,15 +320,66 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertAlmostEqual(first.target_centroid_x, 30.3, delta=0.2)
         self.assertAlmostEqual(first.target_centroid_y, 28.8, delta=0.2)
 
-    def test_target_centroid_failure_is_hard_failure(self) -> None:
-        frames, (target_ra, target_dec) = build_frame_set()
-        header = frames["frame_1.fits"]["header"]
-        header["CRVAL1"] = 100.1
-        header["CRVAL2"] = 20.1
-        fits_paths = self.write_frames(frames)
+    def test_target_recenter_falls_back_to_wcs_position(self) -> None:
+        # Point the target at an empty patch of sky (~16px from any source) so centroiding cannot
+        # lock on. _measure_target must never raise or drift onto a neighbour: it measures at the
+        # authoritative WCS position instead of the real source at (30.3, 28.8).
+        from datalab.datalab_session.utils.aperture_light_curve import _measure_target
+        from datalab.datalab_session.utils.fits_metadata import world_to_pixel
 
-        with self.assertRaisesRegex(LightCurveError, "Target centroiding failed"):
-            generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        frames, _ = build_frame_set()
+        header = frames["frame_1.fits"]["header"]
+        empty_ra = header["CRVAL1"] + 35.0 * header["CD1_1"]
+        empty_dec = header["CRVAL2"] + 45.0 * header["CD2_2"]
+        frame = _validated_frame_contexts(self.write_frames(frames))[0]
+        initial_x, initial_y = world_to_pixel(frame.header, empty_ra, empty_dec)
+
+        measurement = _measure_target(
+            frame=frame,
+            target_ra_deg=empty_ra,
+            target_dec_deg=empty_dec,
+            aperture_radius_px=4.0,
+            annulus_inner_radius_px=6.0,
+            annulus_outer_radius_px=9.0,
+        )
+
+        self.assertAlmostEqual(measurement.x, initial_x, delta=1.0e-6)
+        self.assertAlmostEqual(measurement.y, initial_y, delta=1.0e-6)
+        self.assertGreater(math.hypot(measurement.x - 30.3, measurement.y - 28.8), 10.0)
+
+    def test_arcsec_aperture_matches_equivalent_pixel_aperture(self) -> None:
+        # arcsec radii equal to the pixel radii times the frame plate scale must convert
+        # back to the same pixels per frame, yielding identical measurements.
+        frames, (target_ra, target_dec) = build_frame_set()
+        fits_paths = self.write_frames(frames)
+        px_result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+
+        arcsec_per_px = abs(frames["frame_1.fits"]["header"]["CD1_1"]) * 3600.0
+        arcsec_result = generate_light_curve(
+            fits_paths,
+            target_ra,
+            target_dec,
+            4.0 * arcsec_per_px,
+            6.0 * arcsec_per_px,
+            9.0 * arcsec_per_px,
+            aperture_unit="arcsec",
+        )
+
+        self.assertEqual(len(arcsec_result.light_curve_rows), len(px_result.light_curve_rows))
+        for px_row, arcsec_row in zip(px_result.light_curve_rows, arcsec_result.light_curve_rows):
+            self.assertAlmostEqual(arcsec_row.target_centroid_x, px_row.target_centroid_x, delta=1.0e-4)
+            self.assertAlmostEqual(arcsec_row.target_centroid_y, px_row.target_centroid_y, delta=1.0e-4)
+            self.assertAlmostEqual(
+                arcsec_row.target_net_source_counts, px_row.target_net_source_counts, delta=1.0e-3
+            )
+
+    def test_invalid_aperture_unit_fails_fast(self) -> None:
+        frames, (target_ra, target_dec) = build_frame_set()
+        fits_paths = self.write_frames(frames)
+        with self.assertRaisesRegex(LightCurveError, "aperture_unit"):
+            generate_light_curve(
+                fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0, aperture_unit="degrees"
+            )
 
     def test_second_hdu_radec_cross_match_across_frames(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
@@ -353,11 +405,13 @@ class TestAperturePhotometry(unittest.TestCase):
             9.0,
             comparison_strategy="variability_first",
             min_comparisons=5,
-            max_comparisons=10,
+            max_comparisons=12,
         )
 
         stars = self.star_by_source_label(result)
-        self.assertGreater(stars["comp-04"].variability_score, stars["comp-02"].variability_score)
+        self.assertIn("comp-04", stars)
+        variability_by_label = {label: star.variability_score for label, star in stars.items()}
+        self.assertEqual(max(variability_by_label, key=variability_by_label.get), "comp-04")
 
     def test_target_exclusion_from_candidate_pool(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set(include_target_in_second_hdu=True)
@@ -469,34 +523,48 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertRegex(fields[5], r"^-?\d+\.\d{3}$")
         self.assertRegex(fields[6], r"^-?\d+\.\d{3}$")
 
-    def test_comparison_selection_uses_astroimagej_brightness_distance_weight(self) -> None:
-        high_weight_candidate = ComparisonStar(
-            candidate_id="high-weight",
-            ra_deg=1.0,
-            dec_deg=1.0,
-            reference_magnitude=17.0,
+    @staticmethod
+    def _comparison_star(candidate_id: str, reference_magnitude: float, measured_magnitude: float, isolation_px: float = 10.0) -> ComparisonStar:
+        return ComparisonStar(
+            candidate_id=candidate_id,
+            ra_deg=0.0,
+            dec_deg=0.0,
+            reference_magnitude=reference_magnitude,
             reference_magnitude_source="second_hdu",
-            source_catalog_by_frame={"frame_1.fits": {"flux": 1000.0}},
-            variability_score=0.9,
-            isolation_px=10.0,
-            target_separation_px=10.0,
-        )
-        low_weight_candidate = ComparisonStar(
-            candidate_id="low-weight",
-            ra_deg=2.0,
-            dec_deg=2.0,
-            reference_magnitude=12.5,
-            reference_magnitude_source="second_hdu",
-            source_catalog_by_frame={"frame_1.fits": {"flux": 100000.0}},
-            variability_score=0.001,
-            isolation_px=5.0,
-            target_separation_px=90.0,
+            source_catalog_by_frame={},
+            variability_score=0.01,
+            isolation_px=isolation_px,
+            target_separation_px=50.0,
+            measured_instrumental_magnitude=measured_magnitude,
         )
 
-        self.assertGreater(
-            astroimagej_comparison_weight(high_weight_candidate, target_catalog_flux=950.0, image_diagonal_px=100.0),
-            astroimagej_comparison_weight(low_weight_candidate, target_catalog_flux=950.0, image_diagonal_px=100.0),
+    def test_comparison_ranking_prefers_measured_brightness_near_target(self) -> None:
+        # Ranking is on each candidate's own measured instrumental magnitude versus the target's
+        # (same zero point), so the candidate closest in measured brightness sorts first -- not the
+        # brightest catalog star.
+        target_mag_proxy = -9.0
+        near = self._comparison_star("near", reference_magnitude=12.0, measured_magnitude=-9.1)
+        far = self._comparison_star("far", reference_magnitude=12.0, measured_magnitude=-12.0)
+        self.assertLess(
+            _source_catalog_sort_key(near, target_mag_proxy),
+            _source_catalog_sort_key(far, target_mag_proxy),
         )
+
+    def test_zero_point_guard_drops_blended_catalog_magnitude_outlier(self) -> None:
+        # Good comparisons share a (catalog_mag - measured_mag) zero point (~20 here). A blended
+        # star with a corrupt catalog magnitude has a wildly different residual and must be dropped
+        # before it biases the ensemble zero point.
+        good = [
+            self._comparison_star(f"cand-{i}", reference_magnitude=12.0 + i * 0.1, measured_magnitude=-8.0 + i * 0.1)
+            for i in range(5)
+        ]
+        blended = self._comparison_star("cand-blended", reference_magnitude=12.0, measured_magnitude=-13.0)
+
+        kept = _reject_zero_point_outliers(good + [blended])
+        kept_ids = {candidate.candidate_id for candidate in kept}
+
+        self.assertNotIn("cand-blended", kept_ids)
+        self.assertEqual(len(kept), 5)
 
     def test_diagnostic_images_include_labeled_candidate_overlay_jpegs(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()

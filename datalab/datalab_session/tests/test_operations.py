@@ -341,6 +341,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             annulus_outer_radius_px=19.10,
             min_comparisons=5,
             max_comparisons=10,
+            aperture_unit='px',
         )
         output, is_raw = mock_set_output.call_args.args[0], mock_set_output.call_args.kwargs['is_raw']
         self.assertTrue(is_raw)

@@ -67,23 +67,30 @@ class AperturePhotometry(BaseDataOperation):
                     'minimum': AperturePhotometry.MINIMUM_NUMBER_OF_INPUTS,
                     'maximum': AperturePhotometry.MAXIMUM_NUMBER_OF_INPUTS,
                 },
+                'aperture_unit': {
+                    'name': 'Aperture Units',
+                    'description': 'Units for the aperture and annulus radii below. Choose arcsec to combine images from different telescopes/instruments, sizing each aperture per frame from its plate scale.',
+                    'type': 'select',
+                    'options': ['px', 'arcsec'],
+                    'default': 'px',
+                },
                 'aperture_radius_px': {
                     'name': 'Aperture Radius',
-                    'description': 'Source aperture radius in pixels',
+                    'description': 'Source aperture radius, in the selected aperture units',
                     'type': Format.FLOAT,
                     'required': True,
                     'default': DEFAULT_APERTURE_RADIUS_PX,
                 },
                 'annulus_inner_radius_px': {
                     'name': 'Annulus Inner Radius',
-                    'description': 'Background annulus inner radius in pixels',
+                    'description': 'Background annulus inner radius, in the selected aperture units',
                     'type': Format.FLOAT,
                     'required': True,
                     'default': DEFAULT_ANNULUS_INNER_RADIUS_PX,
                 },
                 'annulus_outer_radius_px': {
                     'name': 'Annulus Outer Radius',
-                    'description': 'Background annulus outer radius in pixels',
+                    'description': 'Background annulus outer radius, in the selected aperture units',
                     'type': Format.FLOAT,
                     'required': True,
                     'default': DEFAULT_ANNULUS_OUTER_RADIUS_PX,
@@ -126,6 +133,7 @@ class AperturePhotometry(BaseDataOperation):
             aperture_radius_px = float(self.input_data['aperture_radius_px'])
             annulus_inner_radius_px = float(self.input_data['annulus_inner_radius_px'])
             annulus_outer_radius_px = float(self.input_data['annulus_outer_radius_px'])
+            aperture_unit = str(self.input_data.get('aperture_unit', 'px'))
             min_comparisons = int(self.input_data.get('min_comparisons', DEFAULT_MIN_COMPARISONS))
             max_comparisons = int(self.input_data.get('max_comparisons', DEFAULT_MAX_COMPARISONS))
             input_handlers = [
@@ -141,6 +149,7 @@ class AperturePhotometry(BaseDataOperation):
                 annulus_outer_radius_px=annulus_outer_radius_px,
                 min_comparisons=min_comparisons,
                 max_comparisons=max_comparisons,
+                aperture_unit=aperture_unit,
             )
         except LightCurveError as exc:
             log.warning(f"Aperture Photometry failed: {exc}")

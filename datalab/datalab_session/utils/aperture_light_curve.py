@@ -3,7 +3,7 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 from astropy.wcs import WCS
@@ -15,8 +15,8 @@ from datalab.datalab_session.utils.comparison_stars import (
     measure_candidate_on_frame,
     select_comparison_stars,
 )
-from datalab.datalab_session.utils.centroiding import centroid
-from datalab.datalab_session.utils.fits_metadata import header_float, world_to_pixel
+from datalab.datalab_session.utils.centroiding import calculate_background_model, centroid
+from datalab.datalab_session.utils.fits_metadata import aperture_unit_scale, header_float, optional_float, world_to_pixel
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 from datalab.datalab_session.utils.geometry import (
     angular_distance_arcsec,
@@ -38,6 +38,14 @@ SOURCE_CATALOG_MAG_KEY = "mag"
 SOURCE_CATALOG_FLUX_KEY = "flux"
 EDGE_MARGIN_PX = 2.0
 TARGET_PROXIMITY_FACTOR = 2.0
+# A target recenter is accepted only if the centroid moves less than this many pixels from the
+# WCS-predicted position. Larger shifts (or a failed centroid) mean the centroid was pulled onto
+# a neighbour or host-galaxy structure -- common for a supernova embedded in its host -- so we
+# keep the authoritative WCS position and measure there rather than dropping the frame. The cap is
+# absolute (not FWHM-relative): across a 169-frame NGC 7331 supernova set, clean recenters stayed
+# <=5.3px while galaxy pulls clustered >=7.8px regardless of seeing, because the pull is a fixed
+# pixel offset toward the host while the centroid box light is dominated by the galaxy in faint bands.
+TARGET_RECENTER_MAX_SHIFT_PX = 6.0
 DEFAULT_CROSSMATCH_ARCSEC = 1.0
 DEFAULT_GAIN = 1.0
 DEFAULT_READ_NOISE = 0.0
@@ -46,15 +54,16 @@ DEFAULT_ANNULUS_INNER_RADIUS_PX = 12.73
 DEFAULT_ANNULUS_OUTER_RADIUS_PX = 19.10
 DEFAULT_MIN_COMPARISONS = 5
 DEFAULT_MAX_COMPARISONS = 10
+# A comparison candidate is established if its cross-matched cluster is detected in at least this
+# fraction of frames. Catalog detection near the limiting magnitude is noisy, and heterogeneous
+# multi-telescope sets (different sites/FOV/depth) rarely catalog the same star in *every* frame,
+# so requiring presence in all frames discards good stars and collapses the candidate pool. Selected
+# stars are still measured via WCS on all frames, so the ensemble stays consistent frame-to-frame.
+COMPARISON_FRAME_COVERAGE_FRACTION = 0.8
 
 
 class LightCurveError(ValueError):
     pass
-
-
-def _pixel_to_world(header: Mapping[str, Any], x: float, y: float) -> tuple[float, float]:
-    ra, dec = WCS(dict(header)).pixel_to_world_values(float(x), float(y))
-    return float(ra), float(dec)
 
 
 @dataclass(frozen=True)
@@ -139,6 +148,7 @@ def generate_light_curve(
     comparison_strategy: str = "auto",
     min_comparisons: int = 5,
     max_comparisons: int = 10,
+    aperture_unit: str = "px",
 ) -> LightCurveResult:
     """
         Generates a calibrated target light curve from input FITS files, using comparison stars from the source catalog.
@@ -149,9 +159,10 @@ def generate_light_curve(
     log.info(
         "Aperture Photometry pipeline starting: "
         f"fits_count={len(input_handlers)}, target_ra={target_ra_deg:.8f}, target_dec={target_dec_deg:.8f}, "
-        f"aperture_radius_px={aperture_radius_px:.3f}, "
-        f"annulus_inner_radius_px={annulus_inner_radius_px:.3f}, "
-        f"annulus_outer_radius_px={annulus_outer_radius_px:.3f}, "
+        f"aperture_radius={aperture_radius_px:.3f}, "
+        f"annulus_inner_radius={annulus_inner_radius_px:.3f}, "
+        f"annulus_outer_radius={annulus_outer_radius_px:.3f}, "
+        f"aperture_unit={aperture_unit}, "
         f"comparison_strategy={comparison_strategy}, "
         f"min_comparisons={min_comparisons}, max_comparisons={max_comparisons}"
     )
@@ -163,6 +174,7 @@ def generate_light_curve(
         comparison_strategy=comparison_strategy,
         min_comparisons=min_comparisons,
         max_comparisons=max_comparisons,
+        aperture_unit=aperture_unit,
     )
 
     diagnostics: list[str] = []
@@ -180,6 +192,7 @@ def generate_light_curve(
             aperture_radius_px=aperture_radius_px,
             annulus_inner_radius_px=annulus_inner_radius_px,
             annulus_outer_radius_px=annulus_outer_radius_px,
+            aperture_unit=aperture_unit,
         )
         for frame in frames
     }
@@ -198,31 +211,24 @@ def generate_light_curve(
         target_dec_deg=target_dec_deg,
         aperture_radius_px=aperture_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
+        aperture_unit=aperture_unit,
     )
     log.info(
         "Aperture Photometry comparison catalog built: "
         f"valid_candidates={len(catalog)}"
     )
-    target_catalog_flux = _target_catalog_flux_proxy(
-        frames=frames,
-        target_measurements=target_measurements,
-        target_ra_deg=target_ra_deg,
-        target_dec_deg=target_dec_deg,
-    )
-    target_catalog_flux_text = f"{target_catalog_flux:.6f}" if target_catalog_flux is not None else "nan"
-    log.info(
-        "Aperture Photometry target catalog flux proxy: "
-        f"{target_catalog_flux_text}"
-    )
+    target_mag_proxy = _target_magnitude_proxy(target_measurements.values())
+    log.info(f"Aperture Photometry target magnitude proxy: {target_mag_proxy:.6f}")
     selection = select_comparison_stars(
         frames=frames,
         catalog=catalog,
-        target_catalog_flux=target_catalog_flux,
+        target_mag_proxy=target_mag_proxy,
         aperture_radius_px=aperture_radius_px,
         annulus_inner_radius_px=annulus_inner_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
         min_comparisons=min_comparisons,
         max_comparisons=max_comparisons,
+        aperture_unit=aperture_unit,
         error_class=LightCurveError,
     )
     log.info(
@@ -258,6 +264,7 @@ def generate_light_curve(
                 aperture_radius_px=aperture_radius_px,
                 annulus_inner_radius_px=annulus_inner_radius_px,
                 annulus_outer_radius_px=annulus_outer_radius_px,
+                aperture_unit=aperture_unit,
                 error_class=LightCurveError,
             )
             for star in selection.selected_stars
@@ -320,6 +327,7 @@ def generate_light_curve(
             measurements=comparison_measurements,
             target_measurement=target,
             aperture_radius_px=aperture_radius_px,
+            aperture_unit=aperture_unit,
         )
 
         frame_results.append(
@@ -371,9 +379,12 @@ def _validate_inputs(
     comparison_strategy: str,
     min_comparisons: int,
     max_comparisons: int,
+    aperture_unit: str,
 ) -> None:
     if not input_handlers:
         raise LightCurveError("input_handlers must be a non-empty list.")
+    if aperture_unit not in {"px", "arcsec"}:
+        raise LightCurveError("aperture_unit must be 'px' or 'arcsec'.")
     if aperture_radius_px <= 0:
         raise LightCurveError("aperture_radius_px must be > 0.")
     if annulus_inner_radius_px <= aperture_radius_px:
@@ -499,12 +510,21 @@ def _measure_target(
     aperture_radius_px: float,
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
+    aperture_unit: str = "px",
 ) -> TargetMeasurement:
     """
         Converts the target RA and Dec to pixel coordinates, centroids the source, and measures aperture photometry.
 
+        The target is never allowed to drop a frame: if centroiding fails or the refinement drifts
+        too far from the WCS position, it measures at the authoritative WCS position instead.
+
         Returns the target measurement for a single frame.
     """
+    scale = aperture_unit_scale(frame.header, aperture_unit)
+    aperture_radius_px = aperture_radius_px / scale
+    annulus_inner_radius_px = annulus_inner_radius_px / scale
+    annulus_outer_radius_px = annulus_outer_radius_px / scale
+
     try:
         initial_x, initial_y = world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
     except Exception as exc:
@@ -522,27 +542,57 @@ def _measure_target(
         r_back1=annulus_inner_radius_px,
         r_back2=annulus_outer_radius_px,
     )
-    if not centroid_result.success:
-        raise LightCurveError(f"Target centroiding failed for {frame.fits_path}.")
+
+    # The target (often a supernova on bright host-galaxy structure) must never drop a frame. A
+    # failed centroid, or a refinement that drifts more than TARGET_RECENTER_MAX_SHIFT_PX from the
+    # WCS position, means it locked onto the host or a neighbour, so fall back to the WCS position.
+    recenter_shift_px = math.hypot(centroid_result.x - initial_x, centroid_result.y - initial_y)
+    if centroid_result.success and recenter_shift_px <= TARGET_RECENTER_MAX_SHIFT_PX:
+        x_center, y_center = centroid_result.x, centroid_result.y
+        background_model = centroid_result.background_model
+    else:
+        x_center, y_center = initial_x, initial_y
+        # Re-estimate the background at the WCS position: a drifted annulus can straddle the host
+        # galaxy and bias the sky level, which is exactly the pull we are rejecting.
+        background_model = calculate_background_model(
+            frame.image,
+            x_center,
+            y_center,
+            aperture_radius_px,
+            annulus_inner_radius_px,
+            annulus_outer_radius_px,
+            remove_background_stars=True,
+            use_plane_background=False,
+        )
+        reason = (
+            "centroiding failed"
+            if not centroid_result.success
+            else f"centroid shift {recenter_shift_px:.2f}px exceeded {TARGET_RECENTER_MAX_SHIFT_PX:.2f}px limit"
+        )
+        log.warning(
+            "Aperture Photometry target recenter skipped: "
+            f"frame={frame.fits_path}, {reason}; measured at WCS position "
+            f"({x_center:.3f}, {y_center:.3f})."
+        )
     log.info(
         "Aperture Photometry target centroid: "
-        f"frame={frame.fits_path}, centroid=({centroid_result.x:.3f}, {centroid_result.y:.3f})"
+        f"frame={frame.fits_path}, position=({x_center:.3f}, {y_center:.3f})"
     )
 
     photometry = measure_aperture(
         image=frame.image,
-        x_center=centroid_result.x,
-        y_center=centroid_result.y,
+        x_center=x_center,
+        y_center=y_center,
         aperture_radius_px=aperture_radius_px,
-        background_model=centroid_result.background_model,
+        background_model=background_model,
         gain=header_float(frame.header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
         read_noise=header_float(frame.header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
         dark=0.0,
         error_class=LightCurveError,
     )
     return TargetMeasurement(
-        x=centroid_result.x,
-        y=centroid_result.y,
+        x=x_center,
+        y=y_center,
         net_source_counts=photometry["net_source_counts"],
         source_uncertainty=photometry["source_uncertainty"],
         mean_background_per_pixel=photometry["mean_background_per_pixel"],
@@ -552,83 +602,19 @@ def _measure_target(
     )
 
 
-def _nearest_source_catalog_row(
-    *,
-    frame: FrameContext,
-    ra_deg: float,
-    dec_deg: float,
-) -> dict[str, Any] | None:
-    rows: list[dict[str, Any]] = []
-    for raw_row in frame.second_hdu_rows:
-        try:
-            rows.append(_extract_candidate_row(raw_row, frame.fits_path))
-        except LightCurveError:
-            continue
-    if not rows:
-        return None
-    return min(
-        rows,
-            key=lambda row: angular_distance_arcsec(
-            ra_deg,
-            dec_deg,
-            row["ra_deg"],
-            row["dec_deg"],
-        ),
-    )
-
-
-def _target_catalog_flux_proxy(
-    *,
-    frames: Sequence[FrameContext],
-    target_measurements: Mapping[str, TargetMeasurement],
-    target_ra_deg: float,
-    target_dec_deg: float,
-) -> float | None:
+def _target_magnitude_proxy(measurements: Iterable[TargetMeasurement]) -> float:
     """
-        Estimates the target source catalog flux from nearby catalog matches across frames.
-
-        Returns the median matched catalog flux, or None if no valid match is found.
+        The target's own measured instrumental magnitude, median over frames. Comparison stars are
+        ranked against this (not the target's catalog magnitude) so both sides share a zero point.
     """
-    target_catalog_fluxes: list[float] = []
-    for frame in frames:
-        target = target_measurements.get(frame.fits_path)
-        if target is None:
-            continue
-        try:
-            centroid_ra_deg, centroid_dec_deg = _pixel_to_world(frame.header, target.x, target.y)
-        except Exception:
-            centroid_ra_deg = target_ra_deg
-            centroid_dec_deg = target_dec_deg
-        target_row = _nearest_source_catalog_row(
-            frame=frame,
-            ra_deg=centroid_ra_deg,
-            dec_deg=centroid_dec_deg,
-        )
-        if target_row is None:
-            continue
-        distance_arcsec = angular_distance_arcsec(
-            centroid_ra_deg,
-            centroid_dec_deg,
-            target_row["ra_deg"],
-            target_row["dec_deg"],
-        )
-        if distance_arcsec > DEFAULT_CROSSMATCH_ARCSEC:
-            continue
-        flux = _optional_float(target_row.get("flux"))
-        if math.isfinite(flux) and flux > 0.0:
-            target_catalog_fluxes.append(flux)
-
-    if not target_catalog_fluxes:
-        return None
-    return float(np.median(np.asarray(target_catalog_fluxes, dtype=float)))
-
-
-def _optional_float(value: Any) -> float:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return math.nan
-    return result if math.isfinite(result) else math.nan
+    instrumental_mags = [
+        -2.5 * math.log10(measurement.net_source_counts)
+        for measurement in measurements
+        if measurement.net_source_counts > 0
+    ]
+    if not instrumental_mags:
+        raise LightCurveError("Target photometry never produced positive source counts.")
+    return float(np.median(np.asarray(instrumental_mags, dtype=float)))
 
 
 def _build_field_star_catalog(
@@ -638,6 +624,7 @@ def _build_field_star_catalog(
     target_dec_deg: float,
     aperture_radius_px: float,
     annulus_outer_radius_px: float,
+    aperture_unit: str = "px",
 ) -> list[dict[str, Any]]:
     """
         Builds comp star candidates from the source catalogs across valid frames.
@@ -678,14 +665,17 @@ def _build_field_star_catalog(
             row["pixel_x"] = float(x)
             row["pixel_y"] = float(y)
 
+        frame_scale = aperture_unit_scale(frame.header, aperture_unit)
+        frame_aperture_radius_px = aperture_radius_px / frame_scale
+        frame_annulus_outer_radius_px = annulus_outer_radius_px / frame_scale
         target_x, target_y = target_pixels[frame.fits_path]
-        target_limit_px = max(TARGET_PROXIMITY_FACTOR * aperture_radius_px, annulus_outer_radius_px)
+        target_limit_px = max(TARGET_PROXIMITY_FACTOR * frame_aperture_radius_px, frame_annulus_outer_radius_px)
         too_close_to_target_mask = np.hypot(x_values - target_x, y_values - target_y) <= target_limit_px
         too_close_to_edge_mask = (
-            (x_values - annulus_outer_radius_px < EDGE_MARGIN_PX)
-            | (y_values - annulus_outer_radius_px < EDGE_MARGIN_PX)
-            | (x_values + annulus_outer_radius_px >= frame.width - EDGE_MARGIN_PX)
-            | (y_values + annulus_outer_radius_px >= frame.height - EDGE_MARGIN_PX)
+            (x_values - frame_annulus_outer_radius_px < EDGE_MARGIN_PX)
+            | (y_values - frame_annulus_outer_radius_px < EDGE_MARGIN_PX)
+            | (x_values + frame_annulus_outer_radius_px >= frame.width - EDGE_MARGIN_PX)
+            | (y_values + frame_annulus_outer_radius_px >= frame.height - EDGE_MARGIN_PX)
         )
 
         rejected_for_target = int(np.count_nonzero(too_close_to_target_mask))
@@ -740,10 +730,11 @@ def _build_field_star_catalog(
 
     catalog: list[dict[str, Any]] = []
     rejected_for_coverage = 0
+    required_coverage = max(1, math.ceil(COMPARISON_FRAME_COVERAGE_FRACTION * len(frames)))
     for idx, cluster in enumerate(
         sorted(clusters, key=lambda item: (round(item["ra_deg"], 8), round(item["dec_deg"], 8)))
     ):
-        if len(cluster["frame_paths"]) < len(frames):
+        if len(cluster["frame_paths"]) < required_coverage:
             rejected_for_coverage += 1
             continue
         isolation = minimum_angular_neighbor_distance_arcsec(cluster, clusters)
@@ -765,7 +756,8 @@ def _build_field_star_catalog(
         )
     log.info(
         "Aperture Photometry comparison catalog summary: "
-        f"clusters={len(clusters)}, rejected_insufficient_coverage={rejected_for_coverage}, "
+        f"clusters={len(clusters)}, required_coverage={required_coverage}/{len(frames)} frames, "
+        f"rejected_insufficient_coverage={rejected_for_coverage}, "
         f"valid_catalog_candidates={len(catalog)}"
     )
     return catalog
@@ -788,7 +780,7 @@ def _extract_candidate_row(row: Mapping[str, Any], fits_path: str) -> dict[str, 
     ra_deg = float(row[SOURCE_CATALOG_RA_KEY])
     dec_deg = float(row[SOURCE_CATALOG_DEC_KEY])
     mag = float(row[SOURCE_CATALOG_MAG_KEY])
-    flux = _optional_float(row[SOURCE_CATALOG_FLUX_KEY])
+    flux = optional_float(row[SOURCE_CATALOG_FLUX_KEY])
     if not math.isfinite(ra_deg) or not math.isfinite(dec_deg) or not math.isfinite(mag) or not math.isfinite(flux):
         raise LightCurveError(f"Second HDU row contains malformed RA/Dec/magnitude/flux values in {fits_path}.")
     return {
