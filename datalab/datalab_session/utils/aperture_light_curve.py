@@ -12,11 +12,16 @@ from dateutil.parser import ParserError, parse as parse_date
 from datalab.datalab_session.utils.comparison_stars import (
     ComparisonMeasurement,
     ComparisonStar,
-    measure_candidate_on_frame,
     select_comparison_stars,
 )
 from datalab.datalab_session.utils.centroiding import calculate_background_model, centroid
-from datalab.datalab_session.utils.fits_metadata import aperture_unit_scale, header_float, optional_float, world_to_pixel
+from datalab.datalab_session.utils.fits_metadata import (
+    aperture_unit_scale,
+    frame_gain,
+    frame_read_noise,
+    optional_float,
+    world_to_pixel,
+)
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 from datalab.datalab_session.utils.geometry import (
     angular_distance_arcsec,
@@ -47,8 +52,6 @@ TARGET_PROXIMITY_FACTOR = 2.0
 # pixel offset toward the host while the centroid box light is dominated by the galaxy in faint bands.
 TARGET_RECENTER_MAX_SHIFT_PX = 6.0
 DEFAULT_CROSSMATCH_ARCSEC = 1.0
-DEFAULT_GAIN = 1.0
-DEFAULT_READ_NOISE = 0.0
 DEFAULT_APERTURE_RADIUS_PX = 7.64
 DEFAULT_ANNULUS_INNER_RADIUS_PX = 12.73
 DEFAULT_ANNULUS_OUTER_RADIUS_PX = 19.10
@@ -145,7 +148,6 @@ def generate_light_curve(
     aperture_radius_px: float,
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
-    comparison_strategy: str = "auto",
     min_comparisons: int = 5,
     max_comparisons: int = 10,
     aperture_unit: str = "px",
@@ -163,7 +165,6 @@ def generate_light_curve(
         f"annulus_inner_radius={annulus_inner_radius_px:.3f}, "
         f"annulus_outer_radius={annulus_outer_radius_px:.3f}, "
         f"aperture_unit={aperture_unit}, "
-        f"comparison_strategy={comparison_strategy}, "
         f"min_comparisons={min_comparisons}, max_comparisons={max_comparisons}"
     )
     _validate_inputs(
@@ -171,7 +172,6 @@ def generate_light_curve(
         aperture_radius_px=aperture_radius_px,
         annulus_inner_radius_px=annulus_inner_radius_px,
         annulus_outer_radius_px=annulus_outer_radius_px,
-        comparison_strategy=comparison_strategy,
         min_comparisons=min_comparisons,
         max_comparisons=max_comparisons,
         aperture_unit=aperture_unit,
@@ -257,16 +257,10 @@ def generate_light_curve(
     diagnostic_images_by_fits_basename: dict[str, str] = {}
     for frame in frames:
         target = target_measurements[frame.fits_path]
+        # Reuse the per-frame measurements captured during selection rather than re-measuring the
+        # same apertures on the same frames.
         comparison_measurements = tuple(
-            measure_candidate_on_frame(
-                frame=frame,
-                candidate=star,
-                aperture_radius_px=aperture_radius_px,
-                annulus_inner_radius_px=annulus_inner_radius_px,
-                annulus_outer_radius_px=annulus_outer_radius_px,
-                aperture_unit=aperture_unit,
-                error_class=LightCurveError,
-            )
+            selection.measurements_by_candidate[star.candidate_id][frame.fits_path]
             for star in selection.selected_stars
         )
         comparison_counts = np.asarray(
@@ -284,10 +278,16 @@ def generate_light_curve(
 
         target_variance = target.source_uncertainty * target.source_uncertainty
         target_rel_flux = target.net_source_counts / ensemble_flux
-        target_rel_flux_sigma = abs(target_rel_flux) * math.sqrt(
-            target_variance / (target.net_source_counts * target.net_source_counts)
-            + ensemble_variance / (ensemble_flux * ensemble_flux)
-        )
+        if target.net_source_counts > 0.0:
+            target_rel_flux_sigma = abs(target_rel_flux) * math.sqrt(
+                target_variance / (target.net_source_counts * target.net_source_counts)
+                + ensemble_variance / (ensemble_flux * ensemble_flux)
+            )
+        else:
+            # Non-positive target counts (e.g. WCS-fallback measuring on blank sky) make the
+            # relative-flux error undefined -- and dividing by net_source_counts**2 would raise
+            # ZeroDivisionError at exactly 0. The row's magnitude is NaN below in this case anyway.
+            target_rel_flux_sigma = math.nan
         calibrated_flux = target_rel_flux * ensemble_reference_flux
         calibration_slope = -2.5
         frame_zero_point = 2.5 * math.log10(ensemble_flux) + ensemble_reference_mag
@@ -376,7 +376,6 @@ def _validate_inputs(
     aperture_radius_px: float,
     annulus_inner_radius_px: float,
     annulus_outer_radius_px: float,
-    comparison_strategy: str,
     min_comparisons: int,
     max_comparisons: int,
     aperture_unit: str,
@@ -393,8 +392,6 @@ def _validate_inputs(
         raise LightCurveError("annulus_outer_radius_px must be greater than annulus_inner_radius_px.")
     if min_comparisons <= 0 or max_comparisons <= 0 or min_comparisons > max_comparisons:
         raise LightCurveError("min_comparisons and max_comparisons must be positive and min_comparisons <= max_comparisons.")
-    if comparison_strategy not in {"auto", "variability_first"}:
-        raise LightCurveError("comparison_strategy must be 'auto' or 'variability_first'.")
 
 
 def _validated_frame_contexts(input_handlers: Sequence[Any]) -> list[FrameContext]:
@@ -585,8 +582,8 @@ def _measure_target(
         y_center=y_center,
         aperture_radius_px=aperture_radius_px,
         background_model=background_model,
-        gain=header_float(frame.header, ("GAIN", "EGAIN"), DEFAULT_GAIN),
-        read_noise=header_float(frame.header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE),
+        gain=frame_gain(frame.header),
+        read_noise=frame_read_noise(frame.header),
         dark=0.0,
         error_class=LightCurveError,
     )

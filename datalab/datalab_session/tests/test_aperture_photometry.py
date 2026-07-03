@@ -381,6 +381,23 @@ class TestAperturePhotometry(unittest.TestCase):
                 fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0, aperture_unit="degrees"
             )
 
+    def test_zero_target_counts_does_not_crash_calibration(self) -> None:
+        # Zero the target aperture+annulus on one frame so its net counts are exactly 0.0 (as a
+        # blank/masked region would give). Dividing by net_source_counts**2 in the relative-flux
+        # error would raise ZeroDivisionError; the frame must instead be retained with a NaN
+        # magnitude and NaN uncertainty.
+        frames, (target_ra, target_dec) = build_frame_set()
+        frames["frame_1.fits"]["image"][18:40, 20:42] = 0.0   # aperture + background annulus -> 0
+        fits_paths = self.write_frames(frames)
+
+        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+
+        self.assertEqual(len(result.light_curve_rows), 3)
+        zeroed = next(row for row in result.light_curve_rows if row.fits_path.endswith("frame_1.fits"))
+        self.assertEqual(zeroed.target_net_source_counts, 0.0)
+        self.assertTrue(math.isnan(zeroed.target_calibrated_apparent_magnitude))
+        self.assertTrue(math.isnan(zeroed.target_differential_flux_uncertainty))
+
     def test_second_hdu_radec_cross_match_across_frames(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         for frame in frames.values():
@@ -403,7 +420,6 @@ class TestAperturePhotometry(unittest.TestCase):
             4.0,
             6.0,
             9.0,
-            comparison_strategy="variability_first",
             min_comparisons=5,
             max_comparisons=12,
         )
@@ -436,7 +452,6 @@ class TestAperturePhotometry(unittest.TestCase):
             4.0,
             6.0,
             9.0,
-            comparison_strategy="variability_first",
             min_comparisons=5,
             max_comparisons=5,
         )
@@ -653,7 +668,6 @@ class TestAperturePhotometry(unittest.TestCase):
                 aperture_radius_px=4.0,
                 annulus_inner_radius_px=6.0,
                 annulus_outer_radius_px=9.0,
-                comparison_strategy="variability_first",
             )
         finally:
             os.remove(path)

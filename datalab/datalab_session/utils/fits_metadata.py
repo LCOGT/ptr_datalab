@@ -27,6 +27,20 @@ def optional_float(value: Any) -> float:
     return result if math.isfinite(result) else math.nan
 
 
+DEFAULT_GAIN = 1.0
+DEFAULT_READ_NOISE = 0.0
+
+
+def frame_gain(header: Mapping[str, Any]) -> float:
+    """Detector gain (e-/ADU) from the frame header, falling back to DEFAULT_GAIN."""
+    return header_float(header, ("GAIN", "EGAIN"), DEFAULT_GAIN)
+
+
+def frame_read_noise(header: Mapping[str, Any]) -> float:
+    """Detector read noise (e-) from the frame header, falling back to DEFAULT_READ_NOISE."""
+    return header_float(header, ("RDNOISE", "READNOIS", "READNOISE"), DEFAULT_READ_NOISE)
+
+
 def pixel_scale_arcsec(header: Mapping[str, Any]) -> float:
     """
         Arcsec-per-pixel for a frame, from its WCS astrometric solution (preferred) or the
