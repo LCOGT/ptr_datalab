@@ -319,6 +319,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             ],
             selected_comparison_stars=[],
             diagnostics=('loaded 1 frame', 'selected 5 comparison stars'),
+            diagnostic_images_by_fits_basename={'fits_1.fits': 'base64-jpeg'},
         )
         input_data = self.valid_input_data()
 
@@ -344,6 +345,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
                 'fits_1.fits': ['loaded 1 frame', 'selected 5 comparison stars'],
             },
         )
+        self.assertEqual(output['output_data'][0]['diagnostic_images'], {'fits_1.fits': 'base64-jpeg'})
         self.assertIsNone(output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude'])
         self.assertIsNone(
             output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude_uncertainty']
