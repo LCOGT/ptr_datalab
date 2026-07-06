@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import base64
 import logging
 import math
 import os
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
+from PIL import Image, ImageDraw, ImageFont
 
 from datalab.datalab_session.analysis.centroiding_core import (
     centroid,
@@ -88,6 +91,8 @@ DEFAULT_MAX_COMPARISONS = 10
 # missed detection; selected stars are still measured (via WCS) on all frames, so the
 # comparison ensemble stays consistent frame-to-frame regardless of this threshold.
 COMPARISON_FRAME_COVERAGE_FRACTION = 0.8
+DIAGNOSTIC_COMPARISON_STAR_COLOR = (0, 173, 239)
+DIAGNOSTIC_TARGET_COLOR = (243, 131, 33)
 
 
 class AperturePhotometry(BaseDataOperation):
@@ -259,6 +264,7 @@ class AperturePhotometry(BaseDataOperation):
                         _dataclass_to_plain_dict(star) for star in result.selected_comparison_stars
                     ],
                     'diagnostics': _diagnostics_by_fits_basename(result),
+                    'diagnostic_images': _diagnostic_images_by_fits_basename(result),
                 }
             ]
         }
@@ -320,6 +326,17 @@ def _diagnostics_by_fits_basename(result: Any) -> dict[str, list[str]]:
     ]
     diagnostics = list(getattr(result, "diagnostics", []))
     return {basename: list(diagnostics) for basename in basenames}
+
+
+def _diagnostic_images_by_fits_basename(result: Any) -> dict[str, str]:
+    grouped = getattr(result, "diagnostic_images_by_fits_basename", None)
+    if grouped is None:
+        return {}
+    return {
+        str(basename): str(image_base64)
+        for basename, image_base64 in grouped.items()
+        if image_base64
+    }
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -409,6 +426,7 @@ class LightCurveResult:
     light_curve_rows: list[LightCurveRow]
     diagnostics: list[str]
     diagnostics_by_fits_basename: dict[str, list[str]]
+    diagnostic_images_by_fits_basename: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -634,6 +652,7 @@ def generate_light_curve(
     )
 
     light_curve_rows: list[LightCurveRow] = []
+    diagnostic_images_by_fits_basename: dict[str, str] = {}
     for frame in frames:
         target = target_measurements[frame.fits_path]
         comparison_measurements = tuple(
@@ -694,6 +713,14 @@ def generate_light_curve(
         )
         diagnostics.extend(frame_diagnostics)
         diagnostics_by_fits_basename[os.path.basename(frame.fits_path)].extend(frame_diagnostics)
+        frame_aperture_radius_px = aperture_radius_px / _aperture_px_scale(frame, aperture_unit)
+        diagnostic_images_by_fits_basename[os.path.basename(frame.fits_path)] = _candidate_overlay_jpeg_base64(
+            frame=frame,
+            stars=selected_stars,
+            measurements=comparison_measurements,
+            target_measurement=target,
+            aperture_radius_px=frame_aperture_radius_px,
+        )
 
         light_curve_rows.append(
             LightCurveRow(
@@ -722,6 +749,7 @@ def generate_light_curve(
         light_curve_rows=light_curve_rows,
         diagnostics=diagnostics,
         diagnostics_by_fits_basename=diagnostics_by_fits_basename,
+        diagnostic_images_by_fits_basename=diagnostic_images_by_fits_basename,
     )
 
 
@@ -962,6 +990,111 @@ def _measure_target(
     )
 
 
+def _candidate_overlay_jpeg_base64(
+    *,
+    frame: FrameContext,
+    stars: Sequence[ComparisonStar],
+    measurements: Sequence[ComparisonMeasurement],
+    target_measurement: TargetMeasurement,
+    aperture_radius_px: float,
+) -> str:
+    image = _normalize_image_for_jpeg(frame.image)
+    draw = ImageDraw.Draw(image)
+    font = _diagnostic_overlay_font(frame.width, frame.height)
+    stars_by_id = {star.candidate_id: star for star in stars}
+    min_dimension = max(min(frame.width, frame.height), 1)
+    radius = max(float(aperture_radius_px), min_dimension * 0.018, 14.0)
+    line_width = max(3, int(round(min_dimension * 0.004)))
+    label_padding = max(3, int(round(min_dimension * 0.004)))
+
+    for measurement in measurements:
+        if measurement.candidate_id not in stars_by_id:
+            continue
+        x = float(measurement.x)
+        y = _diagnostic_display_y(float(measurement.y), frame.height)
+        if not math.isfinite(x) or not math.isfinite(y):
+            continue
+
+        label = measurement.candidate_id
+        halo_bbox = (x - radius, y - radius, x + radius, y + radius)
+        draw.ellipse(
+            halo_bbox,
+            outline=(0, 0, 0),
+            width=line_width + 2,
+        )
+        draw.ellipse(
+            halo_bbox,
+            outline=DIAGNOSTIC_COMPARISON_STAR_COLOR,
+            width=line_width,
+        )
+
+        label_x = x + radius + label_padding
+        label_y = y - radius - label_padding
+        label_bbox = draw.textbbox((label_x, label_y), label, font=font)
+        label_width = label_bbox[2] - label_bbox[0]
+        label_height = label_bbox[3] - label_bbox[1]
+        if label_x + label_width + label_padding > frame.width:
+            label_x = max(x - radius - label_width - label_padding, 0)
+        if label_y < 0:
+            label_y = min(y + radius + label_padding, max(frame.height - label_height - label_padding, 0))
+        draw.text((label_x, label_y), label, fill=DIAGNOSTIC_COMPARISON_STAR_COLOR, font=font)
+
+    target_x = float(target_measurement.x)
+    target_y = _diagnostic_display_y(float(target_measurement.y), frame.height)
+    if math.isfinite(target_x) and math.isfinite(target_y):
+        target_bbox = (
+            target_x - radius,
+            target_y - radius,
+            target_x + radius,
+            target_y + radius,
+        )
+        draw.ellipse(
+            target_bbox,
+            outline=(0, 0, 0),
+            width=line_width + 2,
+        )
+        draw.ellipse(
+            target_bbox,
+            outline=DIAGNOSTIC_TARGET_COLOR,
+            width=line_width,
+        )
+
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=90)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def _normalize_image_for_jpeg(image_data: np.ndarray) -> Image.Image:
+    finite = np.asarray(image_data, dtype=float)
+    finite_values = finite[np.isfinite(finite)]
+    if finite_values.size:
+        zmin, zmax = np.percentile(finite_values, (1, 99.7))
+    else:
+        zmin, zmax = 0.0, 1.0
+    if not math.isfinite(float(zmin)) or not math.isfinite(float(zmax)) or zmax <= zmin:
+        zmin = float(np.nanmin(finite_values)) if finite_values.size else 0.0
+        zmax = float(np.nanmax(finite_values)) if finite_values.size else 1.0
+    if zmax <= zmin:
+        zmax = zmin + 1.0
+
+    scaled = np.clip((finite - zmin) / (zmax - zmin), 0.0, 1.0)
+    scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
+    gray = np.flip((scaled * 255.0).astype(np.uint8), axis=0)
+    return Image.fromarray(gray).convert("RGB")
+
+
+def _diagnostic_display_y(y: float, height: int) -> float:
+    return float(height - 1) - y
+
+
+def _diagnostic_overlay_font(width: int, height: int) -> ImageFont.ImageFont:
+    font_size = max(32, min(160, int(round(min(width, height) * 0.05))))
+    try:
+        return ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+    except OSError:
+        return ImageFont.load_default()
+
+
 def _target_magnitude_proxy(measurements: Iterable[TargetMeasurement]) -> float:
     instrumental_mags = [
         -2.5 * math.log10(measurement.net_source_counts)
@@ -985,7 +1118,7 @@ def _comparison_star_validation_diagnostics(
 ) -> list[str]:
     diagnostics = [
         (
-            "comparison star identifier | calculated flux | FITS source catalog flux | "
+            "comparison star identifier | RA | Dec | calculated flux | FITS source catalog flux | "
             "calculated magnitude | FITS source catalog magnitude"
         ),
     ]
@@ -999,10 +1132,12 @@ def _comparison_star_validation_diagnostics(
         diagnostics.append(
             "comparison-star validation row: "
             f"{star.candidate_id} | "
-            f"{_format_float(measurement.net_source_counts, precision=6)} | "
-            f"{_format_float(fits_catalog_flux, precision=6)} | "
-            f"{_format_float(calculated_magnitude, precision=6)} | "
-            f"{_format_float(fits_catalog_mag, precision=6)}"
+            f"{_format_float(star.ra_deg, precision=3)} | "
+            f"{_format_float(star.dec_deg, precision=3)} | "
+            f"{_format_float(measurement.net_source_counts, precision=0)} | "
+            f"{_format_float(fits_catalog_flux, precision=0)} | "
+            f"{_format_float(calculated_magnitude, precision=3)} | "
+            f"{_format_float(fits_catalog_mag, precision=3)}"
         )
     return diagnostics
 
