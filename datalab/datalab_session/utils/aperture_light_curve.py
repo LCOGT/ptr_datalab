@@ -45,11 +45,7 @@ EDGE_MARGIN_PX = 2.0
 TARGET_PROXIMITY_FACTOR = 2.0
 # A target recenter is accepted only if the centroid moves less than this many pixels from the
 # WCS-predicted position. Larger shifts (or a failed centroid) mean the centroid was pulled onto
-# a neighbour or host-galaxy structure -- common for a supernova embedded in its host -- so we
-# keep the authoritative WCS position and measure there rather than dropping the frame. The cap is
-# absolute (not FWHM-relative): across a 169-frame NGC 7331 supernova set, clean recenters stayed
-# <=5.3px while galaxy pulls clustered >=7.8px regardless of seeing, because the pull is a fixed
-# pixel offset toward the host while the centroid box light is dominated by the galaxy in faint bands.
+# a neighbour or host-galaxy structure.
 TARGET_RECENTER_MAX_SHIFT_PX = 6.0
 DEFAULT_CROSSMATCH_ARCSEC = 1.0
 DEFAULT_APERTURE_RADIUS_PX = 7.64
@@ -285,7 +281,7 @@ def generate_light_curve(
             )
         else:
             # Non-positive target counts (e.g. WCS-fallback measuring on blank sky) make the
-            # relative-flux error undefined -- and dividing by net_source_counts**2 would raise
+            # relative-flux error undefined and dividing by net_source_counts**2 would raise
             # ZeroDivisionError at exactly 0. The row's magnitude is NaN below in this case anyway.
             target_rel_flux_sigma = math.nan
         calibrated_flux = target_rel_flux * ensemble_reference_flux
@@ -540,9 +536,8 @@ def _measure_target(
         r_back2=annulus_outer_radius_px,
     )
 
-    # The target (often a supernova on bright host-galaxy structure) must never drop a frame. A
-    # failed centroid, or a refinement that drifts more than TARGET_RECENTER_MAX_SHIFT_PX from the
-    # WCS position, means it locked onto the host or a neighbour, so fall back to the WCS position.
+    # A failed centroid, or a refinement that drifts more than TARGET_RECENTER_MAX_SHIFT_PX from the
+    # WCS position, means it locked onto the host galaxy or a neighbour, so fall back to the WCS position.
     recenter_shift_px = math.hypot(centroid_result.x - initial_x, centroid_result.y - initial_y)
     if centroid_result.success and recenter_shift_px <= TARGET_RECENTER_MAX_SHIFT_PX:
         x_center, y_center = centroid_result.x, centroid_result.y
@@ -626,7 +621,7 @@ def _build_field_star_catalog(
     """
         Builds comp star candidates from the source catalogs across valid frames.
 
-        Reutrns candidates that are present in all frames and are not too close to the target or the edge of the image.
+        Returns candidates that are present in all frames and are not too close to the target or the edge of the image.
     """
     clusters: list[dict[str, Any]] = []
     target_pixels = {

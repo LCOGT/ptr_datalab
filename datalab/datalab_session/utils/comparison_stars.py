@@ -111,7 +111,7 @@ def select_comparison_stars(
 def _reject_zero_point_outliers(candidates: Sequence[ComparisonStar]) -> list[ComparisonStar]:
     """
         Drops candidates whose (catalog_mag - measured_instrumental_mag) residual departs from the
-        ensemble median by more than MAX_ZERO_POINT_RESIDUAL_MAG -- these carry an untrustworthy
+        ensemble median by more than MAX_ZERO_POINT_RESIDUAL_MAG. These carry an untrustworthy
         catalog magnitude (typically a blended or mismatched cross-match) that would bias the
         zero-point calibration. Needs a few stars for a robust median; below that, keeps all, and
         never lets the guard empty the pool.
@@ -159,7 +159,7 @@ def measure_candidate_on_frame(
 
         Converts the candidate's RA/Dec to pixel coordinates via the frame WCS, centroids around
         that position to refine it (correcting small WCS or catalog inaccuracies), then measures
-        aperture photometry at the refined position -- estimating the background, summing the
+        aperture photometry at the refined position, estimating the background, summing the
         aperture flux, and computing the net source counts and their uncertainty.
 
         Returns the comparison-star measurement for this frame.
@@ -215,7 +215,7 @@ def _measure_and_rank_candidates(
     error_class: type[Exception],
 ) -> tuple[list[ComparisonStar], dict[str, dict[str, ComparisonMeasurement]]]:
     """
-        Measures each candidate across all frames and calcaltes variability scores.
+        Measures each candidate across all frames and calculates variability scores.
 
         Returns the comp star candidates that have valid positive measurements across all frames,
         together with those per-frame measurements keyed candidate_id -> fits_path -> measurement
