@@ -621,7 +621,8 @@ def _build_field_star_catalog(
     """
         Builds comp star candidates from the source catalogs across valid frames.
 
-        Returns candidates that are present in all frames and are not too close to the target or the edge of the image.
+        Returns candidates detected in at least COMPARISON_FRAME_COVERAGE_FRACTION of the frames that
+        are not too close to the target or the edge of the image.
     """
     clusters: list[dict[str, Any]] = []
     target_pixels = {
@@ -742,7 +743,7 @@ def _build_field_star_catalog(
                 "second_hdu_magnitude": float(np.median(np.asarray(cluster["mags"], dtype=float))),
                 "source_catalog_by_frame": dict(cluster["source_catalog_by_frame"]),
                 "frame_coverage": len(cluster["frame_paths"]),
-                "isolation_px": isolation,
+                "isolation_arcsec": isolation,
                 "target_separation_px": target_sep,
             }
         )

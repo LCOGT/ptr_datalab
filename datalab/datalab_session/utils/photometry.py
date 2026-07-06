@@ -22,13 +22,16 @@ def measure_aperture(
 
         Defines a circular aperture around the source and sums the flux within it, weighting each
         pixel by its fractional overlap with the aperture. Subtracts the background contribution
-        (from the supplied background_model) to obtain the net source counts, and derives the source
+        (the constant background_model.mean) to obtain the net source counts, and derives the source
         uncertainty from the source and background levels and the instrumental parameters (gain,
-        read noise, dark current).
+        read noise, dark current). A fitted plane on the background model, if present, is not applied
+        here -- photometry always uses the constant mean background.
 
         Returns the net source counts, source uncertainty, mean background per pixel, peak pixel
         value, and effective number of source and background pixels.
     """
+    if not math.isfinite(gain) or gain <= 0.0:
+        raise error_class("Detector gain must be positive and finite for aperture photometry.")
     height, width = image.shape
     source_radius = aperture_radius_px
     bck_cnt = float(max(int(background_model.effective_pixels), 1))

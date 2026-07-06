@@ -44,7 +44,7 @@ class ComparisonStar:
     reference_magnitude_source: str
     source_catalog_by_frame: Mapping[str, Mapping[str, Any]]
     variability_score: float
-    isolation_px: float
+    isolation_arcsec: float
     target_separation_px: float
     measured_instrumental_magnitude: float = math.inf
 
@@ -140,7 +140,7 @@ def _source_catalog_sort_key(candidate: ComparisonStar, target_mag_proxy: float)
     """
     return (
         abs(candidate.measured_instrumental_magnitude - target_mag_proxy),
-        -candidate.isolation_px,
+        -candidate.isolation_arcsec,
         candidate.candidate_id,
     )
 
@@ -234,7 +234,7 @@ def _measure_and_rank_candidates(
             reference_magnitude_source=reference_magnitude_source,
             source_catalog_by_frame=source_catalog_by_frame,
             variability_score=math.inf,
-            isolation_px=candidate["isolation_px"],
+            isolation_arcsec=candidate["isolation_arcsec"],
             target_separation_px=candidate["target_separation_px"],
         )
         try:
@@ -283,7 +283,7 @@ def _measure_and_rank_candidates(
                 reference_magnitude_source=candidate_star.reference_magnitude_source,
                 source_catalog_by_frame=candidate_star.source_catalog_by_frame,
                 variability_score=float(np.std(variability_mags)),
-                isolation_px=candidate_star.isolation_px,
+                isolation_arcsec=candidate_star.isolation_arcsec,
                 target_separation_px=candidate_star.target_separation_px,
                 measured_instrumental_magnitude=float(np.median(instrumental_mags)),
             )

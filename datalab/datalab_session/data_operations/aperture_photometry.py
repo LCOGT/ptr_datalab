@@ -26,7 +26,7 @@ class AperturePhotometry(BaseDataOperation):
     """
         Builds a calibrated aperture photometry light curve for a target source across input images, using comparison stars from the source catalog.
 
-        Returns light curve rows and diagnositc data for the frontend.
+        Returns light curve rows and diagnostic data for the frontend.
     """
     MINIMUM_NUMBER_OF_INPUTS = 1
     MAXIMUM_NUMBER_OF_INPUTS = 999
@@ -176,4 +176,9 @@ class AperturePhotometry(BaseDataOperation):
         self.set_output(output, is_raw=True)
         self.set_operation_progress(AperturePhotometry.PROGRESS_STEPS['OUTPUT_PERCENTAGE_COMPLETION'])
         self.set_status('COMPLETED')
-        log.info(f"Aperture Photometry output: {output}")
+        log.info(
+            "Aperture Photometry output: "
+            f"filter={filter_value}, light_curve_rows={len(result.light_curve_rows)}, "
+            f"selected_comparison_stars={len(result.selected_comparison_stars)}, "
+            f"diagnostic_images={len(result.diagnostic_images_by_fits_basename)}"
+        )

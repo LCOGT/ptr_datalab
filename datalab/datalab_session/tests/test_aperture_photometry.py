@@ -539,7 +539,7 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertRegex(fields[6], r"^-?\d+\.\d{3}$")
 
     @staticmethod
-    def _comparison_star(candidate_id: str, reference_magnitude: float, measured_magnitude: float, isolation_px: float = 10.0) -> ComparisonStar:
+    def _comparison_star(candidate_id: str, reference_magnitude: float, measured_magnitude: float, isolation_arcsec: float = 10.0) -> ComparisonStar:
         return ComparisonStar(
             candidate_id=candidate_id,
             ra_deg=0.0,
@@ -548,7 +548,7 @@ class TestAperturePhotometry(unittest.TestCase):
             reference_magnitude_source="second_hdu",
             source_catalog_by_frame={},
             variability_score=0.01,
-            isolation_px=isolation_px,
+            isolation_arcsec=isolation_arcsec,
             target_separation_px=50.0,
             measured_instrumental_magnitude=measured_magnitude,
         )
