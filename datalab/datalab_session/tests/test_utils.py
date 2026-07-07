@@ -1,6 +1,9 @@
 from datalab.datalab_session.utils.file_utils import *
 from datalab.datalab_session.utils.s3_utils import *
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag, flux_to_mag_array, flux_to_mag_scalar
+from datalab.datalab_session.utils.geometry import angular_distance_arcsec, distance_pixels
+from datalab.datalab_session.utils.centroiding import BackgroundModel, _fit_plane
+from datalab.datalab_session.utils.photometry import fractional_pixel_overlap, measure_aperture
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
 class FileUtilsTestClass(FileExtendedTestCase):
@@ -106,3 +109,61 @@ class FileUtilsTestClass(FileExtendedTestCase):
     self.assertAlmostEqual(magerr[0], 0.05428681023790647)
     self.assertTrue(np.isnan(mag[1]))
     self.assertTrue(np.isnan(magerr[1]))
+
+  def test_geometry_distance_helpers(self):
+    self.assertEqual(distance_pixels(0.0, 0.0, 3.0, 4.0), 5.0)
+    self.assertAlmostEqual(angular_distance_arcsec(10.0, 20.0, 10.0, 20.001), 3.6, places=3)
+
+  def test_fractional_pixel_overlap(self):
+    self.assertEqual(fractional_pixel_overlap(5, 5, 5.5, 5.5, 1.0), 1.0)
+    self.assertEqual(fractional_pixel_overlap(8, 8, 5.5, 5.5, 1.0), 0.0)
+
+  def test_measure_aperture(self):
+    image = np.full((21, 21), 10.0, dtype=float)
+    image[10, 10] = 110.0
+
+    result = measure_aperture(
+      image=image,
+      x_center=10.5,
+      y_center=10.5,
+      aperture_radius_px=2.0,
+      background_model=BackgroundModel(
+        mean=10.0,
+        effective_pixels=64.0,
+      ),
+      gain=1.0,
+      read_noise=0.0,
+      dark=0.0,
+    )
+
+    self.assertGreater(result["net_source_counts"], 0.0)
+    self.assertEqual(result["mean_background_per_pixel"], 10.0)
+    self.assertEqual(result["peak_pixel_value"], 110.0)
+    self.assertEqual(result["effective_background_pixels"], 64.0)
+
+  def test_fit_plane_accepts_point_tuples(self):
+    points = [
+      (0.0, 0.0, 4.0),
+      (1.0, 0.0, 6.0),
+      (0.0, 1.0, 1.0),
+      (2.0, 1.0, 5.0),
+      (-1.0, 2.0, -4.0),
+    ]
+
+    plane = _fit_plane(points)
+
+    self.assertIsNotNone(plane)
+    assert plane is not None
+    self.assertAlmostEqual(plane.c0, 4.0)
+    self.assertAlmostEqual(plane.c1, 2.0)
+    self.assertAlmostEqual(plane.c2, -3.0)
+
+  def test_fit_plane_rejects_degenerate_points(self):
+    points = [
+      (0.0, 0.0, 4.0),
+      (1.0, 1.0, 5.0),
+      (2.0, 2.0, 6.0),
+      (3.0, 3.0, 7.0),
+    ]
+
+    self.assertIsNone(_fit_plane(points))

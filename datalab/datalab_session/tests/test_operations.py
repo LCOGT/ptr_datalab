@@ -1,12 +1,16 @@
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import shutil
+from types import SimpleNamespace
 from unittest import mock
+import math
 import os
 
 from astropy.io import fits
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
+from datalab.datalab_session.data_operations.aperture_photometry import AperturePhotometry
 from datalab.datalab_session.data_operations.color_image import Color_Image
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.data_operations.light_curve import LightCurve
@@ -14,6 +18,7 @@ from datalab.datalab_session.data_operations.median import Median
 from datalab.datalab_session.data_operations.stacking import Stack
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 from datalab.datalab_session.utils.format import Format
+from datalab.datalab_session.utils.aperture_light_curve import LightCurveRow
 
 wizard_description = {
             'name': 'SampleDataOperation',
@@ -266,6 +271,136 @@ class TestLightCurveOperation(FileExtendedTestCase):
 
         with self.assertRaises(ClientAlertException):
             light_curve.operate(None)
+
+
+class TestAperturePhotometryOperation(FileExtendedTestCase):
+
+    def valid_input_data(self):
+        return {
+            'source': {'ra': 10.0, 'dec': 20.0},
+            'input_files': [{
+                'basename': 'fits_1',
+                'source': 'local',
+                'filter': 'rp',
+            }],
+            'aperture_radius_px': 7.64,
+            'annulus_inner_radius_px': 12.73,
+            'annulus_outer_radius_px': 19.10,
+        }
+
+    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve')
+    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.InputDataHandler')
+    @mock.patch.object(AperturePhotometry, 'set_status')
+    @mock.patch.object(AperturePhotometry, 'set_output')
+    @mock.patch.object(AperturePhotometry, 'set_operation_progress')
+    def test_operate_requires_and_passes_explicit_radii_and_filter(
+        self,
+        mock_set_operation_progress,
+        mock_set_output,
+        mock_set_status,
+        mock_input_data_handler,
+        mock_generate_light_curve,
+    ):
+        input_handler = SimpleNamespace(fits_file='/tmp/fits_1.fits')
+        mock_input_data_handler.return_value = input_handler
+        mock_generate_light_curve.return_value = SimpleNamespace(
+            light_curve_rows=[
+                LightCurveRow(
+                    fits_path='/tmp/fits_1.fits',
+                    date_obs=datetime(2026, 5, 13, tzinfo=timezone.utc),
+                    target_centroid_x=1.0,
+                    target_centroid_y=2.0,
+                    target_net_source_counts=3.0,
+                    target_source_uncertainty=4.0,
+                    comparison_ensemble_total_counts=5.0,
+                    comparison_ensemble_uncertainty=6.0,
+                    target_differential_flux=7.0,
+                    target_differential_flux_uncertainty=8.0,
+                    target_calibrated_apparent_magnitude=float('nan'),
+                    target_calibrated_apparent_magnitude_uncertainty=float('nan'),
+                )
+            ],
+            selected_comparison_stars=[],
+            diagnostics=('loaded 1 frame', 'selected 5 comparison stars'),
+            diagnostics_by_fits_basename={
+                'fits_1.fits': ['loaded 1 frame', 'selected 5 comparison stars'],
+            },
+            diagnostic_images_by_fits_basename={},
+        )
+        input_data = self.valid_input_data()
+
+        aperture_photometry = AperturePhotometry(input_data)
+        aperture_photometry.operate(None)
+
+        mock_generate_light_curve.assert_called_once_with(
+            input_handlers=[input_handler],
+            target_ra_deg=10.0,
+            target_dec_deg=20.0,
+            aperture_radius_px=7.64,
+            annulus_inner_radius_px=12.73,
+            annulus_outer_radius_px=19.10,
+            min_comparisons=5,
+            max_comparisons=10,
+            aperture_unit='px',
+        )
+        output, is_raw = mock_set_output.call_args.args[0], mock_set_output.call_args.kwargs['is_raw']
+        self.assertTrue(is_raw)
+        self.assertEqual(output['output_data'][0]['filter'], 'rp')
+        self.assertEqual(
+            output['output_data'][0]['diagnostics'],
+            {
+                'fits_1.fits': ['loaded 1 frame', 'selected 5 comparison stars'],
+            },
+        )
+        self.assertTrue(math.isnan(output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude']))
+        self.assertTrue(math.isnan(
+            output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude_uncertainty']
+        ))
+        mock_set_status.assert_called_once_with('COMPLETED')
+
+    def test_operate_requires_aperture_radius(self):
+        input_data = self.valid_input_data()
+        del input_data['aperture_radius_px']
+
+        with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
+            AperturePhotometry(input_data).operate(None)
+
+    def test_operate_requires_annulus_inner_radius(self):
+        input_data = self.valid_input_data()
+        del input_data['annulus_inner_radius_px']
+
+        with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
+            AperturePhotometry(input_data).operate(None)
+
+    def test_operate_requires_annulus_outer_radius(self):
+        input_data = self.valid_input_data()
+        del input_data['annulus_outer_radius_px']
+
+        with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
+            AperturePhotometry(input_data).operate(None)
+
+    def test_operate_allows_missing_filter(self):
+        input_data = self.valid_input_data()
+        del input_data['input_files'][0]['filter']
+
+        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.InputDataHandler') as mock_input_data_handler, \
+                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
+                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
+                mock.patch.object(AperturePhotometry, 'set_status'):
+            mock_input_data_handler.return_value = SimpleNamespace(fits_file='/tmp/fits_1.fits')
+            mock_generate_light_curve.return_value = SimpleNamespace(
+                light_curve_rows=[],
+                selected_comparison_stars=[],
+                diagnostics=[],
+                diagnostics_by_fits_basename={},
+                diagnostic_images_by_fits_basename={},
+            )
+
+            AperturePhotometry(input_data).operate(None)
+
+        output = mock_set_output.call_args.args[0]
+        self.assertEqual(output['output_data'][0]['filter'], 'None')
 
 
 class TestColorImageOperation(FileExtendedTestCase):
