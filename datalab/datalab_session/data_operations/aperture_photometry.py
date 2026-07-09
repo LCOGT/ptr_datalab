@@ -57,6 +57,13 @@ class AperturePhotometry(BaseDataOperation):
                     'description': 'The source star to measure',
                     'name_lookup': True
                 },
+                'project_name': {
+                    'name': 'Name your project',
+                    'type': Format.STRING,
+                    'description': 'Display name for the light curve output',
+                    'required': False,
+                    'default': '',
+                },
                 'input_files': {
                     'name': 'Input Files',
                     'description': 'The input FITS files with SCI and CAT extensions',
@@ -163,6 +170,7 @@ class AperturePhotometry(BaseDataOperation):
             'output_data': [
                 {
                     'source': source,
+                    'project_name': self.input_data.get('project_name', ''),
                     'filter': filter_value,
                     'light_curve': [asdict(row) for row in result.light_curve_rows],
                     'selected_comparison_stars': [
