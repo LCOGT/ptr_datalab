@@ -59,14 +59,8 @@ def pixel_scale_arcsec(header: Mapping[str, Any]) -> float:
     raise ValueError("Cannot determine a pixel scale for an arcsec-unit aperture.")
 
 
-def aperture_unit_scale(header: Mapping[str, Any], aperture_unit: str) -> float:
+def arcsec_to_pixels(header: Mapping[str, Any], angular_radius_arcsec: float) -> float:
     """
-        Divisor that converts aperture radii to pixels for a frame: 1.0 when radii are already
-        pixels, or the frame's arcsec/px plate scale when they are an angular size (so the
-        aperture covers the same sky on every telescope/instrument regardless of pixel scale).
+        Convert an angular aperture radius to pixels for one frame, using the frame's plate scale.
     """
-    if aperture_unit == "px":
-        return 1.0
-    if aperture_unit != "arcsec":
-        raise ValueError(f"Unsupported aperture_unit {aperture_unit!r}; expected 'px' or 'arcsec'.")
-    return pixel_scale_arcsec(header)
+    return float(angular_radius_arcsec) / pixel_scale_arcsec(header)

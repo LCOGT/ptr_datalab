@@ -30,6 +30,7 @@ from datalab.datalab_session.utils.geometry import angular_distance_arcsec
 
 
 APERTURE_PHOTOMETRY_TEST_DIR = Path(__file__).resolve().parent / "test_files" / "aperture_photometry"
+TEST_DEG_PER_PIXEL = 1.0 / 3600.0
 
 def print_nearest_fits_catalog_target_matches(
     input_handlers: list[Any],
@@ -88,12 +89,13 @@ def build_frame_set(
     frame_count: int = 3,
     include_target_in_second_hdu: bool = False,
     variable_candidate_index: int | None = None,
+    deg_per_pixel: float = TEST_DEG_PER_PIXEL,
 ) -> tuple[dict[str, dict[str, Any]], tuple[float, float]]:
     width = 80
     height = 80
     target_xy = (30.3, 28.8)
-    target_ra = 100.0 + target_xy[0] * 1.0e-5
-    target_dec = 20.0 + target_xy[1] * 1.0e-5
+    target_ra = 100.0 + target_xy[0] * deg_per_pixel
+    target_dec = 20.0 + target_xy[1] * deg_per_pixel
     comparison_positions = [
         (12.5, 12.5),
         (18.0, 48.0),
@@ -123,10 +125,10 @@ def build_frame_set(
             "CRVAL2": 20.0,
             "CRPIX1": 0.0,
             "CRPIX2": 0.0,
-            "CD1_1": 1.0e-5,
+            "CD1_1": deg_per_pixel,
             "CD1_2": 0.0,
             "CD2_1": 0.0,
-            "CD2_2": 1.0e-5,
+            "CD2_2": deg_per_pixel,
             "GAIN": 1.7,
             "RDNOISE": 3.2,
         }
@@ -240,9 +242,9 @@ class TestAperturePhotometry(unittest.TestCase):
             fits_paths,
             target_ra_deg=target_ra,
             target_dec_deg=target_dec,
-            aperture_radius_px=4.0,
-            annulus_inner_radius_px=6.0,
-            annulus_outer_radius_px=9.0,
+            aperture_radius=4.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=9.0,
         )
 
         self.assertEqual(self.row_names(result), ["frame_3.fits", "frame_2.fits", "frame_1.fits"])
@@ -338,47 +340,44 @@ class TestAperturePhotometry(unittest.TestCase):
             frame=frame,
             target_ra_deg=empty_ra,
             target_dec_deg=empty_dec,
-            aperture_radius_px=4.0,
-            annulus_inner_radius_px=6.0,
-            annulus_outer_radius_px=9.0,
+            aperture_radius=4.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=9.0,
         )
 
         self.assertAlmostEqual(measurement.x, initial_x, delta=1.0e-6)
         self.assertAlmostEqual(measurement.y, initial_y, delta=1.0e-6)
         self.assertGreater(math.hypot(measurement.x - 30.3, measurement.y - 28.8), 10.0)
 
-    def test_arcsec_aperture_matches_equivalent_pixel_aperture(self) -> None:
-        # arcsec radii equal to the pixel radii times the frame plate scale must convert
-        # back to the same pixels per frame, yielding identical measurements.
+    def test_aperture_uses_frame_plate_scale(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
-        px_result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        one_per_pixel_result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
 
-        arcsec_per_px = abs(frames["frame_1.fits"]["header"]["CD1_1"]) * 3600.0
-        arcsec_result = generate_light_curve(
-            fits_paths,
-            target_ra,
-            target_dec,
-            4.0 * arcsec_per_px,
-            6.0 * arcsec_per_px,
-            9.0 * arcsec_per_px,
-            aperture_unit="arcsec",
+        scaled_frames, (scaled_target_ra, scaled_target_dec) = build_frame_set(
+            deg_per_pixel=TEST_DEG_PER_PIXEL / 2.0,
+        )
+        half_per_pixel_result = generate_light_curve(
+            self.write_frames(scaled_frames),
+            scaled_target_ra,
+            scaled_target_dec,
+            2.0,
+            3.0,
+            4.5,
         )
 
-        self.assertEqual(len(arcsec_result.light_curve_rows), len(px_result.light_curve_rows))
-        for px_row, arcsec_row in zip(px_result.light_curve_rows, arcsec_result.light_curve_rows):
-            self.assertAlmostEqual(arcsec_row.target_centroid_x, px_row.target_centroid_x, delta=1.0e-4)
-            self.assertAlmostEqual(arcsec_row.target_centroid_y, px_row.target_centroid_y, delta=1.0e-4)
+        self.assertEqual(
+            len(half_per_pixel_result.light_curve_rows),
+            len(one_per_pixel_result.light_curve_rows),
+        )
+        for expected_row, scaled_row in zip(
+            one_per_pixel_result.light_curve_rows,
+            half_per_pixel_result.light_curve_rows,
+        ):
+            self.assertAlmostEqual(scaled_row.target_centroid_x, expected_row.target_centroid_x, delta=1.0e-4)
+            self.assertAlmostEqual(scaled_row.target_centroid_y, expected_row.target_centroid_y, delta=1.0e-4)
             self.assertAlmostEqual(
-                arcsec_row.target_net_source_counts, px_row.target_net_source_counts, delta=1.0e-3
-            )
-
-    def test_invalid_aperture_unit_fails_fast(self) -> None:
-        frames, (target_ra, target_dec) = build_frame_set()
-        fits_paths = self.write_frames(frames)
-        with self.assertRaisesRegex(LightCurveError, "aperture_unit"):
-            generate_light_curve(
-                fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0, aperture_unit="degrees"
+                scaled_row.target_net_source_counts, expected_row.target_net_source_counts, delta=1.0e-3
             )
 
     def test_zero_target_counts_does_not_crash_calibration(self) -> None:
@@ -471,11 +470,11 @@ class TestAperturePhotometry(unittest.TestCase):
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
-        with self.assertRaisesRegex(LightCurveError, "aperture_radius_px must be > 0"):
+        with self.assertRaisesRegex(LightCurveError, "aperture_radius must be > 0"):
             generate_light_curve(fits_paths, target_ra, target_dec, 0.0, 6.0, 9.0)
-        with self.assertRaisesRegex(LightCurveError, "annulus_inner_radius_px"):
+        with self.assertRaisesRegex(LightCurveError, "annulus_inner_radius"):
             generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 4.0, 9.0)
-        with self.assertRaisesRegex(LightCurveError, "annulus_outer_radius_px"):
+        with self.assertRaisesRegex(LightCurveError, "annulus_outer_radius"):
             generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 6.0)
         with self.assertRaisesRegex(LightCurveError, "min_comparisons and max_comparisons"):
             generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0, min_comparisons=6, max_comparisons=5)
@@ -665,9 +664,9 @@ class TestAperturePhotometry(unittest.TestCase):
                 [input_handler],
                 target_ra_deg=target_ra,
                 target_dec_deg=target_dec,
-                aperture_radius_px=4.0,
-                annulus_inner_radius_px=6.0,
-                annulus_outer_radius_px=9.0,
+                aperture_radius=4.0,
+                annulus_inner_radius=6.0,
+                annulus_outer_radius=9.0,
             )
         finally:
             os.remove(path)
@@ -714,9 +713,9 @@ class TestAperturePhotometry(unittest.TestCase):
             input_handlers,
             target_ra_deg=target_ra_deg,
             target_dec_deg=target_dec_deg,
-            aperture_radius_px=7.64,
-            annulus_inner_radius_px=12.73,
-            annulus_outer_radius_px=19.10,
+            aperture_radius=7.64,
+            annulus_inner_radius=12.73,
+            annulus_outer_radius=19.10,
         )
 
         print("\nLight curve diagnostics:")
