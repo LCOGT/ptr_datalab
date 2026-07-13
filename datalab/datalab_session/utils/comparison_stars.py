@@ -63,9 +63,9 @@ def select_comparison_stars(
     frames: Sequence[Any],
     catalog: Sequence[dict[str, Any]],
     target_mag_proxy: float,
-    aperture_radius_arcsec: float,
-    annulus_inner_radius_arcsec: float,
-    annulus_outer_radius_arcsec: float,
+    aperture_radius: float,
+    annulus_inner_radius: float,
+    annulus_outer_radius: float,
     min_comparisons: int,
     max_comparisons: int,
     error_class: type[Exception] = ValueError,
@@ -80,9 +80,9 @@ def select_comparison_stars(
     enriched, measurements_by_candidate = _measure_and_rank_candidates(
         frames=frames,
         catalog=catalog,
-        aperture_radius_arcsec=aperture_radius_arcsec,
-        annulus_inner_radius_arcsec=annulus_inner_radius_arcsec,
-        annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
+        aperture_radius=aperture_radius,
+        annulus_inner_radius=annulus_inner_radius,
+        annulus_outer_radius=annulus_outer_radius,
         error_class=error_class,
     )
     stable = [candidate for candidate in enriched if candidate.variability_score <= MAX_ACCEPTABLE_VARIABILITY]
@@ -146,9 +146,9 @@ def measure_candidate_on_frame(
     *,
     frame: Any,
     candidate: ComparisonStar,
-    aperture_radius_arcsec: float,
-    annulus_inner_radius_arcsec: float,
-    annulus_outer_radius_arcsec: float,
+    aperture_radius: float,
+    annulus_inner_radius: float,
+    annulus_outer_radius: float,
     error_class: type[Exception] = ValueError,
 ) -> ComparisonMeasurement:
     """
@@ -161,9 +161,9 @@ def measure_candidate_on_frame(
 
         Returns the comparison-star measurement for this frame.
     """
-    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius_arcsec)
-    annulus_inner_radius_px = arcsec_to_pixels(frame.header, annulus_inner_radius_arcsec)
-    annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius_arcsec)
+    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius)
+    annulus_inner_radius_px = arcsec_to_pixels(frame.header, annulus_inner_radius)
+    annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius)
     x, y = world_to_pixel(frame.header, candidate.ra_deg, candidate.dec_deg)
     centroid_result = centroid(
         image=frame.image,
@@ -204,9 +204,9 @@ def _measure_and_rank_candidates(
     *,
     frames: Sequence[Any],
     catalog: Sequence[dict[str, Any]],
-    aperture_radius_arcsec: float,
-    annulus_inner_radius_arcsec: float,
-    annulus_outer_radius_arcsec: float,
+    aperture_radius: float,
+    annulus_inner_radius: float,
+    annulus_outer_radius: float,
     error_class: type[Exception],
 ) -> tuple[list[ComparisonStar], dict[str, dict[str, ComparisonMeasurement]]]:
     """
@@ -237,9 +237,9 @@ def _measure_and_rank_candidates(
                 measure_candidate_on_frame(
                     frame=frame,
                     candidate=candidate_star,
-                    aperture_radius_arcsec=aperture_radius_arcsec,
-                    annulus_inner_radius_arcsec=annulus_inner_radius_arcsec,
-                    annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
+                    aperture_radius=aperture_radius,
+                    annulus_inner_radius=annulus_inner_radius,
+                    annulus_outer_radius=annulus_outer_radius,
                     error_class=error_class,
                 )
                 for frame in frames

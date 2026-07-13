@@ -21,14 +21,14 @@ def candidate_overlay_jpeg_base64(
     stars: Sequence[Any],
     measurements: Sequence[Any],
     target_measurement: Any,
-    aperture_radius_arcsec: float,
+    aperture_radius: float,
 ) -> str:
     image = _normalize_image_for_jpeg(frame.image)
     draw = ImageDraw.Draw(image)
     font = _diagnostic_overlay_font(frame.width, frame.height)
     stars_by_id = {star.candidate_id: star for star in stars}
     min_dimension = max(min(frame.width, frame.height), 1)
-    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius_arcsec)
+    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius)
     radius = max(aperture_radius_px, min_dimension * 0.018, 14.0)
     line_width = max(3, int(round(min_dimension * 0.004)))
     label_padding = max(3, int(round(min_dimension * 0.004)))

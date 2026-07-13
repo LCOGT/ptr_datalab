@@ -8,9 +8,9 @@ from datalab.datalab_session.data_operations.input_data_handler import InputData
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.format import Format
 from datalab.datalab_session.utils.aperture_light_curve import (
-    DEFAULT_ANNULUS_INNER_RADIUS_ARCSEC,
-    DEFAULT_ANNULUS_OUTER_RADIUS_ARCSEC,
-    DEFAULT_APERTURE_RADIUS_ARCSEC,
+    DEFAULT_ANNULUS_INNER_RADIUS,
+    DEFAULT_ANNULUS_OUTER_RADIUS,
+    DEFAULT_APERTURE_RADIUS,
     DEFAULT_MAX_COMPARISONS,
     DEFAULT_MIN_COMPARISONS,
     LightCurveError,
@@ -67,26 +67,26 @@ class AperturePhotometry(BaseDataOperation):
                     'minimum': AperturePhotometry.MINIMUM_NUMBER_OF_INPUTS,
                     'maximum': AperturePhotometry.MAXIMUM_NUMBER_OF_INPUTS,
                 },
-                'aperture_radius_arcsec': {
+                'aperture_radius': {
                     'name': 'Aperture Radius',
                     'description': 'Source aperture radius, in arcseconds',
                     'type': Format.FLOAT,
                     'required': True,
-                    'default': DEFAULT_APERTURE_RADIUS_ARCSEC,
+                    'default': DEFAULT_APERTURE_RADIUS,
                 },
-                'annulus_inner_radius_arcsec': {
+                'annulus_inner_radius': {
                     'name': 'Annulus Inner Radius',
                     'description': 'Background annulus inner radius, in arcseconds',
                     'type': Format.FLOAT,
                     'required': True,
-                    'default': DEFAULT_ANNULUS_INNER_RADIUS_ARCSEC,
+                    'default': DEFAULT_ANNULUS_INNER_RADIUS,
                 },
-                'annulus_outer_radius_arcsec': {
+                'annulus_outer_radius': {
                     'name': 'Annulus Outer Radius',
                     'description': 'Background annulus outer radius, in arcseconds',
                     'type': Format.FLOAT,
                     'required': True,
-                    'default': DEFAULT_ANNULUS_OUTER_RADIUS_ARCSEC,
+                    'default': DEFAULT_ANNULUS_OUTER_RADIUS,
                 },
                 'min_comparisons': {
                     'name': 'Minimum Comparison Stars',
@@ -122,9 +122,9 @@ class AperturePhotometry(BaseDataOperation):
         try:
             target_ra = float(source.get('ra'))
             target_dec = float(source.get('dec'))
-            aperture_radius_arcsec = float(self.input_data['aperture_radius_arcsec'])
-            annulus_inner_radius_arcsec = float(self.input_data['annulus_inner_radius_arcsec'])
-            annulus_outer_radius_arcsec = float(self.input_data['annulus_outer_radius_arcsec'])
+            aperture_radius = float(self.input_data['aperture_radius'])
+            annulus_inner_radius = float(self.input_data['annulus_inner_radius'])
+            annulus_outer_radius = float(self.input_data['annulus_outer_radius'])
             min_comparisons = int(self.input_data.get('min_comparisons', DEFAULT_MIN_COMPARISONS))
             max_comparisons = int(self.input_data.get('max_comparisons', DEFAULT_MAX_COMPARISONS))
             self.set_operation_progress(AperturePhotometry.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION'])
@@ -136,9 +136,9 @@ class AperturePhotometry(BaseDataOperation):
                 input_handlers=input_handlers,
                 target_ra_deg=target_ra,
                 target_dec_deg=target_dec,
-                aperture_radius_arcsec=aperture_radius_arcsec,
-                annulus_inner_radius_arcsec=annulus_inner_radius_arcsec,
-                annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
+                aperture_radius=aperture_radius,
+                annulus_inner_radius=annulus_inner_radius,
+                annulus_outer_radius=annulus_outer_radius,
                 min_comparisons=min_comparisons,
                 max_comparisons=max_comparisons,
             )
@@ -154,9 +154,9 @@ class AperturePhotometry(BaseDataOperation):
             'output_data': [
                 {
                     'source': source,
-                    'aperture_radius_arcsec': aperture_radius_arcsec,
-                    'annulus_inner_radius_arcsec': annulus_inner_radius_arcsec,
-                    'annulus_outer_radius_arcsec': annulus_outer_radius_arcsec,
+                    'aperture_radius': aperture_radius,
+                    'annulus_inner_radius': annulus_inner_radius,
+                    'annulus_outer_radius': annulus_outer_radius,
                     'filter': filter_value,
                     'light_curve': [asdict(row) for row in result.light_curve_rows],
                     'selected_comparison_stars': [
