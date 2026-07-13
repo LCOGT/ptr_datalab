@@ -8,7 +8,7 @@ from typing import Any, Sequence
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from datalab.datalab_session.utils.fits_metadata import aperture_unit_scale, optional_float
+from datalab.datalab_session.utils.fits_metadata import arcsec_to_pixels, optional_float
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
 COMPARISON_STAR_COLOR = (0, 173, 239)
@@ -21,15 +21,14 @@ def candidate_overlay_jpeg_base64(
     stars: Sequence[Any],
     measurements: Sequence[Any],
     target_measurement: Any,
-    aperture_radius_px: float,
-    aperture_unit: str = "px",
+    aperture_radius_arcsec: float,
 ) -> str:
     image = _normalize_image_for_jpeg(frame.image)
     draw = ImageDraw.Draw(image)
     font = _diagnostic_overlay_font(frame.width, frame.height)
     stars_by_id = {star.candidate_id: star for star in stars}
     min_dimension = max(min(frame.width, frame.height), 1)
-    aperture_radius_px = float(aperture_radius_px) / aperture_unit_scale(frame.header, aperture_unit)
+    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius_arcsec)
     radius = max(aperture_radius_px, min_dimension * 0.018, 14.0)
     line_width = max(3, int(round(min_dimension * 0.004)))
     label_padding = max(3, int(round(min_dimension * 0.004)))

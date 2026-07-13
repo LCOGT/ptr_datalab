@@ -16,7 +16,7 @@ from datalab.datalab_session.utils.comparison_stars import (
 )
 from datalab.datalab_session.utils.centroiding import calculate_background_model, centroid
 from datalab.datalab_session.utils.fits_metadata import (
-    aperture_unit_scale,
+    arcsec_to_pixels,
     frame_gain,
     frame_read_noise,
     optional_float,
@@ -48,9 +48,9 @@ TARGET_PROXIMITY_FACTOR = 2.0
 # a neighbour or host-galaxy structure.
 TARGET_RECENTER_MAX_SHIFT_PX = 6.0
 DEFAULT_CROSSMATCH_ARCSEC = 1.0
-DEFAULT_APERTURE_RADIUS_PX = 7.64
-DEFAULT_ANNULUS_INNER_RADIUS_PX = 12.73
-DEFAULT_ANNULUS_OUTER_RADIUS_PX = 19.10
+DEFAULT_APERTURE_RADIUS_ARCSEC = 7.64
+DEFAULT_ANNULUS_INNER_RADIUS_ARCSEC = 12.73
+DEFAULT_ANNULUS_OUTER_RADIUS_ARCSEC = 19.10
 DEFAULT_MIN_COMPARISONS = 5
 DEFAULT_MAX_COMPARISONS = 10
 # A comparison candidate is established if its cross-matched cluster is detected in at least this
@@ -141,12 +141,11 @@ def generate_light_curve(
     input_handlers: list[Any],
     target_ra_deg: float,
     target_dec_deg: float,
-    aperture_radius_px: float,
-    annulus_inner_radius_px: float,
-    annulus_outer_radius_px: float,
+    aperture_radius_arcsec: float,
+    annulus_inner_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
     min_comparisons: int = 5,
     max_comparisons: int = 10,
-    aperture_unit: str = "px",
 ) -> LightCurveResult:
     """
         Generates a calibrated target light curve from input FITS files, using comparison stars from the source catalog.
@@ -157,20 +156,18 @@ def generate_light_curve(
     log.info(
         "Aperture Photometry pipeline starting: "
         f"fits_count={len(input_handlers)}, target_ra={target_ra_deg:.8f}, target_dec={target_dec_deg:.8f}, "
-        f"aperture_radius={aperture_radius_px:.3f}, "
-        f"annulus_inner_radius={annulus_inner_radius_px:.3f}, "
-        f"annulus_outer_radius={annulus_outer_radius_px:.3f}, "
-        f"aperture_unit={aperture_unit}, "
+        f"aperture_radius_arcsec={aperture_radius_arcsec:.3f}, "
+        f"annulus_inner_radius_arcsec={annulus_inner_radius_arcsec:.3f}, "
+        f"annulus_outer_radius_arcsec={annulus_outer_radius_arcsec:.3f}, "
         f"min_comparisons={min_comparisons}, max_comparisons={max_comparisons}"
     )
     _validate_inputs(
         input_handlers=input_handlers,
-        aperture_radius_px=aperture_radius_px,
-        annulus_inner_radius_px=annulus_inner_radius_px,
-        annulus_outer_radius_px=annulus_outer_radius_px,
+        aperture_radius_arcsec=aperture_radius_arcsec,
+        annulus_inner_radius_arcsec=annulus_inner_radius_arcsec,
+        annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
         min_comparisons=min_comparisons,
         max_comparisons=max_comparisons,
-        aperture_unit=aperture_unit,
     )
 
     diagnostics: list[str] = []
@@ -185,10 +182,9 @@ def generate_light_curve(
             frame=frame,
             target_ra_deg=target_ra_deg,
             target_dec_deg=target_dec_deg,
-            aperture_radius_px=aperture_radius_px,
-            annulus_inner_radius_px=annulus_inner_radius_px,
-            annulus_outer_radius_px=annulus_outer_radius_px,
-            aperture_unit=aperture_unit,
+            aperture_radius_arcsec=aperture_radius_arcsec,
+            annulus_inner_radius_arcsec=annulus_inner_radius_arcsec,
+            annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
         )
         for frame in frames
     }
@@ -205,9 +201,8 @@ def generate_light_curve(
         frames=frames,
         target_ra_deg=target_ra_deg,
         target_dec_deg=target_dec_deg,
-        aperture_radius_px=aperture_radius_px,
-        annulus_outer_radius_px=annulus_outer_radius_px,
-        aperture_unit=aperture_unit,
+        aperture_radius_arcsec=aperture_radius_arcsec,
+        annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
     )
     log.info(
         "Aperture Photometry comparison catalog built: "
@@ -219,12 +214,11 @@ def generate_light_curve(
         frames=frames,
         catalog=catalog,
         target_mag_proxy=target_mag_proxy,
-        aperture_radius_px=aperture_radius_px,
-        annulus_inner_radius_px=annulus_inner_radius_px,
-        annulus_outer_radius_px=annulus_outer_radius_px,
+        aperture_radius_arcsec=aperture_radius_arcsec,
+        annulus_inner_radius_arcsec=annulus_inner_radius_arcsec,
+        annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
         min_comparisons=min_comparisons,
         max_comparisons=max_comparisons,
-        aperture_unit=aperture_unit,
         error_class=LightCurveError,
     )
     log.info(
@@ -322,8 +316,7 @@ def generate_light_curve(
             stars=selection.selected_stars,
             measurements=comparison_measurements,
             target_measurement=target,
-            aperture_radius_px=aperture_radius_px,
-            aperture_unit=aperture_unit,
+            aperture_radius_arcsec=aperture_radius_arcsec,
         )
 
         frame_results.append(
@@ -369,23 +362,20 @@ def generate_light_curve(
 def _validate_inputs(
     *,
     input_handlers: Sequence[Any],
-    aperture_radius_px: float,
-    annulus_inner_radius_px: float,
-    annulus_outer_radius_px: float,
+    aperture_radius_arcsec: float,
+    annulus_inner_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
     min_comparisons: int,
     max_comparisons: int,
-    aperture_unit: str,
 ) -> None:
     if not input_handlers:
         raise LightCurveError("input_handlers must be a non-empty list.")
-    if aperture_unit not in {"px", "arcsec"}:
-        raise LightCurveError("aperture_unit must be 'px' or 'arcsec'.")
-    if aperture_radius_px <= 0:
-        raise LightCurveError("aperture_radius_px must be > 0.")
-    if annulus_inner_radius_px <= aperture_radius_px:
-        raise LightCurveError("annulus_inner_radius_px must be greater than aperture_radius_px.")
-    if annulus_outer_radius_px <= annulus_inner_radius_px:
-        raise LightCurveError("annulus_outer_radius_px must be greater than annulus_inner_radius_px.")
+    if aperture_radius_arcsec <= 0:
+        raise LightCurveError("aperture_radius_arcsec must be > 0.")
+    if annulus_inner_radius_arcsec <= aperture_radius_arcsec:
+        raise LightCurveError("annulus_inner_radius_arcsec must be greater than aperture_radius_arcsec.")
+    if annulus_outer_radius_arcsec <= annulus_inner_radius_arcsec:
+        raise LightCurveError("annulus_outer_radius_arcsec must be greater than annulus_inner_radius_arcsec.")
     if min_comparisons <= 0 or max_comparisons <= 0 or min_comparisons > max_comparisons:
         raise LightCurveError("min_comparisons and max_comparisons must be positive and min_comparisons <= max_comparisons.")
 
@@ -500,10 +490,9 @@ def _measure_target(
     frame: FrameContext,
     target_ra_deg: float,
     target_dec_deg: float,
-    aperture_radius_px: float,
-    annulus_inner_radius_px: float,
-    annulus_outer_radius_px: float,
-    aperture_unit: str = "px",
+    aperture_radius_arcsec: float,
+    annulus_inner_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
 ) -> TargetMeasurement:
     """
         Converts the target RA and Dec to pixel coordinates, centroids the source, and measures aperture photometry.
@@ -513,10 +502,9 @@ def _measure_target(
 
         Returns the target measurement for a single frame.
     """
-    scale = aperture_unit_scale(frame.header, aperture_unit)
-    aperture_radius_px = aperture_radius_px / scale
-    annulus_inner_radius_px = annulus_inner_radius_px / scale
-    annulus_outer_radius_px = annulus_outer_radius_px / scale
+    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius_arcsec)
+    annulus_inner_radius_px = arcsec_to_pixels(frame.header, annulus_inner_radius_arcsec)
+    annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius_arcsec)
 
     try:
         initial_x, initial_y = world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
@@ -614,9 +602,8 @@ def _build_field_star_catalog(
     frames: Sequence[FrameContext],
     target_ra_deg: float,
     target_dec_deg: float,
-    aperture_radius_px: float,
-    annulus_outer_radius_px: float,
-    aperture_unit: str = "px",
+    aperture_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
 ) -> list[dict[str, Any]]:
     """
         Builds comp star candidates from the source catalogs across valid frames.
@@ -658,9 +645,8 @@ def _build_field_star_catalog(
             row["pixel_x"] = float(x)
             row["pixel_y"] = float(y)
 
-        frame_scale = aperture_unit_scale(frame.header, aperture_unit)
-        frame_aperture_radius_px = aperture_radius_px / frame_scale
-        frame_annulus_outer_radius_px = annulus_outer_radius_px / frame_scale
+        frame_aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius_arcsec)
+        frame_annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius_arcsec)
         target_x, target_y = target_pixels[frame.fits_path]
         target_limit_px = max(TARGET_PROXIMITY_FACTOR * frame_aperture_radius_px, frame_annulus_outer_radius_px)
         too_close_to_target_mask = np.hypot(x_values - target_x, y_values - target_y) <= target_limit_px

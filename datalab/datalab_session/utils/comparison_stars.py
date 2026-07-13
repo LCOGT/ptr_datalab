@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from datalab.datalab_session.utils.centroiding import centroid
-from datalab.datalab_session.utils.fits_metadata import aperture_unit_scale, frame_gain, frame_read_noise, world_to_pixel
+from datalab.datalab_session.utils.fits_metadata import arcsec_to_pixels, frame_gain, frame_read_noise, world_to_pixel
 from datalab.datalab_session.utils.photometry import measure_aperture
 
 
@@ -63,12 +63,11 @@ def select_comparison_stars(
     frames: Sequence[Any],
     catalog: Sequence[dict[str, Any]],
     target_mag_proxy: float,
-    aperture_radius_px: float,
-    annulus_inner_radius_px: float,
-    annulus_outer_radius_px: float,
+    aperture_radius_arcsec: float,
+    annulus_inner_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
     min_comparisons: int,
     max_comparisons: int,
-    aperture_unit: str = "px",
     error_class: type[Exception] = ValueError,
 ) -> ComparisonSelectionResult:
     """
@@ -81,10 +80,9 @@ def select_comparison_stars(
     enriched, measurements_by_candidate = _measure_and_rank_candidates(
         frames=frames,
         catalog=catalog,
-        aperture_radius_px=aperture_radius_px,
-        annulus_inner_radius_px=annulus_inner_radius_px,
-        annulus_outer_radius_px=annulus_outer_radius_px,
-        aperture_unit=aperture_unit,
+        aperture_radius_arcsec=aperture_radius_arcsec,
+        annulus_inner_radius_arcsec=annulus_inner_radius_arcsec,
+        annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
         error_class=error_class,
     )
     stable = [candidate for candidate in enriched if candidate.variability_score <= MAX_ACCEPTABLE_VARIABILITY]
@@ -148,10 +146,9 @@ def measure_candidate_on_frame(
     *,
     frame: Any,
     candidate: ComparisonStar,
-    aperture_radius_px: float,
-    annulus_inner_radius_px: float,
-    annulus_outer_radius_px: float,
-    aperture_unit: str = "px",
+    aperture_radius_arcsec: float,
+    annulus_inner_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
     error_class: type[Exception] = ValueError,
 ) -> ComparisonMeasurement:
     """
@@ -164,10 +161,9 @@ def measure_candidate_on_frame(
 
         Returns the comparison-star measurement for this frame.
     """
-    scale = aperture_unit_scale(frame.header, aperture_unit)
-    aperture_radius_px = aperture_radius_px / scale
-    annulus_inner_radius_px = annulus_inner_radius_px / scale
-    annulus_outer_radius_px = annulus_outer_radius_px / scale
+    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius_arcsec)
+    annulus_inner_radius_px = arcsec_to_pixels(frame.header, annulus_inner_radius_arcsec)
+    annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius_arcsec)
     x, y = world_to_pixel(frame.header, candidate.ra_deg, candidate.dec_deg)
     centroid_result = centroid(
         image=frame.image,
@@ -208,10 +204,9 @@ def _measure_and_rank_candidates(
     *,
     frames: Sequence[Any],
     catalog: Sequence[dict[str, Any]],
-    aperture_radius_px: float,
-    annulus_inner_radius_px: float,
-    annulus_outer_radius_px: float,
-    aperture_unit: str = "px",
+    aperture_radius_arcsec: float,
+    annulus_inner_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
     error_class: type[Exception],
 ) -> tuple[list[ComparisonStar], dict[str, dict[str, ComparisonMeasurement]]]:
     """
@@ -242,10 +237,9 @@ def _measure_and_rank_candidates(
                 measure_candidate_on_frame(
                     frame=frame,
                     candidate=candidate_star,
-                    aperture_radius_px=aperture_radius_px,
-                    annulus_inner_radius_px=annulus_inner_radius_px,
-                    annulus_outer_radius_px=annulus_outer_radius_px,
-                    aperture_unit=aperture_unit,
+                    aperture_radius_arcsec=aperture_radius_arcsec,
+                    annulus_inner_radius_arcsec=annulus_inner_radius_arcsec,
+                    annulus_outer_radius_arcsec=annulus_outer_radius_arcsec,
                     error_class=error_class,
                 )
                 for frame in frames
