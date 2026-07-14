@@ -7,12 +7,14 @@ import math
 import os
 
 from astropy.io import fits
+from astropy.wcs import WCS
 import numpy as np
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.data_operations.aperture_photometry import AperturePhotometry
 from datalab.datalab_session.data_operations.color_image import Color_Image
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.data_operations.hr_diagram import HRDiagram
 from datalab.datalab_session.data_operations.light_curve import LightCurve
 from datalab.datalab_session.data_operations.median import Median
 from datalab.datalab_session.data_operations.stacking import Stack
@@ -449,6 +451,353 @@ class TestColorImageOperation(FileExtendedTestCase):
 
         self.assertEqual(color_image.get_operation_progress(), 1.0)
         self.assertEqual(output, [self.temp_color_path])
+
+
+class TestHRDiagramOperation(FileExtendedTestCase):
+    temp_blue_path = f'{test_path}temp_hr_blue.fits'
+    temp_red_path = f'{test_path}temp_hr_red.fits'
+
+    CENTER_RA = 150.0
+    CENTER_DEC = 30.0
+
+    def tearDown(self):
+        self.clean_test_dir()
+        return super().tearDown()
+
+    @staticmethod
+    def create_test_fits(path, center_ra, center_dec, ra, dec, mag, magerr, include_radec=True, include_mag=True):
+        """ Writes a fits file with a WCS'd SCI HDU and a CAT HDU like a reduced image's catalog """
+        wcs = WCS(naxis=2)
+        wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN']
+        wcs.wcs.crval = [center_ra, center_dec]
+        wcs.wcs.crpix = [100.0, 100.0]
+        wcs.wcs.cdelt = [-1.0 / 3600.0, 1.0 / 3600.0]
+        sci_hdu = fits.ImageHDU(data=np.zeros((200, 200), dtype=np.float32), header=wcs.to_header(), name='SCI')
+
+        x, y = wcs.all_world2pix(np.asarray(ra), np.asarray(dec), 1)
+        columns = [
+            fits.Column(name='x', format='D', array=x),
+            fits.Column(name='y', format='D', array=y),
+        ]
+        if include_radec:
+            columns += [
+                fits.Column(name='ra', format='D', array=np.asarray(ra)),
+                fits.Column(name='dec', format='D', array=np.asarray(dec)),
+            ]
+        if include_mag:
+            columns += [
+                fits.Column(name='mag', format='D', array=np.asarray(mag)),
+                fits.Column(name='magerr', format='D', array=np.asarray(magerr)),
+            ]
+        cat_hdu = fits.BinTableHDU.from_columns(columns, name='CAT')
+        fits.HDUList([fits.PrimaryHDU(), sci_hdu, cat_hdu]).writeto(path, overwrite=True)
+
+    def hr_input_data(self, search_radius_arcmin=None):
+        input_data = {
+            'blue_filter_files': [{'basename': 'blue_fits', 'source': 'local', 'filter': 'gp'}],
+            'red_filter_files': [{'basename': 'red_fits', 'source': 'local', 'filter': 'rp'}],
+            'cluster': {'name': 'Test Cluster', 'ra': self.CENTER_RA, 'dec': self.CENTER_DEC},
+        }
+        if search_radius_arcmin is not None:
+            input_data['search_radius_arcmin'] = search_radius_arcmin
+        return input_data
+
+    def mock_band_fits(self, mock_file_cache):
+        """ FileCache is instantiated once per band, blue first """
+        mock_fc_blue = mock.MagicMock()
+        mock_fc_blue.get_fits.return_value = self.temp_blue_path
+        mock_fc_red = mock.MagicMock()
+        mock_fc_red.get_fits.return_value = self.temp_red_path
+        mock_file_cache.side_effect = [mock_fc_blue, mock_fc_red]
+
+    @classmethod
+    def empty_gaia_data(cls):
+        return cls.gaia_field(ra=[], dec=[], pmra=[], pmdec=[], parallax=[])
+
+    @staticmethod
+    def gaia_field(ra, dec, pmra, pmdec, parallax, g_mag=None, synth_g=None, synth_r=None, distance=None):
+        """ Builds a gaia_cone_search-shaped dict; synthetic i/z bands mirror r, and the
+        Bailer-Jones distance bounds bracket r_med_geo asymmetrically """
+        n = len(ra)
+        data = {
+            'ra': np.asarray(ra, dtype=float),
+            'dec': np.asarray(dec, dtype=float),
+            'pmra': np.asarray(pmra, dtype=float),
+            'pmra_error': np.full(n, 0.05),
+            'pmdec': np.asarray(pmdec, dtype=float),
+            'pmdec_error': np.full(n, 0.06),
+            'parallax': np.asarray(parallax, dtype=float),
+            'parallax_error': np.full(n, 0.04),
+            'phot_g_mean_mag': np.full(n, 14.0) if g_mag is None else np.asarray(g_mag, dtype=float),
+        }
+        distance = np.full(n, 800.0) if distance is None else np.asarray(distance, dtype=float)
+        data['r_med_geo'] = distance
+        data['r_lo_geo'] = distance - 50.0
+        data['r_hi_geo'] = distance + 60.0
+        synth_g = np.full(n, 15.0) if synth_g is None else np.asarray(synth_g, dtype=float)
+        synth_r = np.full(n, 14.4) if synth_r is None else np.asarray(synth_r, dtype=float)
+        for band, mags in [('g_sdss', synth_g), ('r_sdss', synth_r), ('i_sdss', synth_r), ('z_sdss', synth_r)]:
+            data[f'{band}_mag'] = mags
+            data[f'{band}_mag_error'] = np.where(np.isfinite(mags), 0.032, np.nan)
+        return data
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_operate(self, mock_file_cache, mock_gaia_cone_search):
+        # five cluster stars present in both bands, at 10-50 arcsec north of the center
+        common_dec = self.CENTER_DEC + np.array([10.0, 20.0, 30.0, 40.0, 50.0]) / 3600.0
+        common_ra = np.full(5, self.CENTER_RA)
+        blue_common_mag = np.array([15.0, 15.5, 16.0, 16.5, 17.0])
+        red_common_mag = np.array([14.5, 14.8, 15.2, 15.6, 16.0])
+
+        # a sixth red star 10 arcsec south with two blue sources nearby (0 and 1 arcsec away),
+        # to check one-to-one dedup keeps only the closest pair
+        crowded_dec = self.CENTER_DEC - 10.0 / 3600.0
+        # plus per-band strays with no counterpart within the match radius
+        blue_ra = np.concatenate([common_ra, [self.CENTER_RA, self.CENTER_RA, self.CENTER_RA]])
+        blue_dec = np.concatenate([common_dec, [crowded_dec, crowded_dec + 1.0 / 3600.0, self.CENTER_DEC + 80.0 / 3600.0]])
+        blue_mag = np.concatenate([blue_common_mag, [18.0, 19.0, 15.5]])
+        red_ra = np.concatenate([common_ra, [self.CENTER_RA, self.CENTER_RA]])
+        red_dec = np.concatenate([common_dec, [crowded_dec, self.CENTER_DEC - 40.0 / 3600.0]])
+        red_mag = np.concatenate([red_common_mag, [17.0, 15.0]])
+
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC,
+                              blue_ra, blue_dec, blue_mag, np.full(len(blue_mag), 0.02))
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC,
+                              red_ra, red_dec, red_mag, np.full(len(red_mag), 0.03))
+        self.mock_band_fits(mock_file_cache)
+
+        # Gaia knows the four brightest cluster stars, plus a stray with no photometric counterpart
+        gaia_dec = np.concatenate([common_dec[:4], [self.CENTER_DEC - 60.0 / 3600.0]])
+        mock_gaia_cone_search.return_value = self.gaia_field(
+            ra=np.full(5, self.CENTER_RA),
+            dec=gaia_dec,
+            pmra=[-5.1, -4.9, -5.0, -5.05, 12.0],
+            pmdec=[3.0, 3.1, 2.9, 3.02, -8.0],
+            parallax=[1.2, 1.3, 1.25, 1.22, 0.1],
+            synth_g=[15.0, 15.5, 16.0, 16.5, 16.2],
+            synth_r=[14.5, 14.8, 15.2, 15.6, 15.4],
+            distance=[810.0, 820.0, 830.0, 840.0, np.nan],
+        )
+
+        hr_diagram = HRDiagram(self.hr_input_data())
+        hr_diagram.operate(None)
+        output = hr_diagram.get_output()['output_data'][0]
+
+        self.assertEqual(hr_diagram.get_status(), 'COMPLETED')
+        self.assertEqual(hr_diagram.get_operation_progress(), 1.0)
+        self.assertEqual(output['n_stars'], 6)
+        self.assertEqual(output['n_stars_matched'], 6)
+        self.assertEqual(output['blue_filter'], 'gp')
+        self.assertEqual(output['red_filter'], 'rp')
+        self.assertEqual(output['mag_band'], 'rp')
+        self.assertEqual(output['cluster']['name'], 'Test Cluster')
+        mock_gaia_cone_search.assert_called_once_with(self.CENTER_RA, self.CENTER_DEC, 15.0)
+
+        # cmd points are sorted brightest first in the red (y-axis) band
+        expected_mags = [14.5, 14.8, 15.2, 15.6, 16.0, 17.0]
+        expected_colors = [0.5, 0.7, 0.8, 0.9, 1.0, 1.0]
+        for point, expected_mag, expected_color in zip(output['cmd'], expected_mags, expected_colors):
+            self.assertAlmostEqual(point['mag'], expected_mag, places=3)
+            self.assertAlmostEqual(point['color'], expected_color, places=3)
+            self.assertAlmostEqual(point['color_err'], np.sqrt(0.02 ** 2 + 0.03 ** 2), places=3)
+
+        # the four brightest stars picked up Gaia proper motions and parallaxes, the rest did not
+        self.assertEqual(output['n_gaia_matched'], 4)
+        self.assertEqual([point['gaia_match'] for point in output['cmd'][:6]], [True] * 4 + [False] * 2)
+        self.assertAlmostEqual(output['cmd'][0]['pmra'], -5.1)
+        self.assertAlmostEqual(output['cmd'][0]['pmdec'], 3.0)
+        self.assertAlmostEqual(output['cmd'][0]['parallax'], 1.2)
+        self.assertIsNone(output['cmd'][4]['pmra'])
+        self.assertIsNone(output['cmd'][5]['parallax'])
+        # Bailer-Jones geometric distance rides along with each Gaia match, bracketed by its bounds
+        self.assertAlmostEqual(output['cmd'][0]['distance'], 810.0)
+        self.assertAlmostEqual(output['cmd'][0]['distance_lo'], 760.0)
+        self.assertAlmostEqual(output['cmd'][0]['distance_hi'], 870.0)
+        # an unmatched image star has no Gaia distance
+        self.assertIsNone(output['cmd'][5]['distance'])
+        # five pool stars is below the clump threshold, so no automatic membership guess
+        self.assertIsNone(output['membership_guess'])
+
+        # the unmatched Gaia stray is appended as a gaia_only star with synthetic photometry
+        self.assertEqual(output['n_gaia_only'], 1)
+        self.assertEqual(len(output['cmd']), 7)
+        self.assertEqual([point['gaia_only'] for point in output['cmd']], [False] * 6 + [True])
+        gaia_only_point = output['cmd'][6]
+        self.assertAlmostEqual(gaia_only_point['pmra'], 12.0)
+        self.assertAlmostEqual(gaia_only_point['g_mag'], 14.0)
+        self.assertAlmostEqual(gaia_only_point['color'], 0.8, places=3)
+        self.assertAlmostEqual(gaia_only_point['mag'], 15.4, places=3)
+        # this stray has no Bailer-Jones entry (nan distance), so its distance is null while its pm rides along
+        self.assertIsNone(gaia_only_point['distance'])
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_gaia_only_stars_capped_and_brightest_first(self, mock_file_cache, mock_gaia_cone_search):
+        # two image stars near the center with no Gaia counterparts
+        star_dec = self.CENTER_DEC + np.array([10.0, 20.0]) / 3600.0
+        star_ra = np.full(2, self.CENTER_RA)
+        red_mags = np.array([15.0, 16.0])
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC,
+                              star_ra, star_dec, red_mags + 0.5, np.full(2, 0.02))
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC,
+                              star_ra, star_dec, red_mags, np.full(2, 0.03))
+        self.mock_band_fits(mock_file_cache)
+
+        # five unmatched Gaia field stars: G mags shuffled, one with no G mag at all,
+        # and the brightest one missing its synthetic photometry
+        gaia_dec = self.CENTER_DEC - np.array([60.0, 70.0, 80.0, 90.0, 100.0]) / 3600.0
+        mock_gaia_cone_search.return_value = self.gaia_field(
+            ra=np.full(5, self.CENTER_RA),
+            dec=gaia_dec,
+            pmra=np.full(5, 4.0), pmdec=np.full(5, -2.0), parallax=np.full(5, 0.8),
+            g_mag=[15.0, 11.0, 13.0, np.nan, 12.0],
+            synth_g=[15.8, np.nan, 13.8, 14.1, 12.8],
+            synth_r=[15.1, np.nan, 13.1, 13.5, 12.1],
+        )
+
+        with mock.patch.object(HRDiagram, 'MAX_GAIA_ONLY_SOURCES', 3):
+            hr_diagram = HRDiagram(self.hr_input_data())
+            hr_diagram.operate(None)
+        output = hr_diagram.get_output()['output_data'][0]
+
+        self.assertEqual(output['n_stars'], 2)
+        self.assertEqual(output['n_gaia_matched'], 0)
+        self.assertEqual(output['n_gaia_only'], 3)
+        gaia_only_points = output['cmd'][2:]
+        # the cap keeps the brightest three by G mag, ascending; the source with no G mag lost out
+        self.assertEqual([point['g_mag'] for point in gaia_only_points], [11.0, 12.0, 13.0])
+        self.assertTrue(all(point['gaia_only'] for point in gaia_only_points))
+        # no synthetic photometry -> the star appears on the membership plots but not the CMD
+        self.assertIsNone(gaia_only_points[0]['color'])
+        self.assertIsNone(gaia_only_points[0]['mag'])
+        self.assertAlmostEqual(gaia_only_points[1]['color'], 0.7, places=3)
+        self.assertAlmostEqual(gaia_only_points[1]['mag'], 12.1, places=3)
+        # Bailer-Jones distance rides along even for gaia-only stars
+        self.assertAlmostEqual(gaia_only_points[1]['distance'], 800.0)
+        self.assertAlmostEqual(gaia_only_points[1]['distance_lo'], 750.0)
+        self.assertAlmostEqual(gaia_only_points[1]['distance_hi'], 860.0)
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_cone_filter_excludes_far_stars(self, mock_file_cache, mock_gaia_cone_search):
+        # two stars near the center and one 3 arcmin away, with a 1 arcmin search radius
+        ra = np.full(3, self.CENTER_RA)
+        dec = self.CENTER_DEC + np.array([10.0, 20.0, 180.0]) / 3600.0
+        mag = np.array([15.0, 16.0, 17.0])
+        magerr = np.full(3, 0.02)
+
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag + 0.5, magerr)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.mock_band_fits(mock_file_cache)
+        mock_gaia_cone_search.return_value = self.empty_gaia_data()
+
+        hr_diagram = HRDiagram(self.hr_input_data(search_radius_arcmin=1.0))
+        hr_diagram.operate(None)
+        output = hr_diagram.get_output()['output_data'][0]
+
+        self.assertEqual(output['n_stars'], 2)
+        self.assertEqual(output['cluster']['radius_arcmin'], 1.0)
+        # an empty Gaia field is not an error, the stars are just unmatched
+        self.assertEqual(output['n_gaia_matched'], 0)
+        self.assertIsNone(output['membership_guess'])
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_radec_from_wcs_fallback(self, mock_file_cache, mock_gaia_cone_search):
+        # the blue catalog has no ra/dec columns, so they are computed from its x/y and WCS
+        ra = np.full(3, self.CENTER_RA)
+        dec = self.CENTER_DEC + np.array([10.0, 20.0, 30.0]) / 3600.0
+        mag = np.array([15.0, 16.0, 17.0])
+        magerr = np.full(3, 0.02)
+
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag + 0.5, magerr,
+                              include_radec=False)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.mock_band_fits(mock_file_cache)
+        mock_gaia_cone_search.return_value = self.empty_gaia_data()
+
+        hr_diagram = HRDiagram(self.hr_input_data())
+        hr_diagram.operate(None)
+        output = hr_diagram.get_output()['output_data'][0]
+
+        self.assertEqual(hr_diagram.get_status(), 'COMPLETED')
+        self.assertEqual(output['n_stars'], 3)
+        self.assertAlmostEqual(output['cmd'][0]['ra'], self.CENTER_RA, places=5)
+        self.assertAlmostEqual(output['cmd'][0]['color'], 0.5, places=3)
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_gaia_failure_fails_operation(self, mock_file_cache, mock_gaia_cone_search):
+        # a Gaia outage fails the operation (re-runnable) instead of caching a degraded result
+        ra = np.full(2, self.CENTER_RA)
+        dec = self.CENTER_DEC + np.array([10.0, 20.0]) / 3600.0
+        mag = np.array([15.0, 16.0])
+        magerr = np.full(2, 0.02)
+
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag + 0.5, magerr)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.mock_band_fits(mock_file_cache)
+        mock_gaia_cone_search.side_effect = ClientAlertException('Could not fetch Gaia data for the cluster field')
+
+        hr_diagram = HRDiagram(self.hr_input_data())
+        with self.assertRaisesRegex(ClientAlertException, 'Gaia'):
+            hr_diagram.operate(None)
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_uncalibrated_band_fails(self, mock_file_cache):
+        ra = np.full(2, self.CENTER_RA)
+        dec = self.CENTER_DEC + np.array([10.0, 20.0]) / 3600.0
+        mag = np.array([15.0, 16.0])
+        magerr = np.full(2, 0.02)
+
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr,
+                              include_mag=False)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.mock_band_fits(mock_file_cache)
+
+        hr_diagram = HRDiagram(self.hr_input_data())
+        with self.assertRaisesRegex(ClientAlertException, 'zero-point calibrated'):
+            hr_diagram.operate(None)
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_disjoint_fields_fail(self, mock_file_cache):
+        # the red image is a degree away, so no stars cross-match
+        ra = np.full(2, self.CENTER_RA)
+        dec = self.CENTER_DEC + np.array([10.0, 20.0]) / 3600.0
+        mag = np.array([15.0, 16.0])
+        magerr = np.full(2, 0.02)
+
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA + 1.0, self.CENTER_DEC,
+                              ra + 1.0, dec, mag, magerr)
+        self.mock_band_fits(mock_file_cache)
+
+        hr_diagram = HRDiagram(self.hr_input_data())
+        with self.assertRaisesRegex(ClientAlertException, 'No stars matched'):
+            hr_diagram.operate(None)
+
+    def test_missing_cluster_fails(self):
+        input_data = self.hr_input_data()
+        del input_data['cluster']
+        hr_diagram = HRDiagram(input_data)
+
+        with self.assertRaisesRegex(ClientAlertException, 'cluster center'):
+            hr_diagram.operate(None)
+
+    def test_bad_search_radius_fails(self):
+        hr_diagram = HRDiagram(self.hr_input_data(search_radius_arcmin=-5.0))
+
+        with self.assertRaisesRegex(ClientAlertException, 'search radius'):
+            hr_diagram.operate(None)
+
+    def test_missing_input_files_fails(self):
+        input_data = self.hr_input_data()
+        input_data['red_filter_files'] = []
+        hr_diagram = HRDiagram(input_data)
+
+        with self.assertRaises(ClientAlertException):
+            hr_diagram.operate(None)
 
 
 class TestStackOperation(FileExtendedTestCase):
