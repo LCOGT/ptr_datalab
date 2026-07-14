@@ -285,9 +285,9 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
                 'source': 'local',
                 'filter': 'rp',
             }],
-            'aperture_radius_px': 7.64,
-            'annulus_inner_radius_px': 12.73,
-            'annulus_outer_radius_px': 19.10,
+            'aperture_radius': 7.64,
+            'annulus_inner_radius': 12.73,
+            'annulus_outer_radius': 19.10,
         }
 
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve')
@@ -338,12 +338,11 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             input_handlers=[input_handler],
             target_ra_deg=10.0,
             target_dec_deg=20.0,
-            aperture_radius_px=7.64,
-            annulus_inner_radius_px=12.73,
-            annulus_outer_radius_px=19.10,
+            aperture_radius=7.64,
+            annulus_inner_radius=12.73,
+            annulus_outer_radius=19.10,
             min_comparisons=5,
             max_comparisons=10,
-            aperture_unit='px',
         )
         output, is_raw = mock_set_output.call_args.args[0], mock_set_output.call_args.kwargs['is_raw']
         self.assertTrue(is_raw)
@@ -362,21 +361,21 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
 
     def test_operate_requires_aperture_radius(self):
         input_data = self.valid_input_data()
-        del input_data['aperture_radius_px']
+        del input_data['aperture_radius']
 
         with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
             AperturePhotometry(input_data).operate(None)
 
     def test_operate_requires_annulus_inner_radius(self):
         input_data = self.valid_input_data()
-        del input_data['annulus_inner_radius_px']
+        del input_data['annulus_inner_radius']
 
         with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
             AperturePhotometry(input_data).operate(None)
 
     def test_operate_requires_annulus_outer_radius(self):
         input_data = self.valid_input_data()
-        del input_data['annulus_outer_radius_px']
+        del input_data['annulus_outer_radius']
 
         with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
             AperturePhotometry(input_data).operate(None)
