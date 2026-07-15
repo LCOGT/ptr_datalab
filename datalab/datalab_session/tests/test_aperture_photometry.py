@@ -33,11 +33,11 @@ APERTURE_PHOTOMETRY_TEST_DIR = Path(__file__).resolve().parent / "test_files" / 
 TEST_DEG_PER_PIXEL = 1.0 / 3600.0
 
 def print_nearest_fits_catalog_target_matches(
-    input_handlers: list[Any],
+    fits_paths: list[str],
     target_ra_deg: float,
     target_dec_deg: float,
 ) -> None:
-    frames = _validated_frame_contexts(input_handlers)
+    frames = _validated_frame_contexts(fits_paths)
     print("\nNearest FITS catalog rows to target:")
     for frame in frames:
         candidates = [
@@ -179,8 +179,8 @@ class TestAperturePhotometry(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def write_frames(self, frames: dict[str, dict[str, Any]]) -> list[Any]:
-        input_handlers: list[Any] = []
+    def write_frames(self, frames: dict[str, dict[str, Any]]) -> list[str]:
+        fits_paths: list[str] = []
         for name, frame in frames.items():
             path = os.path.join(self.temp_dir.name, name)
             header = fits.Header()
@@ -192,19 +192,8 @@ class TestAperturePhotometry(unittest.TestCase):
             ]
             hdus.append(self._cat_hdu(frame["second_hdu"]))
             fits.HDUList(hdus).writeto(path, overwrite=True)
-            input_handlers.append(self.input_handler_for_path(path))
-        return input_handlers
-
-    def input_handler_for_path(self, path: str) -> Any:
-        with fits.open(path) as hdul:
-            hdus = {hdu.name: hdu.copy() for hdu in hdul}
-            hdus["PRIMARY"] = hdul[0].copy()
-        return SimpleNamespace(
-            fits_file=path,
-            sci_hdu=hdus["SCI"],
-            sci_data=hdus["SCI"].data,
-            get_hdu=lambda extension=None, hdus=hdus: hdus[extension or "SCI"],
-        )
+            fits_paths.append(path)
+        return fits_paths
 
     def _cat_hdu(self, rows: list[dict[str, Any]]) -> fits.BinTableHDU:
         if not rows:
@@ -326,7 +315,7 @@ class TestAperturePhotometry(unittest.TestCase):
         # Point the target at an empty patch of sky (~16px from any source) so centroiding cannot
         # lock on. _measure_target must never raise or drift onto a neighbour: it measures at the
         # authoritative WCS position instead of the real source at (30.3, 28.8).
-        from datalab.datalab_session.utils.aperture_light_curve import _measure_target
+        from datalab.datalab_session.utils.aperture_light_curve import _load_frame_image, _measure_target
         from datalab.datalab_session.utils.fits_metadata import world_to_pixel
 
         frames, _ = build_frame_set()
@@ -338,6 +327,7 @@ class TestAperturePhotometry(unittest.TestCase):
 
         measurement = _measure_target(
             frame=frame,
+            image=_load_frame_image(frame.fits_path),
             target_ra_deg=empty_ra,
             target_dec_deg=empty_dec,
             aperture_radius=4.0,
@@ -631,6 +621,111 @@ class TestAperturePhotometry(unittest.TestCase):
             [row.target_calibrated_apparent_magnitude for row in result2.light_curve_rows],
         )
 
+    def test_pixel_data_streams_one_frame_at_a_time(self) -> None:
+        # The pipeline exists to keep memory flat in the input count: each frame's pixels must be
+        # loaded exactly once, at most one frame's pixels may be alive at any moment, and nothing
+        # in the result may retain pixel arrays after the run.
+        import gc
+        import weakref
+        from unittest import mock
+
+        from datalab.datalab_session.utils import aperture_light_curve as light_curve_module
+
+        frames, (target_ra, target_dec) = build_frame_set()
+        fits_paths = self.write_frames(frames)
+
+        loaded_refs: list[weakref.ref] = []
+        loaded_paths: list[str] = []
+        max_concurrent_images = 0
+        original_load = light_curve_module._load_frame_image
+
+        def tracking_load(fits_path: str):
+            nonlocal max_concurrent_images
+            image = original_load(fits_path)
+            alive = sum(1 for ref in loaded_refs if ref() is not None) + 1
+            max_concurrent_images = max(max_concurrent_images, alive)
+            loaded_refs.append(weakref.ref(image))
+            loaded_paths.append(fits_path)
+            return image
+
+        with mock.patch.object(light_curve_module, "_load_frame_image", new=tracking_load):
+            result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+
+        gc.collect()
+        self.assertEqual(len(result.light_curve_rows), 3)
+        self.assertEqual(sorted(loaded_paths), sorted(fits_paths))
+        self.assertEqual(max_concurrent_images, 1)
+        self.assertTrue(all(ref() is None for ref in loaded_refs))
+
+    def test_frame_preview_downsamples_large_frames(self) -> None:
+        from datalab.datalab_session.utils.photometry_diagnostics import build_frame_preview
+
+        image = np.full((2400, 3200), 100.0, dtype=np.float32)
+
+        preview = build_frame_preview(image, max_dimension=1500)
+
+        self.assertEqual(preview.gray.dtype, np.uint8)
+        self.assertEqual(preview.gray.shape, (800, 1066))
+        self.assertLessEqual(max(preview.gray.shape), 1500)
+        self.assertAlmostEqual(preview.scale, 1.0 / 3.0)
+
+    def test_frame_preview_keeps_small_frames_full_resolution(self) -> None:
+        from datalab.datalab_session.utils.photometry_diagnostics import build_frame_preview
+
+        preview = build_frame_preview(np.full((80, 100), 100.0, dtype=np.float32))
+
+        self.assertEqual(preview.gray.shape, (80, 100))
+        self.assertEqual(preview.scale, 1.0)
+
+    def test_overlay_positions_scale_to_downsampled_preview(self) -> None:
+        from datalab.datalab_session.utils.photometry_diagnostics import (
+            build_frame_preview,
+            candidate_overlay_jpeg_base64,
+        )
+
+        height, width = 2400, 3200
+        header = {
+            "CTYPE1": "RA---TAN",
+            "CTYPE2": "DEC--TAN",
+            "CUNIT1": "deg",
+            "CUNIT2": "deg",
+            "CRVAL1": 100.0,
+            "CRVAL2": 20.0,
+            "CRPIX1": 0.0,
+            "CRPIX2": 0.0,
+            "CD1_1": TEST_DEG_PER_PIXEL,
+            "CD1_2": 0.0,
+            "CD2_1": 0.0,
+            "CD2_2": TEST_DEG_PER_PIXEL,
+        }
+        frame = SimpleNamespace(fits_path="big.fits", header=header, width=width, height=height)
+        preview = build_frame_preview(np.full((height, width), 100.0, dtype=np.float32))
+        self.assertLess(preview.scale, 1.0)
+        target_full_res = SimpleNamespace(x=600.0, y=300.0)
+
+        encoded = candidate_overlay_jpeg_base64(
+            frame=frame,
+            preview=preview,
+            stars=[],
+            measurements=[],
+            target_measurement=target_full_res,
+            aperture_radius=4.0,
+        )
+
+        rgb = np.asarray(Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB"))
+        self.assertEqual(rgb.shape[:2], preview.gray.shape)
+        orange = np.argwhere(
+            (rgb[:, :, 0] > 180) &
+            (rgb[:, :, 1] > 80) &
+            (rgb[:, :, 1] < 170) &
+            (rgb[:, :, 2] < 90)
+        )
+        self.assertGreater(len(orange), 0)
+        expected_x = 600.0 * preview.scale
+        expected_y = (preview.gray.shape[0] - 1) - 300.0 * preview.scale
+        self.assertAlmostEqual(float(np.mean(orange[:, 1])), expected_x, delta=3.0)
+        self.assertAlmostEqual(float(np.mean(orange[:, 0])), expected_y, delta=3.0)
+
     def test_default_fits_dependencies_read_sci_header_and_cat_rows(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set(frame_count=1)
         handle = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
@@ -659,9 +754,8 @@ class TestAperturePhotometry(unittest.TestCase):
         ])
         hdul.writeto(path, overwrite=True)
         try:
-            input_handler = self.input_handler_for_path(path)
             result = generate_light_curve(
-                [input_handler],
+                [path],
                 target_ra_deg=target_ra,
                 target_dec_deg=target_dec,
                 aperture_radius=4.0,
@@ -699,18 +793,17 @@ class TestAperturePhotometry(unittest.TestCase):
     def test_real_compressed_fits_aperture_photometry_prints_diagnostics_and_results(self) -> None:
         fits_paths = sorted(str(path) for path in APERTURE_PHOTOMETRY_TEST_DIR.glob("*.fits.fz"))
         self.assertEqual(len(fits_paths), 3)
-        input_handlers = [self.input_handler_for_path(path) for path in fits_paths]
         target_ra_deg = 199.150264
         target_dec_deg = 42.093592
 
         print_nearest_fits_catalog_target_matches(
-            input_handlers,
+            fits_paths,
             target_ra_deg=target_ra_deg,
             target_dec_deg=target_dec_deg,
         )
 
         result = generate_light_curve(
-            input_handlers,
+            fits_paths,
             target_ra_deg=target_ra_deg,
             target_dec_deg=target_dec_deg,
             aperture_radius=7.64,
@@ -751,9 +844,8 @@ class TestAperturePhotometry(unittest.TestCase):
             fits.ImageHDU(data=np.zeros((20, 20), dtype=float), header=header, name="SCI"),
         ]).writeto(path, overwrite=True)
         try:
-            input_handler = self.input_handler_for_path(path)
             with self.assertRaisesRegex(LightCurveError, "requires at least 1 valid input file"):
-                generate_light_curve([input_handler], 100.0, 20.0, 2.0, 3.0, 5.0)
+                generate_light_curve([path], 100.0, 20.0, 2.0, 3.0, 5.0)
         finally:
             os.remove(path)
 

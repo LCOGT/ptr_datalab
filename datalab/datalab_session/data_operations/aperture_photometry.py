@@ -4,8 +4,8 @@ from dataclasses import asdict
 from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
-from datalab.datalab_session.data_operations.input_data_handler import InputDataHandler
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.utils.filecache import FileCache
 from datalab.datalab_session.utils.format import Format
 from datalab.datalab_session.utils.aperture_light_curve import (
     DEFAULT_ANNULUS_INNER_RADIUS,
@@ -128,12 +128,15 @@ class AperturePhotometry(BaseDataOperation):
             min_comparisons = int(self.input_data.get('min_comparisons', DEFAULT_MIN_COMPARISONS))
             max_comparisons = int(self.input_data.get('max_comparisons', DEFAULT_MAX_COMPARISONS))
             self.set_operation_progress(AperturePhotometry.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION'])
-            input_handlers = [
-                InputDataHandler(submitter, input_file['basename'], input_file.get('source'))
+            # Resolve inputs to local file-cache paths only. Pixel data is loaded (and released)
+            # frame by frame inside generate_light_curve, never held for all inputs at once.
+            file_cache = FileCache()
+            fits_paths = [
+                file_cache.get_fits(input_file['basename'], input_file.get('source'), submitter)
                 for input_file in input_files
             ]
             result = generate_light_curve(
-                input_handlers=input_handlers,
+                fits_paths=fits_paths,
                 target_ra_deg=target_ra,
                 target_dec_deg=target_dec,
                 aperture_radius=aperture_radius,

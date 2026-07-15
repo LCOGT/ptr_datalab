@@ -257,7 +257,9 @@ def centroid(
 
     Returns a CentroidResult containing the centroid position, localbackground estimate, peak value, and any relevant messages.
   """
-  image = np.asarray(image, dtype=float)
+  # No dtype here: forcing float64 would copy the entire frame on every call, and this runs once
+  # per comparison candidate per frame. Pixels are read as Python floats, so any numeric dtype works.
+  image = np.asarray(image)
   x_center = x_click
   y_center = y_click
   radius = max(radius, 3.0)

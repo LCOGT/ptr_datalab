@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 
 
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.utils.file_utils import get_hdu
+from datalab.datalab_session.utils.file_utils import get_fits_header
 from datalab.datalab_session.utils.filecache import FileCache
 
 
@@ -18,8 +18,8 @@ def wcs(input: dict, user: User):
   """
   try:
     file_path = FileCache().get_fits(input['basename'], input['source'], user)
-    sci_hdu = get_hdu(file_path, 'SCI')
-    fits_dimensions = [sci_hdu.header.get('NAXIS1'), sci_hdu.header.get('NAXIS2')]
+    sci_header = get_fits_header(file_path, 'SCI')
+    fits_dimensions = [sci_header.get('NAXIS1'), sci_header.get('NAXIS2')]
   except TimeoutError as e:
     raise ClientAlertException(f"Download of {input['basename']} FITs timed out")
   except TypeError as e:
@@ -28,7 +28,7 @@ def wcs(input: dict, user: User):
     raise ClientAlertException(f"No FITs file found for this image")
 
   try:
-    wcs = WCS(sci_hdu.header)
+    wcs = WCS(sci_header)
     wcs_solution = wcs.wcs
     wcs_cd = wcs_solution.cd
     output = {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import math
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, Sequence
 
@@ -13,22 +14,66 @@ from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
 COMPARISON_STAR_COLOR = (0, 173, 239)
 TARGET_COLOR = (243, 131, 33)
+# Diagnostic overlays are rendered on a downsampled preview no larger than this on either side.
+PREVIEW_MAX_DIMENSION = 2000
+
+
+@dataclass(frozen=True)
+class FramePreview:
+    """
+        Downsampled display rendering of a frame, captured while the frame's pixels were loaded.
+
+        gray is uint8, display-oriented (y-flipped), block-mean downsampled so that preview
+        coordinates = full-resolution coordinates * scale. Diagnostic overlays are drawn on this
+        preview, so full-resolution pixels never have to be reloaded or retained for rendering.
+    """
+    gray: np.ndarray
+    scale: float
+
+    @property
+    def height(self) -> int:
+        return int(self.gray.shape[0])
+
+    @property
+    def width(self) -> int:
+        return int(self.gray.shape[1])
+
+
+def build_frame_preview(image: np.ndarray, max_dimension: int = PREVIEW_MAX_DIMENSION) -> FramePreview:
+    """
+        Builds the downsampled uint8 display preview for a frame.
+
+        Blocks are mean-combined (point sampling would drop stars smaller than the sampling step),
+        and the display stretch is computed on the downsampled array, so the only full-resolution
+        temporary is the trimmed copy the block reshape may make.
+    """
+    height, width = image.shape
+    step = max(1, math.ceil(max(height, width) / max_dimension))
+    if step > 1:
+        trimmed = image[: (height // step) * step, : (width // step) * step]
+        blocks = trimmed.reshape(height // step, step, width // step, step)
+        small = blocks.mean(axis=(1, 3), dtype=np.float64)
+    else:
+        small = np.asarray(image, dtype=float)
+    gray = np.flip(_stretch_to_uint8(small), axis=0)
+    return FramePreview(gray=np.ascontiguousarray(gray), scale=1.0 / step)
 
 
 def candidate_overlay_jpeg_base64(
     *,
     frame: Any,
+    preview: FramePreview,
     stars: Sequence[Any],
     measurements: Sequence[Any],
     target_measurement: Any,
     aperture_radius: float,
 ) -> str:
-    image = _normalize_image_for_jpeg(frame.image)
+    image = Image.fromarray(preview.gray).convert("RGB")
     draw = ImageDraw.Draw(image)
-    font = _diagnostic_overlay_font(frame.width, frame.height)
+    font = _diagnostic_overlay_font(preview.width, preview.height)
     stars_by_id = {star.candidate_id: star for star in stars}
-    min_dimension = max(min(frame.width, frame.height), 1)
-    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius)
+    min_dimension = max(min(preview.width, preview.height), 1)
+    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius) * preview.scale
     radius = max(aperture_radius_px, min_dimension * 0.018, 14.0)
     line_width = max(3, int(round(min_dimension * 0.004)))
     label_padding = max(3, int(round(min_dimension * 0.004)))
@@ -36,8 +81,8 @@ def candidate_overlay_jpeg_base64(
     for measurement in measurements:
         if measurement.candidate_id not in stars_by_id:
             continue
-        x = float(measurement.x)
-        y = _display_y(float(measurement.y), frame.height)
+        x = float(measurement.x) * preview.scale
+        y = _display_y(float(measurement.y) * preview.scale, preview.height)
         if not math.isfinite(x) or not math.isfinite(y):
             continue
 
@@ -51,10 +96,10 @@ def candidate_overlay_jpeg_base64(
         label_bbox = draw.textbbox((label_x, label_y), label, font=font)
         label_width = label_bbox[2] - label_bbox[0]
         label_height = label_bbox[3] - label_bbox[1]
-        if label_x + label_width + label_padding > frame.width:
+        if label_x + label_width + label_padding > preview.width:
             label_x = max(x - radius - label_width - label_padding, 0)
         if label_y < 0:
-            label_y = min(y + radius + label_padding, max(frame.height - label_height - label_padding, 0))
+            label_y = min(y + radius + label_padding, max(preview.height - label_height - label_padding, 0))
         draw.text(
             (label_x, label_y),
             label,
@@ -62,8 +107,8 @@ def candidate_overlay_jpeg_base64(
             font=font,
         )
 
-    target_x = float(target_measurement.x)
-    target_y = _display_y(float(target_measurement.y), frame.height)
+    target_x = float(target_measurement.x) * preview.scale
+    target_y = _display_y(float(target_measurement.y) * preview.scale, preview.height)
     if math.isfinite(target_x) and math.isfinite(target_y):
         target_bbox = (
             target_x - radius,
@@ -112,7 +157,7 @@ def comparison_star_validation_diagnostics(
     return diagnostics
 
 
-def _normalize_image_for_jpeg(image_data: np.ndarray) -> Image.Image:
+def _stretch_to_uint8(image_data: np.ndarray) -> np.ndarray:
     finite = np.asarray(image_data, dtype=float)
     finite_values = finite[np.isfinite(finite)]
     if finite_values.size:
@@ -127,9 +172,7 @@ def _normalize_image_for_jpeg(image_data: np.ndarray) -> Image.Image:
 
     scaled = np.clip((finite - zmin) / (zmax - zmin), 0.0, 1.0)
     scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
-    gray = (scaled * 255.0).astype(np.uint8)
-    gray = np.flip(gray, axis=0)
-    return Image.fromarray(gray).convert("RGB")
+    return (scaled * 255.0).astype(np.uint8)
 
 
 def _display_y(y: float, height: int) -> float:

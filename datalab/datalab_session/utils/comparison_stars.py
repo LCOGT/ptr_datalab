@@ -61,29 +61,26 @@ class ComparisonSelectionResult:
 def select_comparison_stars(
     *,
     frames: Sequence[Any],
-    catalog: Sequence[dict[str, Any]],
+    candidates: Sequence[ComparisonStar],
+    measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]],
     target_mag_proxy: float,
-    aperture_radius: float,
-    annulus_inner_radius: float,
-    annulus_outer_radius: float,
     min_comparisons: int,
     max_comparisons: int,
     error_class: type[Exception] = ValueError,
 ) -> ComparisonSelectionResult:
     """
-        Selects comparison stars from source catalog candidates.
+        Selects comparison stars from source catalog candidates using their per-frame measurements.
 
-        Measures every candidate, drops variable stars and zero-point-inconsistent (blended or
-        mismatched) catalog matches, then ranks the rest by how close their measured brightness is
-        to the target's. Returns the comparison ensemble for calibration.
+        Measurement happens upstream (one frame's pixels at a time); this is pure math on the
+        collected measurements. Drops candidates without a valid positive measurement on every
+        frame, then variable stars and zero-point-inconsistent (blended or mismatched) catalog
+        matches, and ranks the rest by how close their measured brightness is to the target's.
+        Returns the comparison ensemble for calibration.
     """
-    enriched, measurements_by_candidate = _measure_and_rank_candidates(
+    enriched = _rank_measured_candidates(
         frames=frames,
-        catalog=catalog,
-        aperture_radius=aperture_radius,
-        annulus_inner_radius=annulus_inner_radius,
-        annulus_outer_radius=annulus_outer_radius,
-        error_class=error_class,
+        candidates=candidates,
+        measurements_by_candidate=measurements_by_candidate,
     )
     stable = [candidate for candidate in enriched if candidate.variability_score <= MAX_ACCEPTABLE_VARIABILITY]
     consistent = _reject_zero_point_outliers(stable)
@@ -100,7 +97,7 @@ def select_comparison_stars(
         selected_stars=selected_stars,
         diagnostics=tuple(),
         measurements_by_candidate={
-            star.candidate_id: measurements_by_candidate[star.candidate_id]
+            star.candidate_id: dict(measurements_by_candidate[star.candidate_id])
             for star in selected_stars
         },
     )
@@ -145,6 +142,7 @@ def _source_catalog_sort_key(candidate: ComparisonStar, target_mag_proxy: float)
 def measure_candidate_on_frame(
     *,
     frame: Any,
+    image: np.ndarray,
     candidate: ComparisonStar,
     aperture_radius: float,
     annulus_inner_radius: float,
@@ -153,6 +151,8 @@ def measure_candidate_on_frame(
 ) -> ComparisonMeasurement:
     """
         Measures aperture photometry for one comparison-star candidate on a single FITS frame.
+
+        image is the frame's full-resolution pixel data, passed separately from the frame metadata.
 
         Converts the candidate's RA/Dec to pixel coordinates via the frame WCS, centroids around
         that position to refine it (correcting small WCS or catalog inaccuracies), then measures
@@ -166,7 +166,7 @@ def measure_candidate_on_frame(
     annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius)
     x, y = world_to_pixel(frame.header, candidate.ra_deg, candidate.dec_deg)
     centroid_result = centroid(
-        image=frame.image,
+        image=image,
         x_click=x,
         y_click=y,
         radius=aperture_radius_px,
@@ -176,7 +176,7 @@ def measure_candidate_on_frame(
     if not centroid_result.success:
         raise error_class(f"Selected comparison-star centroiding failed for {frame.fits_path}, {candidate.candidate_id}.")
     photometry = measure_aperture(
-        image=frame.image,
+        image=image,
         x_center=centroid_result.x,
         y_center=centroid_result.y,
         aperture_radius_px=aperture_radius_px,
@@ -200,89 +200,82 @@ def measure_candidate_on_frame(
     )
 
 
-def _measure_and_rank_candidates(
+def candidate_stars_from_catalog(catalog: Sequence[dict[str, Any]]) -> list[ComparisonStar]:
+    """
+        Builds not-yet-measured ComparisonStar candidates from field-star catalog rows, ordered by
+        candidate_id so measurement and ranking stay deterministic.
+    """
+    candidates: list[ComparisonStar] = []
+    for candidate in sorted(catalog, key=lambda row: row["candidate_id"]):
+        candidates.append(
+            ComparisonStar(
+                candidate_id=candidate["candidate_id"],
+                ra_deg=candidate["ra_deg"],
+                dec_deg=candidate["dec_deg"],
+                reference_magnitude=float(candidate.get("reference_magnitude", candidate["second_hdu_magnitude"])),
+                reference_magnitude_source=str(candidate.get("reference_magnitude_source", "second_hdu")),
+                source_catalog_by_frame=candidate.get("source_catalog_by_frame", {}),
+                variability_score=math.inf,
+                isolation_arcsec=candidate["isolation_arcsec"],
+                target_separation_px=candidate["target_separation_px"],
+            )
+        )
+    return candidates
+
+
+def _rank_measured_candidates(
     *,
     frames: Sequence[Any],
-    catalog: Sequence[dict[str, Any]],
-    aperture_radius: float,
-    annulus_inner_radius: float,
-    annulus_outer_radius: float,
-    error_class: type[Exception],
-) -> tuple[list[ComparisonStar], dict[str, dict[str, ComparisonMeasurement]]]:
+    candidates: Sequence[ComparisonStar],
+    measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]],
+) -> list[ComparisonStar]:
     """
-        Measures each candidate across all frames and calculates variability scores.
+        Scores measured candidates from their per-frame measurements.
 
-        Returns the comp star candidates that have valid positive measurements across all frames,
-        together with those per-frame measurements keyed candidate_id -> fits_path -> measurement
-        so the caller can reuse them instead of re-measuring.
+        Keeps only candidates with a valid positive measurement on every frame and fills in their
+        variability scores and median measured instrumental magnitudes.
     """
-    measured_candidates: list[tuple[dict[str, Any], ComparisonStar, np.ndarray, list[ComparisonMeasurement]]] = []
-    for candidate in sorted(catalog, key=lambda row: row["candidate_id"]):
-        reference_magnitude = float(candidate.get("reference_magnitude", candidate["second_hdu_magnitude"]))
-        reference_magnitude_source = str(candidate.get("reference_magnitude_source", "second_hdu"))
-        source_catalog_by_frame = candidate.get("source_catalog_by_frame", {})
-        candidate_star = ComparisonStar(
-            candidate_id=candidate["candidate_id"],
-            ra_deg=candidate["ra_deg"],
-            dec_deg=candidate["dec_deg"],
-            reference_magnitude=reference_magnitude,
-            reference_magnitude_source=reference_magnitude_source,
-            source_catalog_by_frame=source_catalog_by_frame,
-            variability_score=math.inf,
-            isolation_arcsec=candidate["isolation_arcsec"],
-            target_separation_px=candidate["target_separation_px"],
-        )
-        try:
-            per_frame = [
-                measure_candidate_on_frame(
-                    frame=frame,
-                    candidate=candidate_star,
-                    aperture_radius=aperture_radius,
-                    annulus_inner_radius=annulus_inner_radius,
-                    annulus_outer_radius=annulus_outer_radius,
-                    error_class=error_class,
-                )
-                for frame in frames
-            ]
-        except error_class:
+    measured_candidates: list[tuple[ComparisonStar, np.ndarray]] = []
+    for candidate in candidates:
+        per_frame = measurements_by_candidate.get(candidate.candidate_id, {})
+        if any(frame.fits_path not in per_frame for frame in frames):
             continue
-        counts = np.asarray([measurement.net_source_counts for measurement in per_frame], dtype=float)
+        counts = np.asarray(
+            [per_frame[frame.fits_path].net_source_counts for frame in frames],
+            dtype=float,
+        )
         if np.any(~np.isfinite(counts)) or np.any(counts <= 0.0):
             continue
         instrumental_mags = -2.5 * np.log10(counts)
-        measured_candidates.append((candidate, candidate_star, instrumental_mags, per_frame))
+        measured_candidates.append((candidate, instrumental_mags))
 
     if not measured_candidates:
-        return [], {}
+        return []
 
-    instrumental_mag_matrix = np.vstack([row[2] for row in measured_candidates])
+    instrumental_mag_matrix = np.vstack([mags for _, mags in measured_candidates])
     if len(measured_candidates) > 1:
         frame_offsets = np.median(instrumental_mag_matrix, axis=0)
         variability_mag_matrix = instrumental_mag_matrix - frame_offsets
     else:
         variability_mag_matrix = instrumental_mag_matrix
 
-    selected: list[ComparisonStar] = []
-    measurements_by_candidate: dict[str, dict[str, ComparisonMeasurement]] = {}
-    for (candidate, candidate_star, instrumental_mags, per_frame), variability_mags in zip(
+    scored: list[ComparisonStar] = []
+    for (candidate, instrumental_mags), variability_mags in zip(
         measured_candidates,
         variability_mag_matrix,
     ):
-        selected.append(
+        scored.append(
             ComparisonStar(
-                candidate_id=candidate["candidate_id"],
-                ra_deg=candidate["ra_deg"],
-                dec_deg=candidate["dec_deg"],
-                reference_magnitude=candidate_star.reference_magnitude,
-                reference_magnitude_source=candidate_star.reference_magnitude_source,
-                source_catalog_by_frame=candidate_star.source_catalog_by_frame,
+                candidate_id=candidate.candidate_id,
+                ra_deg=candidate.ra_deg,
+                dec_deg=candidate.dec_deg,
+                reference_magnitude=candidate.reference_magnitude,
+                reference_magnitude_source=candidate.reference_magnitude_source,
+                source_catalog_by_frame=candidate.source_catalog_by_frame,
                 variability_score=float(np.std(variability_mags)),
-                isolation_arcsec=candidate_star.isolation_arcsec,
-                target_separation_px=candidate_star.target_separation_px,
+                isolation_arcsec=candidate.isolation_arcsec,
+                target_separation_px=candidate.target_separation_px,
                 measured_instrumental_magnitude=float(np.median(instrumental_mags)),
             )
         )
-        measurements_by_candidate[candidate["candidate_id"]] = {
-            measurement.fits_path: measurement for measurement in per_frame
-        }
-    return selected, measurements_by_candidate
+    return scored

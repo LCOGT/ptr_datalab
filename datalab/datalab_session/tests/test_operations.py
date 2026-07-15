@@ -289,7 +289,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         }
 
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve')
-    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.InputDataHandler')
+    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache')
     @mock.patch.object(AperturePhotometry, 'set_status')
     @mock.patch.object(AperturePhotometry, 'set_output')
     @mock.patch.object(AperturePhotometry, 'set_operation_progress')
@@ -298,11 +298,10 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         mock_set_operation_progress,
         mock_set_output,
         mock_set_status,
-        mock_input_data_handler,
+        mock_file_cache,
         mock_generate_light_curve,
     ):
-        input_handler = SimpleNamespace(fits_file='/tmp/fits_1.fits')
-        mock_input_data_handler.return_value = input_handler
+        mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
         mock_generate_light_curve.return_value = SimpleNamespace(
             light_curve_rows=[
                 LightCurveRow(
@@ -332,8 +331,9 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         aperture_photometry = AperturePhotometry(input_data)
         aperture_photometry.operate(None)
 
+        mock_file_cache.return_value.get_fits.assert_called_once_with('fits_1', 'local', None)
         mock_generate_light_curve.assert_called_once_with(
-            input_handlers=[input_handler],
+            fits_paths=['/tmp/fits_1.fits'],
             target_ra_deg=10.0,
             target_dec_deg=20.0,
             aperture_radius=7.64,
@@ -383,11 +383,11 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         del input_data['input_files'][0]['filter']
 
         with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
-                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.InputDataHandler') as mock_input_data_handler, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
                 mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
                 mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
                 mock.patch.object(AperturePhotometry, 'set_status'):
-            mock_input_data_handler.return_value = SimpleNamespace(fits_file='/tmp/fits_1.fits')
+            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
             mock_generate_light_curve.return_value = SimpleNamespace(
                 light_curve_rows=[],
                 selected_comparison_stars=[],
