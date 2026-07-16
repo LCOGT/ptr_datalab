@@ -316,7 +316,7 @@ class TestAperturePhotometry(unittest.TestCase):
         # lock on. _measure_target must never raise or drift onto a neighbour: it measures at the
         # authoritative WCS position instead of the real source at (30.3, 28.8).
         from datalab.datalab_session.utils.aperture_light_curve import _load_frame_image, _measure_target
-        from datalab.datalab_session.utils.fits_metadata import world_to_pixel
+        from datalab.datalab_session.utils.fits_metadata import frame_geometry, world_to_pixel
 
         frames, _ = build_frame_set()
         header = frames["frame_1.fits"]["header"]
@@ -328,11 +328,9 @@ class TestAperturePhotometry(unittest.TestCase):
         measurement = _measure_target(
             frame=frame,
             image=_load_frame_image(frame.fits_path),
+            geometry=frame_geometry(frame.header, 4.0, 6.0, 9.0),
             target_ra_deg=empty_ra,
             target_dec_deg=empty_dec,
-            aperture_radius=4.0,
-            annulus_inner_radius=6.0,
-            annulus_outer_radius=9.0,
         )
 
         self.assertAlmostEqual(measurement.x, initial_x, delta=1.0e-6)

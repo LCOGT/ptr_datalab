@@ -1,4 +1,5 @@
 import math
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 import numpy as np
@@ -64,3 +65,45 @@ def arcsec_to_pixels(header: Mapping[str, Any], angular_radius_arcsec: float) ->
         Convert an angular aperture radius to pixels for one frame, using the frame's plate scale.
     """
     return float(angular_radius_arcsec) / pixel_scale_arcsec(header)
+
+
+@dataclass(frozen=True)
+class FrameGeometry:
+    """
+        Per-frame WCS and pixel-space aperture geometry, built once and reused for the target and
+        every comparison candidate on the frame.
+
+        Constructing a WCS from a header costs on the order of ~10 ms; arcsec_to_pixels and
+        world_to_pixel each built one per call, so measuring a frame's candidates rebuilt it
+        thousands of times. The plate scale and WCS are frame constants, so they are computed once
+        here instead of per candidate.
+    """
+    wcs: WCS
+    aperture_radius_px: float
+    annulus_inner_radius_px: float
+    annulus_outer_radius_px: float
+
+    def world_to_pixel(self, ra_deg: float, dec_deg: float) -> tuple[float, float]:
+        """Pixel coordinates of a sky position using the cached WCS (no header re-parse)."""
+        x, y = self.wcs.world_to_pixel_values(float(ra_deg), float(dec_deg))
+        return float(x), float(y)
+
+
+def frame_geometry(
+    header: Mapping[str, Any],
+    aperture_radius_arcsec: float,
+    annulus_inner_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
+) -> FrameGeometry:
+    """
+        Builds the reusable per-frame geometry: one WCS plus the three aperture radii converted to
+        pixels via the frame's plate scale. Matches arcsec_to_pixels/world_to_pixel exactly, just
+        without rebuilding the WCS for every candidate.
+    """
+    pixel_scale = pixel_scale_arcsec(header)
+    return FrameGeometry(
+        wcs=WCS(dict(header)),
+        aperture_radius_px=float(aperture_radius_arcsec) / pixel_scale,
+        annulus_inner_radius_px=float(annulus_inner_radius_arcsec) / pixel_scale,
+        annulus_outer_radius_px=float(annulus_outer_radius_arcsec) / pixel_scale,
+    )
