@@ -19,8 +19,10 @@ from datalab.datalab_session.utils.comparison_stars import (
 )
 from datalab.datalab_session.utils.centroiding import calculate_background_model, centroid
 from datalab.datalab_session.utils.fits_metadata import (
+    FrameGeometry,
     arcsec_to_pixels,
     frame_gain,
+    frame_geometry,
     frame_read_noise,
     optional_float,
     world_to_pixel,
@@ -523,14 +525,16 @@ def _measure_frame_pixels(
         ids of candidates that failed to measure on this frame, and the preview.
     """
     image = _load_frame_image(frame.fits_path)
+    # Build the frame's WCS and pixel-space aperture radii once, then reuse them for the target and
+    # every candidate. These are frame constants, so recomputing them per candidate (as the old
+    # arcsec_to_pixels/world_to_pixel calls did) just re-parsed the header WCS thousands of times.
+    geometry = frame_geometry(frame.header, aperture_radius, annulus_inner_radius, annulus_outer_radius)
     target_measurement = _measure_target(
         frame=frame,
         image=image,
+        geometry=geometry,
         target_ra_deg=target_ra_deg,
         target_dec_deg=target_dec_deg,
-        aperture_radius=aperture_radius,
-        annulus_inner_radius=annulus_inner_radius,
-        annulus_outer_radius=annulus_outer_radius,
     )
     candidate_measurements: dict[str, ComparisonMeasurement] = {}
     failed_candidate_ids: set[str] = set()
@@ -541,10 +545,8 @@ def _measure_frame_pixels(
             candidate_measurements[candidate.candidate_id] = measure_candidate_on_frame(
                 frame=frame,
                 image=image,
+                geometry=geometry,
                 candidate=candidate,
-                aperture_radius=aperture_radius,
-                annulus_inner_radius=annulus_inner_radius,
-                annulus_outer_radius=annulus_outer_radius,
                 error_class=LightCurveError,
             )
         except LightCurveError:
@@ -598,28 +600,27 @@ def _measure_target(
     *,
     frame: FrameContext,
     image: np.ndarray,
+    geometry: FrameGeometry,
     target_ra_deg: float,
     target_dec_deg: float,
-    aperture_radius: float,
-    annulus_inner_radius: float,
-    annulus_outer_radius: float,
 ) -> TargetMeasurement:
     """
         Converts the target RA and Dec to pixel coordinates, centroids the source, and measures
         aperture photometry. image is the frame's pixel data, passed separately from the metadata
-        so the streaming pixel pass controls how long it stays in memory.
+        so the streaming pixel pass controls how long it stays in memory. geometry carries the
+        frame's cached WCS and pixel-space aperture radii.
 
         The target is never allowed to drop a frame: if centroiding fails or the refinement drifts
         too far from the WCS position, it measures at the authoritative WCS position instead.
 
         Returns the target measurement for a single frame.
     """
-    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius)
-    annulus_inner_radius_px = arcsec_to_pixels(frame.header, annulus_inner_radius)
-    annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius)
+    aperture_radius_px = geometry.aperture_radius_px
+    annulus_inner_radius_px = geometry.annulus_inner_radius_px
+    annulus_outer_radius_px = geometry.annulus_outer_radius_px
 
     try:
-        initial_x, initial_y = world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
+        initial_x, initial_y = geometry.world_to_pixel(target_ra_deg, target_dec_deg)
     except Exception as exc:
         raise LightCurveError(f"Target WCS localization failed for {frame.fits_path}.") from exc
     log.info(

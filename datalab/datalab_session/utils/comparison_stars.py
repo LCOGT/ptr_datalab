@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from datalab.datalab_session.utils.centroiding import centroid
-from datalab.datalab_session.utils.fits_metadata import arcsec_to_pixels, frame_gain, frame_read_noise, world_to_pixel
+from datalab.datalab_session.utils.fits_metadata import FrameGeometry, frame_gain, frame_read_noise
 from datalab.datalab_session.utils.photometry import measure_aperture
 
 
@@ -143,16 +143,16 @@ def measure_candidate_on_frame(
     *,
     frame: Any,
     image: np.ndarray,
+    geometry: FrameGeometry,
     candidate: ComparisonStar,
-    aperture_radius: float,
-    annulus_inner_radius: float,
-    annulus_outer_radius: float,
     error_class: type[Exception] = ValueError,
 ) -> ComparisonMeasurement:
     """
         Measures aperture photometry for one comparison-star candidate on a single FITS frame.
 
         image is the frame's full-resolution pixel data, passed separately from the frame metadata.
+        geometry carries the frame's cached WCS and pixel-space aperture radii, shared across every
+        candidate on the frame.
 
         Converts the candidate's RA/Dec to pixel coordinates via the frame WCS, centroids around
         that position to refine it (correcting small WCS or catalog inaccuracies), then measures
@@ -161,10 +161,10 @@ def measure_candidate_on_frame(
 
         Returns the comparison-star measurement for this frame.
     """
-    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius)
-    annulus_inner_radius_px = arcsec_to_pixels(frame.header, annulus_inner_radius)
-    annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius)
-    x, y = world_to_pixel(frame.header, candidate.ra_deg, candidate.dec_deg)
+    aperture_radius_px = geometry.aperture_radius_px
+    annulus_inner_radius_px = geometry.annulus_inner_radius_px
+    annulus_outer_radius_px = geometry.annulus_outer_radius_px
+    x, y = geometry.world_to_pixel(candidate.ra_deg, candidate.dec_deg)
     centroid_result = centroid(
         image=image,
         x_click=x,
