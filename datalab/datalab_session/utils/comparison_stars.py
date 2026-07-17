@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from datalab.datalab_session.utils.centroiding import centroid
-from datalab.datalab_session.utils.fits_metadata import FrameGeometry, frame_gain, frame_read_noise
+from datalab.datalab_session.utils.fits_metadata import FrameGeometry
 from datalab.datalab_session.utils.photometry import measure_aperture
 
 
@@ -181,8 +181,8 @@ def measure_candidate_on_frame(
         y_center=centroid_result.y,
         aperture_radius_px=aperture_radius_px,
         background_model=centroid_result.background_model,
-        gain=frame_gain(frame.header),
-        read_noise=frame_read_noise(frame.header),
+        gain=geometry.gain,
+        read_noise=geometry.read_noise,
         dark=0.0,
         error_class=error_class,
     )

@@ -77,8 +77,8 @@ def arcsec_to_pixels(header: Mapping[str, Any], angular_radius_arcsec: float) ->
 @dataclass(frozen=True)
 class FrameGeometry:
     """
-        Per-frame WCS and pixel-space aperture geometry, built once and reused for the target and
-        every comparison candidate on the frame.
+        Per-frame WCS, pixel-space aperture geometry, and detector noise parameters, built once
+        and reused for the target and every comparison candidate on the frame.
 
         Constructing a WCS from a header costs on the order of ~10 ms; arcsec_to_pixels and
         world_to_pixel each built one per call, so measuring a frame's candidates rebuilt it
@@ -89,6 +89,8 @@ class FrameGeometry:
     aperture_radius_px: float
     annulus_inner_radius_px: float
     annulus_outer_radius_px: float
+    gain: float
+    read_noise: float
 
     def world_to_pixel(self, ra_deg: float, dec_deg: float) -> tuple[float, float]:
         """Pixel coordinates of a sky position using the cached WCS (no header re-parse)."""
@@ -103,9 +105,10 @@ def frame_geometry(
     annulus_outer_radius_arcsec: float,
 ) -> FrameGeometry:
     """
-        Builds the reusable per-frame geometry: one WCS plus the three aperture radii converted to
-        pixels via the frame's plate scale. Matches arcsec_to_pixels/world_to_pixel exactly, just
-        without rebuilding the WCS for every candidate.
+        Builds the reusable per-frame geometry: one WCS, the three aperture radii converted to
+        pixels via the frame's plate scale, and the detector gain and read noise. Matches
+        arcsec_to_pixels/world_to_pixel/frame_gain/frame_read_noise exactly, just without
+        re-deriving any of them for every candidate.
     """
     pixel_scale = pixel_scale_arcsec(header)
     return FrameGeometry(
@@ -113,4 +116,6 @@ def frame_geometry(
         aperture_radius_px=float(aperture_radius_arcsec) / pixel_scale,
         annulus_inner_radius_px=float(annulus_inner_radius_arcsec) / pixel_scale,
         annulus_outer_radius_px=float(annulus_outer_radius_arcsec) / pixel_scale,
+        gain=frame_gain(header),
+        read_noise=frame_read_noise(header),
     )

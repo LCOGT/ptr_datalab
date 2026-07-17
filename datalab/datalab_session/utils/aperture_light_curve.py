@@ -21,9 +21,7 @@ from datalab.datalab_session.utils.centroiding import calculate_background_model
 from datalab.datalab_session.utils.fits_metadata import (
     FrameGeometry,
     arcsec_to_pixels,
-    frame_gain,
     frame_geometry,
-    frame_read_noise,
     optional_float,
     world_to_pixel,
 )
@@ -698,8 +696,8 @@ def _measure_target(
         y_center=y_center,
         aperture_radius_px=aperture_radius_px,
         background_model=background_model,
-        gain=frame_gain(frame.header),
-        read_noise=frame_read_noise(frame.header),
+        gain=geometry.gain,
+        read_noise=geometry.read_noise,
         dark=0.0,
         error_class=LightCurveError,
     )
