@@ -34,9 +34,7 @@ from datalab.datalab_session.utils.geometry import (
     minimum_angular_neighbor_distance_arcsec,
 )
 from datalab.datalab_session.utils.photometry_diagnostics import (
-    FramePreview,
-    build_frame_preview,
-    candidate_overlay_jpeg_base64,
+    candidate_overlay_jpeg_bytes,
     comparison_star_validation_diagnostics,
 )
 from datalab.datalab_session.utils.photometry import measure_aperture
@@ -154,7 +152,7 @@ class LightCurveResult:
     light_curve_rows: list[LightCurveRow]
     diagnostics: list[str]
     diagnostics_by_fits_basename: dict[str, list[str]]
-    diagnostic_images_by_fits_basename: dict[str, str]
+    diagnostic_image_jpegs_by_fits_basename: dict[str, bytes]
 
 
 def generate_light_curve(
@@ -216,13 +214,12 @@ def generate_light_curve(
     candidate_stars = candidate_stars_from_catalog(catalog)
 
     target_measurements: dict[str, TargetMeasurement] = {}
-    previews: dict[str, FramePreview] = {}
     measurements_by_candidate: dict[str, dict[str, ComparisonMeasurement]] = {
         candidate.candidate_id: {} for candidate in candidate_stars
     }
     failed_candidate_ids: set[str] = set()
     for frame in frames:
-        target, frame_measurements, newly_failed, preview = _measure_frame_pixels(
+        target, frame_measurements, newly_failed = _measure_frame_pixels(
             frame=frame,
             candidate_stars=candidate_stars,
             skip_candidate_ids=failed_candidate_ids,
@@ -233,7 +230,6 @@ def generate_light_curve(
             annulus_outer_radius=annulus_outer_radius,
         )
         target_measurements[frame.fits_path] = target
-        previews[frame.fits_path] = preview
         failed_candidate_ids |= newly_failed
         for candidate_id in newly_failed:
             measurements_by_candidate.pop(candidate_id, None)
@@ -280,7 +276,7 @@ def generate_light_curve(
 
     frame_results: list[FrameResult] = []
     light_curve_rows: list[LightCurveRow] = []
-    diagnostic_images_by_fits_basename: dict[str, str] = {}
+    diagnostic_image_jpegs_by_fits_basename: dict[str, bytes] = {}
     for frame in frames:
         target = target_measurements[frame.fits_path]
         # Reuse the per-frame measurements captured during selection rather than re-measuring the
@@ -347,9 +343,8 @@ def generate_light_curve(
         )
         diagnostics.extend(frame_diagnostics)
         diagnostics_by_fits_basename[os.path.basename(frame.fits_path)].extend(frame_diagnostics)
-        diagnostic_images_by_fits_basename[os.path.basename(frame.fits_path)] = candidate_overlay_jpeg_base64(
+        diagnostic_image_jpegs_by_fits_basename[os.path.basename(frame.fits_path)] = _render_frame_overlay(
             frame=frame,
-            preview=previews[frame.fits_path],
             stars=selection.selected_stars,
             measurements=comparison_measurements,
             target_measurement=target,
@@ -392,7 +387,7 @@ def generate_light_curve(
         light_curve_rows=light_curve_rows,
         diagnostics=diagnostics,
         diagnostics_by_fits_basename=diagnostics_by_fits_basename,
-        diagnostic_images_by_fits_basename=diagnostic_images_by_fits_basename,
+        diagnostic_image_jpegs_by_fits_basename=diagnostic_image_jpegs_by_fits_basename,
     )
 
 
@@ -513,16 +508,16 @@ def _measure_frame_pixels(
     aperture_radius: float,
     annulus_inner_radius: float,
     annulus_outer_radius: float,
-) -> tuple[TargetMeasurement, dict[str, ComparisonMeasurement], set[str], FramePreview]:
+) -> tuple[TargetMeasurement, dict[str, ComparisonMeasurement], set[str]]:
     """
-        Runs all pixel-dependent work for one frame: the target measurement, a measurement of every
-        comparison candidate (minus skip_candidate_ids), and the downsampled diagnostic preview.
+        Runs all pixel-dependent work for one frame: the target measurement and a measurement of
+        every comparison candidate (minus skip_candidate_ids).
 
         The full-resolution image exists only inside this function, so it is released before the
         caller moves on to the next frame.
 
-        Returns the target measurement, this frame's candidate measurements by candidate_id, the
-        ids of candidates that failed to measure on this frame, and the preview.
+        Returns the target measurement, this frame's candidate measurements by candidate_id, and
+        the ids of candidates that failed to measure on this frame.
     """
     image = _load_frame_image(frame.fits_path)
     # Build the frame's WCS and pixel-space aperture radii once, then reuse them for the target and
@@ -551,8 +546,33 @@ def _measure_frame_pixels(
             )
         except LightCurveError:
             failed_candidate_ids.add(candidate.candidate_id)
-    preview = build_frame_preview(image)
-    return target_measurement, candidate_measurements, failed_candidate_ids, preview
+    return target_measurement, candidate_measurements, failed_candidate_ids
+
+
+def _render_frame_overlay(
+    *,
+    frame: FrameContext,
+    stars: Sequence[ComparisonStar],
+    measurements: Sequence[ComparisonMeasurement],
+    target_measurement: TargetMeasurement,
+    aperture_radius: float,
+) -> bytes:
+    """
+        Reloads one frame's pixels and renders its diagnostic overlay, cropped at full resolution
+        around the drawn circles before resampling.
+
+        The full-resolution image exists only inside this function, so overlay rendering keeps
+        peak memory flat no matter how many frames are submitted.
+    """
+    image = _load_frame_image(frame.fits_path)
+    return candidate_overlay_jpeg_bytes(
+        frame=frame,
+        image=image,
+        stars=stars,
+        measurements=measurements,
+        target_measurement=target_measurement,
+        aperture_radius=aperture_radius,
+    )
 
 
 def _cat_rows(data: Any) -> list[dict[str, Any]]:

@@ -1,10 +1,17 @@
 import math
+import warnings
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 import numpy as np
-from astropy.wcs import WCS
+from astropy.wcs import WCS, FITSFixedWarning
 from astropy.wcs.utils import proj_plane_pixel_scales
+
+# Archive headers store the observatory location as OBSGEO-X/Y/Z; wcslib normalizes them to
+# OBSGEO-L/B/H on every WCS parse and reports the change as a FITSFixedWarning. The fix is
+# purely informational and a WCS is built per frame all over the photometry pipeline, so
+# silence the category process-wide.
+warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
 
 def world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:

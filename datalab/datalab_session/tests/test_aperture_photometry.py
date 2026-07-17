@@ -4,7 +4,6 @@ import math
 import os
 import tempfile
 import unittest
-import base64
 from io import BytesIO
 from dataclasses import asdict
 from pathlib import Path
@@ -568,20 +567,22 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertNotIn("cand-blended", kept_ids)
         self.assertEqual(len(kept), 5)
 
-    def test_diagnostic_images_include_labeled_candidate_overlay_jpegs(self) -> None:
+    def test_diagnostic_images_include_candidate_overlay_jpegs(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
         result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
 
         self.assertEqual(
-            set(result.diagnostic_images_by_fits_basename),
+            set(result.diagnostic_image_jpegs_by_fits_basename),
             {"frame_1.fits", "frame_2.fits", "frame_3.fits"},
         )
-        image_data = base64.b64decode(result.diagnostic_images_by_fits_basename["frame_1.fits"])
+        from datalab.datalab_session.utils.photometry_diagnostics import OVERLAY_MAX_DIMENSION
+
+        image_data = result.diagnostic_image_jpegs_by_fits_basename["frame_1.fits"]
         image = Image.open(BytesIO(image_data))
         self.assertEqual(image.format, "JPEG")
-        self.assertEqual(image.size, (80, 80))
+        self.assertEqual(max(image.size), OVERLAY_MAX_DIMENSION)
         rgb = np.asarray(image.convert("RGB"))
         blue_overlay_pixels = np.count_nonzero(
             (rgb[:, :, 0] < 80) &
@@ -602,7 +603,7 @@ class TestAperturePhotometry(unittest.TestCase):
             (rgb[:, :, 1] < 170) &
             (rgb[:, :, 2] < 90)
         )[:, 0]
-        self.assertGreater(float(np.mean(orange_rows)), 40.0)
+        self.assertGreater(float(np.mean(orange_rows)), rgb.shape[0] * 0.5)
 
     def test_determinism(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
@@ -620,9 +621,10 @@ class TestAperturePhotometry(unittest.TestCase):
         )
 
     def test_pixel_data_streams_one_frame_at_a_time(self) -> None:
-        # The pipeline exists to keep memory flat in the input count: each frame's pixels must be
-        # loaded exactly once, at most one frame's pixels may be alive at any moment, and nothing
-        # in the result may retain pixel arrays after the run.
+        # The pipeline exists to keep memory flat in the input count: each frame's pixels are
+        # loaded once for measurement and once for overlay rendering, at most one frame's pixels
+        # may be alive at any moment, and nothing in the result may retain pixel arrays after
+        # the run.
         import gc
         import weakref
         from unittest import mock
@@ -651,34 +653,14 @@ class TestAperturePhotometry(unittest.TestCase):
 
         gc.collect()
         self.assertEqual(len(result.light_curve_rows), 3)
-        self.assertEqual(sorted(loaded_paths), sorted(fits_paths))
+        self.assertEqual(sorted(loaded_paths), sorted(fits_paths * 2))
         self.assertEqual(max_concurrent_images, 1)
         self.assertTrue(all(ref() is None for ref in loaded_refs))
 
-    def test_frame_preview_downsamples_large_frames(self) -> None:
-        from datalab.datalab_session.utils.photometry_diagnostics import build_frame_preview
-
-        image = np.full((2400, 3200), 100.0, dtype=np.float32)
-
-        preview = build_frame_preview(image, max_dimension=1500)
-
-        self.assertEqual(preview.gray.dtype, np.uint8)
-        self.assertEqual(preview.gray.shape, (800, 1066))
-        self.assertLessEqual(max(preview.gray.shape), 1500)
-        self.assertAlmostEqual(preview.scale, 1.0 / 3.0)
-
-    def test_frame_preview_keeps_small_frames_full_resolution(self) -> None:
-        from datalab.datalab_session.utils.photometry_diagnostics import build_frame_preview
-
-        preview = build_frame_preview(np.full((80, 100), 100.0, dtype=np.float32))
-
-        self.assertEqual(preview.gray.shape, (80, 100))
-        self.assertEqual(preview.scale, 1.0)
-
-    def test_overlay_positions_scale_to_downsampled_preview(self) -> None:
+    def test_overlay_crops_full_resolution_before_resampling(self) -> None:
         from datalab.datalab_session.utils.photometry_diagnostics import (
-            build_frame_preview,
-            candidate_overlay_jpeg_base64,
+            OVERLAY_MAX_DIMENSION,
+            candidate_overlay_jpeg_bytes,
         )
 
         height, width = 2400, 3200
@@ -697,21 +679,25 @@ class TestAperturePhotometry(unittest.TestCase):
             "CD2_2": TEST_DEG_PER_PIXEL,
         }
         frame = SimpleNamespace(fits_path="big.fits", header=header, width=width, height=height)
-        preview = build_frame_preview(np.full((height, width), 100.0, dtype=np.float32))
-        self.assertLess(preview.scale, 1.0)
+        image_data = np.full((height, width), 100.0, dtype=np.float32)
+        # Bright marker centered on the target's full-resolution position: the crop happens at
+        # full resolution around the target circle, and the circle must surround the marker.
+        image_data[297:304, 597:604] = 5000.0
         target_full_res = SimpleNamespace(x=600.0, y=300.0)
 
-        encoded = candidate_overlay_jpeg_base64(
+        jpeg_bytes = candidate_overlay_jpeg_bytes(
             frame=frame,
-            preview=preview,
+            image=image_data,
             stars=[],
             measurements=[],
             target_measurement=target_full_res,
             aperture_radius=4.0,
         )
 
-        rgb = np.asarray(Image.open(BytesIO(base64.b64decode(encoded))).convert("RGB"))
-        self.assertEqual(rgb.shape[:2], preview.gray.shape)
+        rgb = np.asarray(Image.open(BytesIO(jpeg_bytes)).convert("RGB"))
+        # The tight square crop around the single target circle is resampled up to the output
+        # size; cropping after the whole-frame downsample would have produced a 750x1000 image.
+        self.assertEqual(rgb.shape[:2], (OVERLAY_MAX_DIMENSION, OVERLAY_MAX_DIMENSION))
         orange = np.argwhere(
             (rgb[:, :, 0] > 180) &
             (rgb[:, :, 1] > 80) &
@@ -719,10 +705,10 @@ class TestAperturePhotometry(unittest.TestCase):
             (rgb[:, :, 2] < 90)
         )
         self.assertGreater(len(orange), 0)
-        expected_x = 600.0 * preview.scale
-        expected_y = (preview.gray.shape[0] - 1) - 300.0 * preview.scale
-        self.assertAlmostEqual(float(np.mean(orange[:, 1])), expected_x, delta=3.0)
-        self.assertAlmostEqual(float(np.mean(orange[:, 0])), expected_y, delta=3.0)
+        marker = np.argwhere(np.all(rgb > 200, axis=2))
+        self.assertGreater(len(marker), 0)
+        self.assertAlmostEqual(float(np.mean(orange[:, 1])), float(np.mean(marker[:, 1])), delta=5.0)
+        self.assertAlmostEqual(float(np.mean(orange[:, 0])), float(np.mean(marker[:, 0])), delta=5.0)
 
     def test_default_fits_dependencies_read_sci_header_and_cat_rows(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set(frame_count=1)

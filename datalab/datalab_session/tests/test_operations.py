@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import shutil
+import tempfile
 from types import SimpleNamespace
 from unittest import mock
 import math
@@ -288,6 +289,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             'annulus_outer_radius': 19.10,
         }
 
+    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve')
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache')
     @mock.patch.object(AperturePhotometry, 'set_status')
@@ -300,8 +302,10 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         mock_set_status,
         mock_file_cache,
         mock_generate_light_curve,
+        mock_save_files_to_s3,
     ):
         mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
+        mock_save_files_to_s3.return_value = {'diagnostic_url': 'https://bucket/fits_1-diagnostic.jpg'}
         mock_generate_light_curve.return_value = SimpleNamespace(
             light_curve_rows=[
                 LightCurveRow(
@@ -324,11 +328,13 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             diagnostics_by_fits_basename={
                 'fits_1.fits': ['loaded 1 frame', 'selected 5 comparison stars'],
             },
-            diagnostic_images_by_fits_basename={},
+            diagnostic_image_jpegs_by_fits_basename={'fits_1.fits': b'jpeg-bytes'},
         )
         input_data = self.valid_input_data()
 
         aperture_photometry = AperturePhotometry(input_data)
+        aperture_photometry.temp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, aperture_photometry.temp, ignore_errors=True)
         aperture_photometry.operate(None)
 
         mock_file_cache.return_value.get_fits.assert_called_once_with('fits_1', 'local', None)
@@ -355,6 +361,13 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         self.assertTrue(math.isnan(
             output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude_uncertainty']
         ))
+        mock_save_files_to_s3.assert_called_once_with(
+            aperture_photometry.cache_key, Format.IMAGE, mock.ANY, index=1
+        )
+        self.assertEqual(
+            output['output_data'][0]['diagnostic_images'],
+            {'fits_1.fits': 'https://bucket/fits_1-diagnostic.jpg'},
+        )
         mock_set_status.assert_called_once_with('COMPLETED')
 
     def test_operate_requires_aperture_radius(self):
@@ -393,7 +406,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
                 selected_comparison_stars=[],
                 diagnostics=[],
                 diagnostics_by_fits_basename={},
-                diagnostic_images_by_fits_basename={},
+                diagnostic_image_jpegs_by_fits_basename={},
             )
 
             AperturePhotometry(input_data).operate(None)

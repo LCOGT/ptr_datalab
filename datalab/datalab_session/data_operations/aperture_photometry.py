@@ -6,7 +6,9 @@ from django.contrib.auth.models import User
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.filecache import FileCache
+from datalab.datalab_session.utils.file_utils import temp_file_manager
 from datalab.datalab_session.utils.format import Format
+from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 from datalab.datalab_session.utils.aperture_light_curve import (
     DEFAULT_ANNULUS_INNER_RADIUS,
     DEFAULT_ANNULUS_OUTER_RADIUS,
@@ -152,6 +154,7 @@ class AperturePhotometry(BaseDataOperation):
             raise ClientAlertException(f'Operation {self.name()} received invalid input.') from exc
 
         self.set_operation_progress(AperturePhotometry.PROGRESS_STEPS['APERTURE_PHOTOMETRY_PERCENTAGE_COMPLETION'])
+        diagnostic_image_urls = self._save_diagnostic_images_to_s3(result.diagnostic_image_jpegs_by_fits_basename)
         filter_value = input_files[0].get('filter', input_files[0].get('primary_optical_element', 'None'))
         output = {
             'output_data': [
@@ -166,7 +169,7 @@ class AperturePhotometry(BaseDataOperation):
                         asdict(star) for star in result.selected_comparison_stars
                     ],
                     'diagnostics': result.diagnostics_by_fits_basename,
-                    'diagnostic_images': result.diagnostic_images_by_fits_basename,
+                    'diagnostic_images': diagnostic_image_urls,
                 }
             ]
         }
@@ -177,5 +180,20 @@ class AperturePhotometry(BaseDataOperation):
             "Aperture Photometry output: "
             f"filter={filter_value}, light_curve_rows={len(result.light_curve_rows)}, "
             f"selected_comparison_stars={len(result.selected_comparison_stars)}, "
-            f"diagnostic_images={len(result.diagnostic_images_by_fits_basename)}"
+            f"diagnostic_images={len(diagnostic_image_urls)}"
         )
+
+    def _save_diagnostic_images_to_s3(self, diagnostic_image_jpegs_by_fits_basename: dict) -> dict:
+        """
+            Uploads each frame's diagnostic overlay JPEG to the operation bucket.
+
+            Returns a dict mapping FITS basename to the presigned bucket url for its overlay.
+        """
+        diagnostic_image_urls = {}
+        for index, (fits_basename, jpeg_bytes) in enumerate(diagnostic_image_jpegs_by_fits_basename.items(), start=1):
+            with temp_file_manager(f'{self.cache_key}-{index}-diagnostic.jpg', dir=self.temp) as jpeg_path:
+                with open(jpeg_path, 'wb') as jpeg_file:
+                    jpeg_file.write(jpeg_bytes)
+                s3_output = save_files_to_s3(self.cache_key, Format.IMAGE, {'diagnostic_jpg_path': jpeg_path}, index=index)
+            diagnostic_image_urls[fits_basename] = s3_output['diagnostic_url']
+        return diagnostic_image_urls
