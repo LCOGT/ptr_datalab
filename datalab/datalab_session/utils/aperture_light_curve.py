@@ -3,7 +3,7 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 from astropy.io import fits
@@ -72,6 +72,12 @@ DEFAULT_MAX_COMPARISONS = 10
 # so requiring presence in all frames discards good stars and collapses the candidate pool. Selected
 # stars are still measured via WCS on all frames, so the ensemble stays consistent frame-to-frame.
 COMPARISON_FRAME_COVERAGE_FRACTION = 0.8
+# Pipeline phases reported to progress_callback, in execution order.
+PROGRESS_PHASES = ("validate", "catalog", "measure", "select", "render")
+
+# Receives (phase, fraction): phase is one of PROGRESS_PHASES and fraction is the completed
+# share of that phase, in [0, 1].
+ProgressCallback = Callable[[str, float], None]
 
 
 class LightCurveError(ValueError):
@@ -162,6 +168,7 @@ def generate_light_curve(
     annulus_outer_radius: float,
     min_comparisons: int = 5,
     max_comparisons: int = 10,
+    progress_callback: ProgressCallback | None = None,
 ) -> LightCurveResult:
     """
         Generates a calibrated target light curve from local input FITS files, using comparison
@@ -172,6 +179,9 @@ def generate_light_curve(
         every candidate, selects a comparison ensemble, and produces calibrated light curve rows
         with diagnostics for the frontend. At most one frame's full-resolution pixels are in
         memory at any point, so memory does not grow with the number of input frames.
+
+        progress_callback, if given, receives (phase, completed fraction of that phase) with
+        phases from PROGRESS_PHASES; the frame-iterating phases report once per frame.
     """
     log.info(
         "Aperture Photometry pipeline starting: "
@@ -190,8 +200,15 @@ def generate_light_curve(
         max_comparisons=max_comparisons,
     )
 
+    def report_progress(phase: str, fraction: float) -> None:
+        if progress_callback is not None:
+            progress_callback(phase, min(max(fraction, 0.0), 1.0))
+
     diagnostics: list[str] = []
-    frames = _validated_frame_contexts(fits_paths)
+    frames = _validated_frame_contexts(
+        fits_paths,
+        on_frame=lambda index, total: report_progress("validate", index / total),
+    )
 
     diagnostics_by_fits_basename: dict[str, list[str]] = {
         os.path.basename(frame.fits_path): []
@@ -204,6 +221,7 @@ def generate_light_curve(
         target_dec_deg=target_dec_deg,
         aperture_radius=aperture_radius,
         annulus_outer_radius=annulus_outer_radius,
+        on_frame=lambda index, total: report_progress("catalog", index / total),
     )
     log.info(
         "Aperture Photometry comparison catalog built: "
@@ -216,7 +234,7 @@ def generate_light_curve(
         candidate.candidate_id: {} for candidate in candidate_stars
     }
     failed_candidate_ids: set[str] = set()
-    for frame in frames:
+    for frame_index, frame in enumerate(frames, start=1):
         target, frame_measurements, newly_failed = _measure_frame_pixels(
             frame=frame,
             candidate_stars=candidate_stars,
@@ -239,6 +257,7 @@ def generate_light_curve(
             f"net_counts={target.net_source_counts:.6f}, uncertainty={target.source_uncertainty:.6f}, "
             f"background={target.mean_background_per_pixel:.6f}, peak={target.peak_pixel_value:.6f}"
         )
+        report_progress("measure", frame_index / len(frames))
 
     target_mag_proxy = _target_magnitude_proxy(target_measurements.values())
     log.info(f"Aperture Photometry target magnitude proxy: {target_mag_proxy:.6f}")
@@ -257,6 +276,7 @@ def generate_light_curve(
         f"candidate_ids={[star.candidate_id for star in selection.selected_stars]}, "
         f"selection_diagnostics={len(selection.diagnostics)}"
     )
+    report_progress("select", 1.0)
 
     reference_magnitudes = np.asarray(
         [star.reference_magnitude for star in selection.selected_stars],
@@ -275,7 +295,7 @@ def generate_light_curve(
     frame_results: list[FrameResult] = []
     light_curve_rows: list[LightCurveRow] = []
     diagnostic_image_jpegs_by_fits_basename: dict[str, bytes] = {}
-    for frame in frames:
+    for frame_index, frame in enumerate(frames, start=1):
         target = target_measurements[frame.fits_path]
         # Reuse the per-frame measurements captured during selection rather than re-measuring the
         # same apertures on the same frames.
@@ -373,6 +393,7 @@ def generate_light_curve(
                 target_calibrated_apparent_magnitude_uncertainty=calibrated_mag_sigma,
             )
         )
+        report_progress("render", frame_index / len(frames))
 
     log.info(
         "Aperture Photometry pipeline completed: "
@@ -410,16 +431,20 @@ def _validate_inputs(
         raise LightCurveError("min_comparisons and max_comparisons must be positive and min_comparisons <= max_comparisons.")
 
 
-def _validated_frame_contexts(fits_paths: Sequence[str]) -> list[FrameContext]:
+def _validated_frame_contexts(
+    fits_paths: Sequence[str],
+    on_frame: Callable[[int, int], None] | None = None,
+) -> list[FrameContext]:
     """
         Builds validated frame metadata for each input FITS path.
 
         Reads only the SCI header and the CAT table -- never SCI pixel data -- so validation memory
         and time stay flat regardless of frame count or sensor size. Frames that fail validation
-        are ignored with a warning.
+        are ignored with a warning. on_frame, if given, is called as on_frame(index, total) after
+        each input path is processed, including rejected ones.
     """
     frames: list[FrameContext] = []
-    for fits_path in fits_paths:
+    for path_index, fits_path in enumerate(fits_paths, start=1):
         log.info(f"Aperture Photometry validating FITS frame: {fits_path}")
         try:
             with fits.open(fits_path) as hdul:
@@ -470,6 +495,8 @@ def _validated_frame_contexts(fits_paths: Sequence[str]) -> list[FrameContext]:
                 "Aperture Photometry ignoring input frame after validation error: "
                 f"frame={fits_path}, error={exc}"
             )
+        if on_frame is not None:
+            on_frame(path_index, len(fits_paths))
 
     if not frames:
         raise LightCurveError("Aperture photometry requires at least 1 valid input file.")
@@ -735,12 +762,14 @@ def _build_field_star_catalog(
     target_dec_deg: float,
     aperture_radius: float,
     annulus_outer_radius: float,
+    on_frame: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     """
         Builds comp star candidates from the source catalogs across valid frames.
 
         Returns candidates detected in at least COMPARISON_FRAME_COVERAGE_FRACTION of the frames that
-        are not too close to the target or the edge of the image.
+        are not too close to the target or the edge of the image. on_frame, if given, is called as
+        on_frame(index, total) after each frame's rows are cross-matched.
     """
     clusters: list[dict[str, Any]] = []
     target_pixels = {
@@ -748,7 +777,7 @@ def _build_field_star_catalog(
         for frame in frames
     }
 
-    for frame in frames:
+    for frame_index, frame in enumerate(frames, start=1):
         rows: list[dict[str, Any]] = []
         for raw_row in frame.second_hdu_rows:
             try:
@@ -764,6 +793,8 @@ def _build_field_star_catalog(
                 "rejected_too_close_to_target=0, "
                 f"rejected_too_close_to_edge=0, clusters_so_far={len(clusters)}"
             )
+            if on_frame is not None:
+                on_frame(frame_index, len(frames))
             continue
 
         ra_values = np.asarray([row["ra_deg"] for row in rows], dtype=float)
@@ -837,6 +868,8 @@ def _build_field_star_catalog(
             f"rejected_too_close_to_target={rejected_for_target}, "
             f"rejected_too_close_to_edge={rejected_for_edge}, clusters_so_far={len(clusters)}"
         )
+        if on_frame is not None:
+            on_frame(frame_index, len(frames))
 
     catalog: list[dict[str, Any]] = []
     rejected_for_coverage = 0

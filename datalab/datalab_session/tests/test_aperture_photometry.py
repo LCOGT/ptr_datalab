@@ -605,6 +605,29 @@ class TestAperturePhotometry(unittest.TestCase):
         )[:, 0]
         self.assertGreater(float(np.mean(orange_rows)), rgb.shape[0] * 0.5)
 
+    def test_progress_callback_reports_monotonic_per_frame_progress(self) -> None:
+        from datalab.datalab_session.utils.aperture_light_curve import PROGRESS_PHASES
+
+        frames, (target_ra, target_dec) = build_frame_set()
+        fits_paths = self.write_frames(frames)
+        reported: list[tuple[str, float]] = []
+
+        generate_light_curve(
+            fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0,
+            progress_callback=lambda phase, fraction: reported.append((phase, fraction)),
+        )
+
+        phases = [phase for phase, _ in reported]
+        # Phases arrive in pipeline order and every phase reports.
+        self.assertEqual(sorted(set(phases), key=PROGRESS_PHASES.index), list(PROGRESS_PHASES))
+        self.assertEqual(phases, sorted(phases, key=PROGRESS_PHASES.index))
+        # The frame-iterating phases report an increasing fraction once per frame, ending at 1.0.
+        for phase in ("validate", "catalog", "measure", "render"):
+            fractions = [fraction for reported_phase, fraction in reported if reported_phase == phase]
+            self.assertEqual(len(fractions), len(fits_paths))
+            self.assertEqual(fractions, sorted(fractions))
+            self.assertAlmostEqual(fractions[-1], 1.0)
+
     def test_determinism(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
