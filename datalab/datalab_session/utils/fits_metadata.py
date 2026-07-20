@@ -1,9 +1,17 @@
 import math
+import warnings
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 import numpy as np
-from astropy.wcs import WCS
+from astropy.wcs import WCS, FITSFixedWarning
 from astropy.wcs.utils import proj_plane_pixel_scales
+
+# Archive headers store the observatory location as OBSGEO-X/Y/Z; wcslib normalizes them to
+# OBSGEO-L/B/H on every WCS parse and reports the change as a FITSFixedWarning. The fix is
+# purely informational and a WCS is built per frame all over the photometry pipeline, so
+# silence the category process-wide.
+warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
 
 def world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:
@@ -64,3 +72,50 @@ def arcsec_to_pixels(header: Mapping[str, Any], angular_radius_arcsec: float) ->
         Convert an angular aperture radius to pixels for one frame, using the frame's plate scale.
     """
     return float(angular_radius_arcsec) / pixel_scale_arcsec(header)
+
+
+@dataclass(frozen=True)
+class FrameGeometry:
+    """
+        Per-frame WCS, pixel-space aperture geometry, and detector noise parameters, built once
+        and reused for the target and every comparison candidate on the frame.
+
+        Constructing a WCS from a header costs on the order of ~10 ms; arcsec_to_pixels and
+        world_to_pixel each built one per call, so measuring a frame's candidates rebuilt it
+        thousands of times. The plate scale and WCS are frame constants, so they are computed once
+        here instead of per candidate.
+    """
+    wcs: WCS
+    aperture_radius_px: float
+    annulus_inner_radius_px: float
+    annulus_outer_radius_px: float
+    gain: float
+    read_noise: float
+
+    def world_to_pixel(self, ra_deg: float, dec_deg: float) -> tuple[float, float]:
+        """Pixel coordinates of a sky position using the cached WCS (no header re-parse)."""
+        x, y = self.wcs.world_to_pixel_values(float(ra_deg), float(dec_deg))
+        return float(x), float(y)
+
+
+def frame_geometry(
+    header: Mapping[str, Any],
+    aperture_radius_arcsec: float,
+    annulus_inner_radius_arcsec: float,
+    annulus_outer_radius_arcsec: float,
+) -> FrameGeometry:
+    """
+        Builds the reusable per-frame geometry: one WCS, the three aperture radii converted to
+        pixels via the frame's plate scale, and the detector gain and read noise. Matches
+        arcsec_to_pixels/world_to_pixel/frame_gain/frame_read_noise exactly, just without
+        re-deriving any of them for every candidate.
+    """
+    pixel_scale = pixel_scale_arcsec(header)
+    return FrameGeometry(
+        wcs=WCS(dict(header)),
+        aperture_radius_px=float(aperture_radius_arcsec) / pixel_scale,
+        annulus_inner_radius_px=float(annulus_inner_radius_arcsec) / pixel_scale,
+        annulus_outer_radius_px=float(annulus_outer_radius_arcsec) / pixel_scale,
+        gain=frame_gain(header),
+        read_noise=frame_read_noise(header),
+    )

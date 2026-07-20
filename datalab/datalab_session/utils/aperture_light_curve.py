@@ -3,22 +3,25 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
+from astropy.io import fits
 from astropy.wcs import WCS
 from dateutil.parser import ParserError, parse as parse_date
 
 from datalab.datalab_session.utils.comparison_stars import (
     ComparisonMeasurement,
     ComparisonStar,
+    candidate_stars_from_catalog,
+    measure_candidate_on_frame,
     select_comparison_stars,
 )
 from datalab.datalab_session.utils.centroiding import calculate_background_model, centroid
 from datalab.datalab_session.utils.fits_metadata import (
+    FrameGeometry,
     arcsec_to_pixels,
-    frame_gain,
-    frame_read_noise,
+    frame_geometry,
     optional_float,
     world_to_pixel,
 )
@@ -29,7 +32,7 @@ from datalab.datalab_session.utils.geometry import (
     minimum_angular_neighbor_distance_arcsec,
 )
 from datalab.datalab_session.utils.photometry_diagnostics import (
-    candidate_overlay_jpeg_base64,
+    candidate_overlay_jpeg_bytes,
     comparison_star_validation_diagnostics,
 )
 from datalab.datalab_session.utils.photometry import measure_aperture
@@ -41,6 +44,16 @@ SOURCE_CATALOG_RA_KEY = "ra"
 SOURCE_CATALOG_DEC_KEY = "dec"
 SOURCE_CATALOG_MAG_KEY = "mag"
 SOURCE_CATALOG_FLUX_KEY = "flux"
+# The only CAT columns the pipeline reads. CAT tables carry many more columns, and whole rows kept
+# per frame for the full run are a measurable share of operation memory on dense fields.
+SOURCE_CATALOG_COLUMNS = (
+    "id",
+    "name",
+    SOURCE_CATALOG_RA_KEY,
+    SOURCE_CATALOG_DEC_KEY,
+    SOURCE_CATALOG_MAG_KEY,
+    SOURCE_CATALOG_FLUX_KEY,
+)
 EDGE_MARGIN_PX = 2.0
 TARGET_PROXIMITY_FACTOR = 2.0
 # A target recenter is accepted only if the centroid moves less than this many pixels from the
@@ -59,6 +72,12 @@ DEFAULT_MAX_COMPARISONS = 10
 # so requiring presence in all frames discards good stars and collapses the candidate pool. Selected
 # stars are still measured via WCS on all frames, so the ensemble stays consistent frame-to-frame.
 COMPARISON_FRAME_COVERAGE_FRACTION = 0.8
+# Pipeline phases reported to progress_callback, in execution order.
+PROGRESS_PHASES = ("validate", "catalog", "measure", "select", "render")
+
+# Receives (phase, fraction): phase is one of PROGRESS_PHASES and fraction is the completed
+# share of that phase, in [0, 1].
+ProgressCallback = Callable[[str, float], None]
 
 
 class LightCurveError(ValueError):
@@ -68,12 +87,15 @@ class LightCurveError(ValueError):
 @dataclass(frozen=True)
 class FrameContext:
     """
-        Validates FITS frame data needed by the aperture photometry pipeline.
+        Validated FITS frame metadata needed by the aperture photometry pipeline.
+
+        Deliberately holds no pixel data: full-resolution images are streamed through the pixel
+        pass one frame at a time (see _measure_frame_pixels), so peak memory stays flat no matter
+        how many frames are submitted.
     """
     fits_path: str
     date_obs: datetime
     header: Mapping[str, Any]
-    image: np.ndarray
     second_hdu_rows: tuple[Mapping[str, Any], ...]
     width: int
     height: int
@@ -134,11 +156,11 @@ class LightCurveResult:
     light_curve_rows: list[LightCurveRow]
     diagnostics: list[str]
     diagnostics_by_fits_basename: dict[str, list[str]]
-    diagnostic_images_by_fits_basename: dict[str, str]
+    diagnostic_image_jpegs_by_fits_basename: dict[str, bytes]
 
 
 def generate_light_curve(
-    input_handlers: list[Any],
+    fits_paths: list[str],
     target_ra_deg: float,
     target_dec_deg: float,
     aperture_radius: float,
@@ -146,23 +168,31 @@ def generate_light_curve(
     annulus_outer_radius: float,
     min_comparisons: int = 5,
     max_comparisons: int = 10,
+    progress_callback: ProgressCallback | None = None,
 ) -> LightCurveResult:
     """
-        Generates a calibrated target light curve from input FITS files, using comparison stars from the source catalog.
+        Generates a calibrated target light curve from local input FITS files, using comparison
+        stars from the source catalog.
 
-        Validates frames, measures the target, builds a comp star catalog,
-        selects a comparison ensemble, and produces calibrated light curve rows with diagnostics for the frontend.
+        Validates frame metadata and builds the comparison-star candidate catalog from headers and
+        CAT tables alone, then streams pixel data one frame at a time to measure the target and
+        every candidate, selects a comparison ensemble, and produces calibrated light curve rows
+        with diagnostics for the frontend. At most one frame's full-resolution pixels are in
+        memory at any point, so memory does not grow with the number of input frames.
+
+        progress_callback, if given, receives (phase, completed fraction of that phase) with
+        phases from PROGRESS_PHASES; the frame-iterating phases report once per frame.
     """
     log.info(
         "Aperture Photometry pipeline starting: "
-        f"fits_count={len(input_handlers)}, target_ra={target_ra_deg:.8f}, target_dec={target_dec_deg:.8f}, "
+        f"fits_count={len(fits_paths)}, target_ra={target_ra_deg:.8f}, target_dec={target_dec_deg:.8f}, "
         f"aperture_radius={aperture_radius:.3f}, "
         f"annulus_inner_radius={annulus_inner_radius:.3f}, "
         f"annulus_outer_radius={annulus_outer_radius:.3f}, "
         f"min_comparisons={min_comparisons}, max_comparisons={max_comparisons}"
     )
     _validate_inputs(
-        input_handlers=input_handlers,
+        fits_paths=fits_paths,
         aperture_radius=aperture_radius,
         annulus_inner_radius=annulus_inner_radius,
         annulus_outer_radius=annulus_outer_radius,
@@ -170,32 +200,20 @@ def generate_light_curve(
         max_comparisons=max_comparisons,
     )
 
+    def report_progress(phase: str, fraction: float) -> None:
+        if progress_callback is not None:
+            progress_callback(phase, min(max(fraction, 0.0), 1.0))
+
     diagnostics: list[str] = []
-    frames = _validated_frame_contexts(input_handlers)
+    frames = _validated_frame_contexts(
+        fits_paths,
+        on_frame=lambda index, total: report_progress("validate", index / total),
+    )
 
     diagnostics_by_fits_basename: dict[str, list[str]] = {
         os.path.basename(frame.fits_path): []
         for frame in frames
     }
-    target_measurements = {
-        frame.fits_path: _measure_target(
-            frame=frame,
-            target_ra_deg=target_ra_deg,
-            target_dec_deg=target_dec_deg,
-            aperture_radius=aperture_radius,
-            annulus_inner_radius=annulus_inner_radius,
-            annulus_outer_radius=annulus_outer_radius,
-        )
-        for frame in frames
-    }
-    for frame in frames:
-        target = target_measurements[frame.fits_path]
-        log.info(
-            "Aperture Photometry target measurement: "
-            f"frame={frame.fits_path}, centroid=({target.x:.3f}, {target.y:.3f}), "
-            f"net_counts={target.net_source_counts:.6f}, uncertainty={target.source_uncertainty:.6f}, "
-            f"background={target.mean_background_per_pixel:.6f}, peak={target.peak_pixel_value:.6f}"
-        )
 
     catalog = _build_field_star_catalog(
         frames=frames,
@@ -203,20 +221,51 @@ def generate_light_curve(
         target_dec_deg=target_dec_deg,
         aperture_radius=aperture_radius,
         annulus_outer_radius=annulus_outer_radius,
+        on_frame=lambda index, total: report_progress("catalog", index / total),
     )
     log.info(
         "Aperture Photometry comparison catalog built: "
         f"valid_candidates={len(catalog)}"
     )
+    candidate_stars = candidate_stars_from_catalog(catalog)
+
+    target_measurements: dict[str, TargetMeasurement] = {}
+    measurements_by_candidate: dict[str, dict[str, ComparisonMeasurement]] = {
+        candidate.candidate_id: {} for candidate in candidate_stars
+    }
+    failed_candidate_ids: set[str] = set()
+    for frame_index, frame in enumerate(frames, start=1):
+        target, frame_measurements, newly_failed = _measure_frame_pixels(
+            frame=frame,
+            candidate_stars=candidate_stars,
+            skip_candidate_ids=failed_candidate_ids,
+            target_ra_deg=target_ra_deg,
+            target_dec_deg=target_dec_deg,
+            aperture_radius=aperture_radius,
+            annulus_inner_radius=annulus_inner_radius,
+            annulus_outer_radius=annulus_outer_radius,
+        )
+        target_measurements[frame.fits_path] = target
+        failed_candidate_ids |= newly_failed
+        for candidate_id in newly_failed:
+            measurements_by_candidate.pop(candidate_id, None)
+        for candidate_id, measurement in frame_measurements.items():
+            measurements_by_candidate[candidate_id][frame.fits_path] = measurement
+        log.info(
+            "Aperture Photometry target measurement: "
+            f"frame={frame.fits_path}, centroid=({target.x:.3f}, {target.y:.3f}), "
+            f"net_counts={target.net_source_counts:.6f}, uncertainty={target.source_uncertainty:.6f}, "
+            f"background={target.mean_background_per_pixel:.6f}, peak={target.peak_pixel_value:.6f}"
+        )
+        report_progress("measure", frame_index / len(frames))
+
     target_mag_proxy = _target_magnitude_proxy(target_measurements.values())
     log.info(f"Aperture Photometry target magnitude proxy: {target_mag_proxy:.6f}")
     selection = select_comparison_stars(
         frames=frames,
-        catalog=catalog,
+        candidates=candidate_stars,
+        measurements_by_candidate=measurements_by_candidate,
         target_mag_proxy=target_mag_proxy,
-        aperture_radius=aperture_radius,
-        annulus_inner_radius=annulus_inner_radius,
-        annulus_outer_radius=annulus_outer_radius,
         min_comparisons=min_comparisons,
         max_comparisons=max_comparisons,
         error_class=LightCurveError,
@@ -227,6 +276,7 @@ def generate_light_curve(
         f"candidate_ids={[star.candidate_id for star in selection.selected_stars]}, "
         f"selection_diagnostics={len(selection.diagnostics)}"
     )
+    report_progress("select", 1.0)
 
     reference_magnitudes = np.asarray(
         [star.reference_magnitude for star in selection.selected_stars],
@@ -244,8 +294,8 @@ def generate_light_curve(
 
     frame_results: list[FrameResult] = []
     light_curve_rows: list[LightCurveRow] = []
-    diagnostic_images_by_fits_basename: dict[str, str] = {}
-    for frame in frames:
+    diagnostic_image_jpegs_by_fits_basename: dict[str, bytes] = {}
+    for frame_index, frame in enumerate(frames, start=1):
         target = target_measurements[frame.fits_path]
         # Reuse the per-frame measurements captured during selection rather than re-measuring the
         # same apertures on the same frames.
@@ -311,7 +361,7 @@ def generate_light_curve(
         )
         diagnostics.extend(frame_diagnostics)
         diagnostics_by_fits_basename[os.path.basename(frame.fits_path)].extend(frame_diagnostics)
-        diagnostic_images_by_fits_basename[os.path.basename(frame.fits_path)] = candidate_overlay_jpeg_base64(
+        diagnostic_image_jpegs_by_fits_basename[os.path.basename(frame.fits_path)] = _render_frame_overlay(
             frame=frame,
             stars=selection.selected_stars,
             measurements=comparison_measurements,
@@ -343,6 +393,7 @@ def generate_light_curve(
                 target_calibrated_apparent_magnitude_uncertainty=calibrated_mag_sigma,
             )
         )
+        report_progress("render", frame_index / len(frames))
 
     log.info(
         "Aperture Photometry pipeline completed: "
@@ -355,21 +406,21 @@ def generate_light_curve(
         light_curve_rows=light_curve_rows,
         diagnostics=diagnostics,
         diagnostics_by_fits_basename=diagnostics_by_fits_basename,
-        diagnostic_images_by_fits_basename=diagnostic_images_by_fits_basename,
+        diagnostic_image_jpegs_by_fits_basename=diagnostic_image_jpegs_by_fits_basename,
     )
 
 
 def _validate_inputs(
     *,
-    input_handlers: Sequence[Any],
+    fits_paths: Sequence[str],
     aperture_radius: float,
     annulus_inner_radius: float,
     annulus_outer_radius: float,
     min_comparisons: int,
     max_comparisons: int,
 ) -> None:
-    if not input_handlers:
-        raise LightCurveError("input_handlers must be a non-empty list.")
+    if not fits_paths:
+        raise LightCurveError("fits_paths must be a non-empty list.")
     if aperture_radius <= 0:
         raise LightCurveError("aperture_radius must be > 0.")
     if annulus_inner_radius <= aperture_radius:
@@ -380,17 +431,31 @@ def _validate_inputs(
         raise LightCurveError("min_comparisons and max_comparisons must be positive and min_comparisons <= max_comparisons.")
 
 
-def _validated_frame_contexts(input_handlers: Sequence[Any]) -> list[FrameContext]:
+def _validated_frame_contexts(
+    fits_paths: Sequence[str],
+    on_frame: Callable[[int, int], None] | None = None,
+) -> list[FrameContext]:
+    """
+        Builds validated frame metadata for each input FITS path.
+
+        Reads only the SCI header and the CAT table -- never SCI pixel data -- so validation memory
+        and time stay flat regardless of frame count or sensor size. Frames that fail validation
+        are ignored with a warning. on_frame, if given, is called as on_frame(index, total) after
+        each input path is processed, including rejected ones.
+    """
     frames: list[FrameContext] = []
-    for input_handler in input_handlers:
-        fits_path = input_handler.fits_file
+    for path_index, fits_path in enumerate(fits_paths, start=1):
         log.info(f"Aperture Photometry validating FITS frame: {fits_path}")
         try:
-            image = np.asarray(input_handler.sci_data, dtype=float)
-            if image.ndim != 2:
-                raise LightCurveError(f"Primary image for {fits_path} is not a 2D array.")
+            with fits.open(fits_path) as hdul:
+                header = dict(hdul["SCI"].header)
+                second_hdu_rows = tuple(_cat_rows(hdul["CAT"].data))
 
-            header = dict(input_handler.sci_hdu.header)
+            if int(header.get("NAXIS", 0)) != 2:
+                raise LightCurveError(f"Primary image for {fits_path} is not a 2D array.")
+            width = int(header["NAXIS1"])
+            height = int(header["NAXIS2"])
+
             date_obs_value = header.get("DATE-OBS")
             if not isinstance(date_obs_value, str) or not date_obs_value.strip():
                 raise LightCurveError(f"Missing DATE-OBS in {fits_path}.")
@@ -400,26 +465,24 @@ def _validated_frame_contexts(input_handlers: Sequence[Any]) -> list[FrameContex
                 raise LightCurveError(f"Malformed DATE-OBS in {fits_path}: {date_obs_value!r}") from exc
             if date_obs.tzinfo is None:
                 date_obs = date_obs.replace(tzinfo=timezone.utc)
-            second_hdu_rows = tuple(_cat_rows(input_handler.get_hdu("CAT").data))
             if not second_hdu_rows:
                 raise LightCurveError(f"Second HDU is missing or empty for {fits_path}.")
 
-            _validate_wcs(header, fits_path, image.shape)
+            _validate_wcs(header, fits_path, (height, width))
             _validate_second_hdu(second_hdu_rows, fits_path)
             log.info(
                 "Aperture Photometry frame validated: "
                 f"frame={fits_path}, date_obs={date_obs.isoformat()}, "
-                f"image_shape={image.shape}, catalog_rows={len(second_hdu_rows)}"
+                f"image_shape={(height, width)}, catalog_rows={len(second_hdu_rows)}"
             )
             frames.append(
                 FrameContext(
                     fits_path=fits_path,
                     date_obs=date_obs,
                     header=header,
-                    image=image,
                     second_hdu_rows=second_hdu_rows,
-                    width=int(image.shape[1]),
-                    height=int(image.shape[0]),
+                    width=width,
+                    height=height,
                 )
             )
         except LightCurveError as exc:
@@ -432,6 +495,8 @@ def _validated_frame_contexts(input_handlers: Sequence[Any]) -> list[FrameContex
                 "Aperture Photometry ignoring input frame after validation error: "
                 f"frame={fits_path}, error={exc}"
             )
+        if on_frame is not None:
+            on_frame(path_index, len(fits_paths))
 
     if not frames:
         raise LightCurveError("Aperture photometry requires at least 1 valid input file.")
@@ -444,10 +509,101 @@ def _validated_frame_contexts(input_handlers: Sequence[Any]) -> list[FrameContex
     return frames
 
 
+def _load_frame_image(fits_path: str) -> np.ndarray:
+    """
+        Loads one frame's SCI pixel data as float32.
+
+        float32 matches the archive's native SCI pixel type; asking for float64 here would double
+        every frame's in-memory size (photometry sums already accumulate in double precision).
+    """
+    with fits.open(fits_path, memmap=False) as hdul:
+        image = np.asarray(hdul["SCI"].data, dtype=np.float32)
+    if image.ndim != 2:
+        raise LightCurveError(f"Primary image for {fits_path} is not a 2D array.")
+    return image
+
+
+def _measure_frame_pixels(
+    *,
+    frame: FrameContext,
+    candidate_stars: Sequence[ComparisonStar],
+    skip_candidate_ids: set[str],
+    target_ra_deg: float,
+    target_dec_deg: float,
+    aperture_radius: float,
+    annulus_inner_radius: float,
+    annulus_outer_radius: float,
+) -> tuple[TargetMeasurement, dict[str, ComparisonMeasurement], set[str]]:
+    """
+        Runs all pixel-dependent work for one frame: the target measurement and a measurement of
+        every comparison candidate (minus skip_candidate_ids).
+
+        The full-resolution image exists only inside this function, so it is released before the
+        caller moves on to the next frame.
+
+        Returns the target measurement, this frame's candidate measurements by candidate_id, and
+        the ids of candidates that failed to measure on this frame.
+    """
+    image = _load_frame_image(frame.fits_path)
+    # Build the frame's WCS and pixel-space aperture radii once, then reuse them for the target and
+    # every candidate. These are frame constants, so recomputing them per candidate (as the old
+    # arcsec_to_pixels/world_to_pixel calls did) just re-parsed the header WCS thousands of times.
+    geometry = frame_geometry(frame.header, aperture_radius, annulus_inner_radius, annulus_outer_radius)
+    target_measurement = _measure_target(
+        frame=frame,
+        image=image,
+        geometry=geometry,
+        target_ra_deg=target_ra_deg,
+        target_dec_deg=target_dec_deg,
+    )
+    candidate_measurements: dict[str, ComparisonMeasurement] = {}
+    failed_candidate_ids: set[str] = set()
+    for candidate in candidate_stars:
+        if candidate.candidate_id in skip_candidate_ids:
+            continue
+        try:
+            candidate_measurements[candidate.candidate_id] = measure_candidate_on_frame(
+                frame=frame,
+                image=image,
+                geometry=geometry,
+                candidate=candidate,
+                error_class=LightCurveError,
+            )
+        except LightCurveError:
+            failed_candidate_ids.add(candidate.candidate_id)
+    return target_measurement, candidate_measurements, failed_candidate_ids
+
+
+def _render_frame_overlay(
+    *,
+    frame: FrameContext,
+    stars: Sequence[ComparisonStar],
+    measurements: Sequence[ComparisonMeasurement],
+    target_measurement: TargetMeasurement,
+    aperture_radius: float,
+) -> bytes:
+    """
+        Reloads one frame's pixels and renders its diagnostic overlay, cropped at full resolution
+        around the drawn circles before resampling.
+
+        The full-resolution image exists only inside this function, so overlay rendering keeps
+        peak memory flat no matter how many frames are submitted.
+    """
+    image = _load_frame_image(frame.fits_path)
+    return candidate_overlay_jpeg_bytes(
+        frame=frame,
+        image=image,
+        stars=stars,
+        measurements=measurements,
+        target_measurement=target_measurement,
+        aperture_radius=aperture_radius,
+    )
+
+
 def _cat_rows(data: Any) -> list[dict[str, Any]]:
     if data is None:
         return []
-    names = list(data.names or [])
+    names = [name for name in (data.names or []) if name in SOURCE_CATALOG_COLUMNS]
     return [
         {
             name: data[name][index].item() if hasattr(data[name][index], "item") else data[name][index]
@@ -488,26 +644,28 @@ def _validate_second_hdu(rows: Sequence[Mapping[str, Any]], fits_path: str) -> N
 def _measure_target(
     *,
     frame: FrameContext,
+    image: np.ndarray,
+    geometry: FrameGeometry,
     target_ra_deg: float,
     target_dec_deg: float,
-    aperture_radius: float,
-    annulus_inner_radius: float,
-    annulus_outer_radius: float,
 ) -> TargetMeasurement:
     """
-        Converts the target RA and Dec to pixel coordinates, centroids the source, and measures aperture photometry.
+        Converts the target RA and Dec to pixel coordinates, centroids the source, and measures
+        aperture photometry. image is the frame's pixel data, passed separately from the metadata
+        so the streaming pixel pass controls how long it stays in memory. geometry carries the
+        frame's cached WCS and pixel-space aperture radii.
 
         The target is never allowed to drop a frame: if centroiding fails or the refinement drifts
         too far from the WCS position, it measures at the authoritative WCS position instead.
 
         Returns the target measurement for a single frame.
     """
-    aperture_radius_px = arcsec_to_pixels(frame.header, aperture_radius)
-    annulus_inner_radius_px = arcsec_to_pixels(frame.header, annulus_inner_radius)
-    annulus_outer_radius_px = arcsec_to_pixels(frame.header, annulus_outer_radius)
+    aperture_radius_px = geometry.aperture_radius_px
+    annulus_inner_radius_px = geometry.annulus_inner_radius_px
+    annulus_outer_radius_px = geometry.annulus_outer_radius_px
 
     try:
-        initial_x, initial_y = world_to_pixel(frame.header, target_ra_deg, target_dec_deg)
+        initial_x, initial_y = geometry.world_to_pixel(target_ra_deg, target_dec_deg)
     except Exception as exc:
         raise LightCurveError(f"Target WCS localization failed for {frame.fits_path}.") from exc
     log.info(
@@ -516,7 +674,7 @@ def _measure_target(
     )
 
     centroid_result = centroid(
-        image=frame.image,
+        image=image,
         x_click=initial_x,
         y_click=initial_y,
         radius=aperture_radius_px,
@@ -535,7 +693,7 @@ def _measure_target(
         # Re-estimate the background at the WCS position: a drifted annulus can straddle the host
         # galaxy and bias the sky level, which is exactly the pull we are rejecting.
         background_model = calculate_background_model(
-            frame.image,
+            image,
             x_center,
             y_center,
             aperture_radius_px,
@@ -560,13 +718,13 @@ def _measure_target(
     )
 
     photometry = measure_aperture(
-        image=frame.image,
+        image=image,
         x_center=x_center,
         y_center=y_center,
         aperture_radius_px=aperture_radius_px,
         background_model=background_model,
-        gain=frame_gain(frame.header),
-        read_noise=frame_read_noise(frame.header),
+        gain=geometry.gain,
+        read_noise=geometry.read_noise,
         dark=0.0,
         error_class=LightCurveError,
     )
@@ -604,12 +762,14 @@ def _build_field_star_catalog(
     target_dec_deg: float,
     aperture_radius: float,
     annulus_outer_radius: float,
+    on_frame: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     """
         Builds comp star candidates from the source catalogs across valid frames.
 
         Returns candidates detected in at least COMPARISON_FRAME_COVERAGE_FRACTION of the frames that
-        are not too close to the target or the edge of the image.
+        are not too close to the target or the edge of the image. on_frame, if given, is called as
+        on_frame(index, total) after each frame's rows are cross-matched.
     """
     clusters: list[dict[str, Any]] = []
     target_pixels = {
@@ -617,7 +777,7 @@ def _build_field_star_catalog(
         for frame in frames
     }
 
-    for frame in frames:
+    for frame_index, frame in enumerate(frames, start=1):
         rows: list[dict[str, Any]] = []
         for raw_row in frame.second_hdu_rows:
             try:
@@ -633,6 +793,8 @@ def _build_field_star_catalog(
                 "rejected_too_close_to_target=0, "
                 f"rejected_too_close_to_edge=0, clusters_so_far={len(clusters)}"
             )
+            if on_frame is not None:
+                on_frame(frame_index, len(frames))
             continue
 
         ra_values = np.asarray([row["ra_deg"] for row in rows], dtype=float)
@@ -706,6 +868,8 @@ def _build_field_star_catalog(
             f"rejected_too_close_to_target={rejected_for_target}, "
             f"rejected_too_close_to_edge={rejected_for_edge}, clusters_so_far={len(clusters)}"
         )
+        if on_frame is not None:
+            on_frame(frame_index, len(frames))
 
     catalog: list[dict[str, Any]] = []
     rejected_for_coverage = 0

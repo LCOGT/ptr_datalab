@@ -83,6 +83,9 @@ def measure_aperture(
     }
 
 
+PIXEL_HALF_DIAGONAL = math.sqrt(2.0) / 2.0
+
+
 def fractional_pixel_overlap(
     i: int,
     j: int,
@@ -94,6 +97,17 @@ def fractional_pixel_overlap(
     """
         Approximates the fractional overlap of a pixel at (i, j) with a circular aperture centered at (x_center, y_center) with the given radius.
     """
+    # Every subsample lies within the pixel's half-diagonal of its center, so pixels entirely
+    # outside or inside the circle resolve without evaluating the substeps grid. Only the
+    # one-pixel ring straddling the aperture edge needs subsampling.
+    dx_center = i + 0.5 - x_center
+    dy_center = j + 0.5 - y_center
+    center_distance = math.hypot(dx_center, dy_center)
+    if center_distance >= radius + PIXEL_HALF_DIAGONAL:
+        return 0.0
+    if center_distance <= radius - PIXEL_HALF_DIAGONAL:
+        return 1.0
+
     inside = 0
     total = substeps * substeps
     for sy in range(substeps):
