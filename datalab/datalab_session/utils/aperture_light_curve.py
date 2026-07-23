@@ -3,7 +3,7 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 from astropy.io import fits
@@ -49,11 +49,9 @@ from datalab.datalab_session.utils.photometry import measure_aperture
 from datalab.datalab_session.utils.target_track import (
     LINEAR_TRACK_MAX_SPAN_HOURS,
     MAX_TRACK_FIT_ORDER,
-    TargetTrack,
     TrackSeed,
     fit_target_track,
     track_rate_arcsec_per_minute,
-    track_seeds_from_input,
 )
 
 log = logging.getLogger()
@@ -539,9 +537,8 @@ def _track_target_positions(
 
     rate_arcsec_per_minute = track_rate_arcsec_per_minute(track)
     diagnostics.append(
-        f"Target track fitted from {len(track.seeds)} seed position(s) as a degree-{track.order} "
-        f"polynomial over a {track.seed_span_hours:.2f} h arc, mean apparent rate "
-        f"{rate_arcsec_per_minute:.3f} arcsec/min."
+        f"Fitted a degree-{track.order} target track from {len(track.seeds)} sighting(s) over a "
+        f"{track.seed_span_hours:.2f} h arc, mean rate {rate_arcsec_per_minute:.3f} arcsec/min."
     )
 
     frame_times: list[tuple[str, float]] = []
@@ -573,17 +570,15 @@ def _track_target_positions(
 
     if extrapolated:
         diagnostics.append(
-            f"{len(extrapolated)} frame(s) fall outside the seed time span and were extrapolated "
-            f"rather than interpolated, so their predicted positions are the least reliable: "
+            f"Extrapolated {len(extrapolated)} frame(s) outside the sighting time span: "
             f"{', '.join(extrapolated)}."
         )
     if track.order < MAX_TRACK_FIT_ORDER and track.seed_span_hours > LINEAR_TRACK_MAX_SPAN_HOURS:
         diagnostics.append(
-            f"Only {len(track.seeds)} seed positions were supplied over a "
-            f"{track.seed_span_hours:.1f} h arc, so the track is a straight line. Apparent tracks "
-            f"curve over spans beyond about {LINEAR_TRACK_MAX_SPAN_HOURS:.0f} h; identifying the "
-            "target on a third frame near the middle of the series would fit a curve instead and "
-            "keep the predicted positions on the object."
+            f"Track is a straight line from {len(track.seeds)} sightings over a "
+            f"{track.seed_span_hours:.1f} h arc. Tracks curve beyond about "
+            f"{LINEAR_TRACK_MAX_SPAN_HOURS:.0f} h -- identify the target on a third, mid-series frame "
+            "to fit a curve."
         )
     return positions
 

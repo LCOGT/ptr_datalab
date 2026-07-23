@@ -322,7 +322,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
             fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
             target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_EVOLVING,
         )
-        self.assertTrue(any("disconnected groups" in d for d in result.diagnostics))
+        self.assertTrue(any("sharing no common stars" in d.lower() for d in result.diagnostics))
         # Still produces a light curve from each block despite the break.
         self.assertGreaterEqual(len(self._finite_rows(result)), 4)
 

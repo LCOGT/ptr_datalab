@@ -336,9 +336,9 @@ def _calibrate_evolving(
     populated_components = [component for component in components if component["frames"]]
     if len(populated_components) > 1:
         diagnostics.append(
-            "Evolving calibration: the comparison field splits into "
-            f"{len(populated_components)} disconnected groups sharing no common stars; each is "
-            "anchored to catalog magnitudes independently, so a magnitude step may exist between them."
+            f"Evolving calibration: the comparison field splits into {len(populated_components)} "
+            "groups sharing no common stars, each anchored to catalog magnitudes independently; "
+            "magnitude steps may exist between them."
         )
 
     frame_calibrations: dict[str, FrameCalibration] = {}

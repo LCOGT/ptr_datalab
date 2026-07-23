@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import os
 import tempfile
 import unittest
@@ -460,7 +461,7 @@ class TestMovingTargetSearch(unittest.TestCase):
         )
         self.assertIn("rogue", {pick.source_id for pick in result.rejected_picks})
         self.assertNotIn("rogue", {pick.source_id for pick in result.picks})
-        self.assertTrue(any("did not move consistently" in message for message in result.diagnostics))
+        self.assertTrue(any("inconsistently-moving" in message.lower() for message in result.diagnostics))
 
     def test_falls_back_to_the_seed_track_when_too_few_candidates(self) -> None:
         truth = _linear_truth(6)
@@ -473,7 +474,7 @@ class TestMovingTargetSearch(unittest.TestCase):
         self.assertLess(len(result.picks), MIN_ACCEPTED_PICKS)
         # Every frame still gets a position, from the user's own sightings.
         self.assertEqual(len(result.positions), len(frame_times))
-        self.assertTrue(any("your own sightings" in message for message in result.diagnostics))
+        self.assertTrue(any("interpolated positions" in message.lower() for message in result.diagnostics))
 
     def test_frames_without_a_detection_keep_the_predicted_position(self) -> None:
         truth = _linear_truth(7)
@@ -484,7 +485,7 @@ class TestMovingTargetSearch(unittest.TestCase):
         )
         self.assertEqual(result.frames_without_pick, ["frame_03.fits"])
         self.assertIn("frame_03.fits", result.positions)
-        self.assertTrue(any("no catalogued source" in message for message in result.diagnostics))
+        self.assertTrue(any("no catalogued source" in message.lower() for message in result.diagnostics))
 
     def test_search_radius_bounds_the_search(self) -> None:
         truth = _linear_truth(6)
@@ -624,7 +625,7 @@ class TestMovingTargetLightCurve(unittest.TestCase):
         )
         result = self._run(self.write_frames(found), _seeds_from_truth(truth, (0, 8)))
         self.assertEqual(len(self._finite_rows(result)), 9)
-        self.assertTrue(any("Located the moving target" in message for message in result.diagnostics))
+        self.assertTrue(any("located the target" in message.lower() for message in result.diagnostics))
 
         # Same geometry, but the target is not catalogued, so the search has nothing to lock onto.
         self.tearDown()
@@ -633,14 +634,14 @@ class TestMovingTargetLightCurve(unittest.TestCase):
             frame_count=9, target_curvature_arcsec=curvature_arcsec, include_target_in_catalog=False
         )
         degraded = self._run(self.write_frames(missing), _seeds_from_truth(truth, (0, 8)))
-        self.assertTrue(any("your own sightings" in message for message in degraded.diagnostics))
+        self.assertTrue(any("interpolated positions" in message.lower() for message in degraded.diagnostics))
 
     def test_extrapolated_frames_are_flagged(self) -> None:
         frames, truth = build_tracked_frame_set(frame_count=8)
         paths = self.write_frames(frames)
         # Seed only the middle of the series, so the first and last frames are extrapolated.
         result = self._run(paths, _seeds_from_truth(truth, (2, 5)))
-        self.assertTrue(any("extrapolated" in message for message in result.diagnostics))
+        self.assertTrue(any("extrapolated" in message.lower() for message in result.diagnostics))
 
     def test_long_arc_with_two_seeds_recommends_a_third(self) -> None:
         span_hours = LINEAR_TRACK_MAX_SPAN_HOURS * 3.0
@@ -651,19 +652,19 @@ class TestMovingTargetLightCurve(unittest.TestCase):
         )
         paths = self.write_frames(frames)
         result = self._run(paths, _seeds_from_truth(truth, (0, 5)))
-        self.assertTrue(any("third frame" in message for message in result.diagnostics))
+        self.assertTrue(any("third, mid-series frame" in message.lower() for message in result.diagnostics))
 
     def test_short_arc_with_two_seeds_is_not_warned_about(self) -> None:
         frames, truth = build_tracked_frame_set(frame_count=6, cadence_hours=0.5)
         paths = self.write_frames(frames)
         result = self._run(paths, _seeds_from_truth(truth, (0, 5)))
-        self.assertFalse(any("third frame" in message for message in result.diagnostics))
+        self.assertFalse(any("third, mid-series frame" in message.lower() for message in result.diagnostics))
 
     def test_track_fit_is_reported_in_diagnostics(self) -> None:
         frames, truth = build_tracked_frame_set(frame_count=6)
         paths = self.write_frames(frames)
         result = self._run(paths, _seeds_from_truth(truth, (0, 5)))
-        self.assertTrue(any("Target track fitted" in message for message in result.diagnostics))
+        self.assertTrue(any("fitted a degree-" in message.lower() for message in result.diagnostics))
 
     def test_missing_seeds_raises(self) -> None:
         frames, _ = build_tracked_frame_set(frame_count=3)
@@ -679,6 +680,78 @@ class TestMovingTargetLightCurve(unittest.TestCase):
             "target-shadow",
             {star.candidate_id for star in result.selected_comparison_stars},
         )
+
+
+class TestMovingTargetOperations(unittest.TestCase):
+    """
+        Operation-layer checks that need no Redis, S3 or pixels.
+
+        The pipeline tests above call generate_light_curve directly, so nothing there exercises the
+        operations' own wiring -- which is exactly where a stale result-field name can sit unnoticed
+        until a real run. These assert the wizard contract and that both operations reference only
+        fields LightCurveResult actually has.
+    """
+
+    def test_both_operations_are_registered_under_their_names(self) -> None:
+        from datalab.datalab_session.data_operations.utils import available_operations
+        operations = available_operations()
+        self.assertIn("Moving Target Aperture Photometry", operations)
+        self.assertIn("Non-Sidereal Aperture Photometry", operations)
+        # An intermediate base class would register itself with no name; nothing should be unnamed.
+        self.assertNotIn(None, operations)
+
+    def test_wizard_descriptions_declare_the_expected_inputs(self) -> None:
+        from datalab.datalab_session.data_operations.moving_target_aperture_photometry import (
+            MovingTargetAperturePhotometry,
+        )
+        from datalab.datalab_session.data_operations.non_sidereal_aperture_photometry import (
+            NonSiderealAperturePhotometry,
+        )
+        shared = {"input_files", "aperture_radius", "annulus_inner_radius", "annulus_outer_radius"}
+
+        tracked = MovingTargetAperturePhotometry.wizard_description()["inputs"]
+        self.assertTrue(shared <= set(tracked))
+        self.assertIn("target_track", tracked)
+        self.assertIn("track_search_radius", tracked)
+
+        header_mode = NonSiderealAperturePhotometry.wizard_description()["inputs"]
+        self.assertTrue(shared <= set(header_mode))
+        # The ephemeris-header operation takes no source and no track: that is the whole point of it.
+        self.assertNotIn("target_track", header_mode)
+        self.assertNotIn("source", header_mode)
+
+    def test_operations_only_read_light_curve_result_fields_that_exist(self) -> None:
+        """Guards the failure the rebase introduced: an operation naming a renamed result field."""
+        import dataclasses
+        import inspect
+        from datalab.datalab_session.data_operations import moving_target_photometry
+        from datalab.datalab_session.utils.aperture_light_curve import LightCurveResult
+
+        available = {f.name for f in dataclasses.fields(LightCurveResult)}
+        source = inspect.getsource(moving_target_photometry)
+        referenced = set(re.findall(r"\bresult\.([a-zA-Z_][a-zA-Z0-9_]*)", source))
+        self.assertTrue(referenced, "expected the shared runner to read fields off the result")
+        self.assertEqual(referenced - available, set())
+
+    def test_track_operation_rejects_missing_sightings(self) -> None:
+        from datalab.datalab_session.data_operations.moving_target_aperture_photometry import (
+            MovingTargetAperturePhotometry,
+        )
+        from datalab.datalab_session.exceptions import ClientAlertException
+        operation = MovingTargetAperturePhotometry({"input_files": [], "aperture_radius": 5.0})
+        with self.assertRaises(ClientAlertException):
+            operation.operate(submitter=None)
+
+    def test_track_operation_rejects_malformed_sightings(self) -> None:
+        from datalab.datalab_session.data_operations.moving_target_aperture_photometry import (
+            MovingTargetAperturePhotometry,
+        )
+        from datalab.datalab_session.exceptions import ClientAlertException
+        operation = MovingTargetAperturePhotometry(
+            {"input_files": [], "aperture_radius": 5.0, "target_track": [{"mjd": 1.0, "ra": 2.0}]}
+        )
+        with self.assertRaises(ClientAlertException):
+            operation.operate(submitter=None)
 
 
 if __name__ == "__main__":

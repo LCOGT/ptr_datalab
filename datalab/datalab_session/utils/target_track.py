@@ -44,7 +44,10 @@ class TrackSeed:
     dec_deg: float
 
 
-@dataclass(frozen=True)
+# eq=False because the coefficient and basis fields are numpy arrays: the generated __eq__ would
+# compare them elementwise and raise on the ambiguous truth value of the resulting array. Identity
+# comparison is all a track is ever needed for.
+@dataclass(frozen=True, eq=False)
 class TargetTrack:
     """
         A polynomial track through user-supplied seed positions, evaluated per frame.
