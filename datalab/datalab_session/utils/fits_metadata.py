@@ -1,6 +1,7 @@
 import math
 import warnings
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 import numpy as np
@@ -65,6 +66,35 @@ def target_radec_from_header(
     if not math.isfinite(ra_deg) or not math.isfinite(dec_deg):
         raise ValueError(f"Non-finite moving-target coordinates: RA={ra_raw!r}, Dec={dec_raw!r}.")
     return float(ra_deg), float(dec_deg)
+
+
+# MJD of 1858-11-17T00:00:00Z, for deriving an MJD from a parsed DATE-OBS when MJD-OBS is absent.
+_MJD_EPOCH = datetime(1858, 11, 17, tzinfo=timezone.utc)
+
+
+def frame_midpoint_mjd(header: Mapping[str, Any], *, fallback_start: datetime | None = None) -> float:
+    """
+        MJD (UTC) of a frame's exposure midpoint.
+
+        MJD-OBS and DATE-OBS on LCO frames are the exposure *start* (UTSTART matches DATE-OBS and
+        UTSTOP is start + EXPTIME), but a moving target's measured position is where it sat on
+        average over the exposure. Interpolating a track at the start time therefore biases every
+        predicted position by half an exposure of the object's motion, which is negligible for short
+        exposures on a slow mover and arcseconds for long exposures on a fast one.
+    """
+    if "MJD-OBS" in header:
+        start_mjd = float(header["MJD-OBS"])
+    elif fallback_start is not None:
+        start = fallback_start if fallback_start.tzinfo is not None else fallback_start.replace(tzinfo=timezone.utc)
+        start_mjd = (start - _MJD_EPOCH).total_seconds() / 86400.0
+    else:
+        raise ValueError("Cannot determine an observation time: no MJD-OBS and no fallback start time.")
+    if not math.isfinite(start_mjd):
+        raise ValueError(f"Non-finite observation time: MJD-OBS={header.get('MJD-OBS')!r}.")
+    exposure_seconds = header_float(header, ("EXPTIME",), 0.0)
+    if not math.isfinite(exposure_seconds) or exposure_seconds < 0.0:
+        exposure_seconds = 0.0
+    return start_mjd + exposure_seconds / 2.0 / 86400.0
 
 
 def header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: float) -> float:

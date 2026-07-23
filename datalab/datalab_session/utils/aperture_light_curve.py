@@ -27,6 +27,7 @@ from datalab.datalab_session.utils.fits_metadata import (
     FrameGeometry,
     arcsec_to_pixels,
     frame_geometry,
+    frame_midpoint_mjd,
     optional_float,
     target_radec_from_header,
     world_to_pixel,
@@ -40,7 +41,20 @@ from datalab.datalab_session.utils.photometry_diagnostics import (
     candidate_overlay_jpeg_bytes,
     comparison_star_validation_diagnostics,
 )
+from datalab.datalab_session.utils.moving_target_search import (
+    DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
+    refine_positions_from_catalog,
+)
 from datalab.datalab_session.utils.photometry import measure_aperture
+from datalab.datalab_session.utils.target_track import (
+    LINEAR_TRACK_MAX_SPAN_HOURS,
+    MAX_TRACK_FIT_ORDER,
+    TargetTrack,
+    TrackSeed,
+    fit_target_track,
+    track_rate_arcsec_per_minute,
+    track_seeds_from_input,
+)
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -84,10 +98,14 @@ PROGRESS_PHASES = ("validate", "catalog", "measure", "select", "render")
 # share of that phase, in [0, 1].
 ProgressCallback = Callable[[str, float], None]
 
-# Target-position source: a single series-wide RA/Dec ("fixed", sidereal) vs a per-frame RA/Dec read
-# from each frame's moving-target header keywords ("header", non-sidereal).
+# Target-position source. "fixed" is a single series-wide RA/Dec (sidereal). "header" reads a
+# per-frame RA/Dec from each frame's moving-target ephemeris keywords, for frames whose mount tracked
+# the object. "track" interpolates a per-frame RA/Dec from positions the user marked on a handful of
+# frames, for a moving target imaged on a sidereally-tracked field, where nothing in the header says
+# where the object is.
 TARGET_POSITION_FIXED = "fixed"
 TARGET_POSITION_HEADER = "header"
+TARGET_POSITION_TRACK = "track"
 # Target refinement: centroid around the predicted pixel with a recenter cap ("centroid"), or measure
 # at the predicted pixel without recentering ("forced" — for extended/cometary targets whose centroid
 # wanders off the ephemeris, reusing the WCS-fallback measurement path).
@@ -188,6 +206,8 @@ def generate_light_curve(
     target_position_mode: str = TARGET_POSITION_FIXED,
     refinement_mode: str = REFINEMENT_CENTROID,
     comparison_mode: str = COMPARISON_SHARED,
+    target_track_seeds: Sequence[TrackSeed] | None = None,
+    track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
 ) -> LightCurveResult:
     """
         Generates a calibrated target light curve from local input FITS files, using comparison
@@ -204,8 +224,10 @@ def generate_light_curve(
 
         target_position_mode selects where the target's per-frame RA/Dec comes from: "fixed" uses the
         single series-wide target_ra_deg/target_dec_deg (sidereal); "header" reads each frame's
-        moving-target keywords (non-sidereal). refinement_mode selects "centroid" (recenter with a
-        cap, falling back to the predicted pixel) or "forced" (measure at the predicted pixel).
+        moving-target keywords (non-sidereal); "track" interpolates target_track_seeds, the positions
+        a user marked on two or more frames, to every frame's observation time. refinement_mode
+        selects "centroid" (recenter with a cap, falling back to the predicted pixel) or "forced"
+        (measure at the predicted pixel).
     """
     _validate_modes(target_position_mode, refinement_mode, comparison_mode)
     _validate_inputs(
@@ -231,6 +253,9 @@ def generate_light_curve(
         target_position_mode=target_position_mode,
         target_ra_deg=target_ra_deg,
         target_dec_deg=target_dec_deg,
+        target_track_seeds=target_track_seeds,
+        track_search_radius_arcsec=track_search_radius_arcsec,
+        diagnostics=diagnostics,
     )
     log.info(
         "Aperture Photometry pipeline starting: "
@@ -417,9 +442,10 @@ def _validate_inputs(
 
 
 def _validate_modes(target_position_mode: str, refinement_mode: str, comparison_mode: str) -> None:
-    if target_position_mode not in (TARGET_POSITION_FIXED, TARGET_POSITION_HEADER):
+    if target_position_mode not in (TARGET_POSITION_FIXED, TARGET_POSITION_HEADER, TARGET_POSITION_TRACK):
         raise LightCurveError(
-            f"target_position_mode must be {TARGET_POSITION_FIXED!r} or {TARGET_POSITION_HEADER!r}."
+            f"target_position_mode must be one of {TARGET_POSITION_FIXED!r}, "
+            f"{TARGET_POSITION_HEADER!r}, {TARGET_POSITION_TRACK!r}."
         )
     if refinement_mode not in (REFINEMENT_CENTROID, REFINEMENT_FORCED):
         raise LightCurveError(
@@ -437,20 +463,32 @@ def _resolve_target_positions(
     target_position_mode: str,
     target_ra_deg: float | None,
     target_dec_deg: float | None,
+    target_track_seeds: Sequence[TrackSeed] | None = None,
+    track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
+    diagnostics: list[str] | None = None,
 ) -> dict[str, tuple[float, float]]:
     """
         Resolves the target RA/Dec (degrees) used on each frame.
 
         In "fixed" mode every frame shares the one series-wide target position. In "header" mode the
         moving target's position is read from each frame's ephemeris keywords, so the pixel it lands
-        on changes frame to frame. A frame whose keywords are absent/unparseable raises, since the
-        target cannot be located without them.
+        on changes frame to frame; a frame whose keywords are absent/unparseable raises, since the
+        target cannot be located without them. In "track" mode a polynomial is fitted through the
+        user's seed positions and evaluated at each frame's exposure midpoint.
     """
     if target_position_mode == TARGET_POSITION_FIXED:
         if target_ra_deg is None or target_dec_deg is None:
             raise LightCurveError("Fixed target position requires target_ra_deg and target_dec_deg.")
         fixed = (float(target_ra_deg), float(target_dec_deg))
         return {frame.fits_path: fixed for frame in frames}
+
+    if target_position_mode == TARGET_POSITION_TRACK:
+        return _track_target_positions(
+            frames=frames,
+            target_track_seeds=target_track_seeds,
+            track_search_radius_arcsec=track_search_radius_arcsec,
+            diagnostics=diagnostics if diagnostics is not None else [],
+        )
 
     positions: dict[str, tuple[float, float]] = {}
     for frame in frames:
@@ -462,6 +500,90 @@ def _resolve_target_positions(
             "Aperture Photometry moving-target position: "
             f"frame={frame.fits_path}, ra={positions[frame.fits_path][0]:.8f}, "
             f"dec={positions[frame.fits_path][1]:.8f}"
+        )
+    return positions
+
+
+def _track_target_positions(
+    *,
+    frames: Sequence[FrameContext],
+    target_track_seeds: Sequence[TrackSeed] | None,
+    track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
+    diagnostics: list[str],
+) -> dict[str, tuple[float, float]]:
+    """
+        Locates the moving target on every frame, starting from the user's seed positions.
+
+        The seeds are interpolated to each frame's exposure midpoint -- not its start, because that
+        is the position the target's trail is centred on -- to predict where the target should be.
+        That prediction is then used as a search position: the frame's own source catalog is checked
+        for a detection near it that is not a field star, and the track is refitted through the
+        detections that move consistently. Where that succeeds the target is measured at a real
+        detected position rather than an interpolated guess; where it does not, the interpolated
+        position stands, so a faint or uncatalogued target still yields a measurement.
+
+        Frames outside the seed time span are extrapolated rather than dropped -- the fit is still
+        the best information available -- but both extrapolation and a long arc carried by only two
+        seeds are surfaced as diagnostics, since those are the two ways a predicted position quietly
+        drifts off the object.
+    """
+    if not target_track_seeds:
+        raise LightCurveError(
+            f"Target position mode {TARGET_POSITION_TRACK!r} requires target_track_seeds: "
+            "the positions the target was identified at on two or more frames."
+        )
+    try:
+        track = fit_target_track(target_track_seeds)
+    except ValueError as exc:
+        raise LightCurveError(f"Cannot fit a target track from the supplied seeds: {exc}") from exc
+
+    rate_arcsec_per_minute = track_rate_arcsec_per_minute(track)
+    diagnostics.append(
+        f"Target track fitted from {len(track.seeds)} seed position(s) as a degree-{track.order} "
+        f"polynomial over a {track.seed_span_hours:.2f} h arc, mean apparent rate "
+        f"{rate_arcsec_per_minute:.3f} arcsec/min."
+    )
+
+    frame_times: list[tuple[str, float]] = []
+    extrapolated: list[str] = []
+    for frame in frames:
+        try:
+            midpoint_mjd = frame_midpoint_mjd(frame.header, fallback_start=frame.date_obs)
+        except ValueError as exc:
+            raise LightCurveError(f"Cannot determine an observation time for {frame.fits_path}: {exc}") from exc
+        frame_times.append((frame.fits_path, midpoint_mjd))
+        if not track.covers(midpoint_mjd):
+            extrapolated.append(os.path.basename(frame.fits_path))
+
+    refinement = refine_positions_from_catalog(
+        frame_times=frame_times,
+        catalog_rows_by_frame={frame.fits_path: frame.second_hdu_rows for frame in frames},
+        track=track,
+        seeds=track.seeds,
+        search_radius_arcsec=track_search_radius_arcsec,
+    )
+    positions = refinement.positions
+    diagnostics.extend(refinement.diagnostics)
+    for fits_path, midpoint_mjd in frame_times:
+        log.info(
+            "Aperture Photometry tracked-target position: "
+            f"frame={fits_path}, midpoint_mjd={midpoint_mjd:.8f}, "
+            f"ra={positions[fits_path][0]:.8f}, dec={positions[fits_path][1]:.8f}"
+        )
+
+    if extrapolated:
+        diagnostics.append(
+            f"{len(extrapolated)} frame(s) fall outside the seed time span and were extrapolated "
+            f"rather than interpolated, so their predicted positions are the least reliable: "
+            f"{', '.join(extrapolated)}."
+        )
+    if track.order < MAX_TRACK_FIT_ORDER and track.seed_span_hours > LINEAR_TRACK_MAX_SPAN_HOURS:
+        diagnostics.append(
+            f"Only {len(track.seeds)} seed positions were supplied over a "
+            f"{track.seed_span_hours:.1f} h arc, so the track is a straight line. Apparent tracks "
+            f"curve over spans beyond about {LINEAR_TRACK_MAX_SPAN_HOURS:.0f} h; identifying the "
+            "target on a third frame near the middle of the series would fit a curve instead and "
+            "keep the predicted positions on the object."
         )
     return positions
 
