@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 import numpy as np
+import astropy.units as u
+from astropy.coordinates import Angle
 from astropy.wcs import WCS, FITSFixedWarning
 from astropy.wcs.utils import proj_plane_pixel_scales
 
@@ -17,6 +19,52 @@ warnings.filterwarnings('ignore', category=FITSFixedWarning)
 def world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:
     x, y = WCS(dict(header)).world_to_pixel_values(float(ra_deg), float(dec_deg))
     return float(x), float(y)
+
+
+# The FITS header keywords carrying the moving target's per-frame ephemeris position, written by
+# the scheduler from the object's orbital elements. On LCO MINORPLANET frames the mount tracks the
+# object, so these track the WCS field center (CRVAL1/2) frame to frame. RA is sexagesimal hours,
+# Dec sexagesimal degrees. Kept as constants so a future keyword change is a one-line edit.
+TARGET_RA_HEADER_KEYS = ("CAT-RA",)
+TARGET_DEC_HEADER_KEYS = ("CAT-DEC",)
+
+
+def _first_present_header_value(header: Mapping[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in header:
+            value = header[key]
+            if value is not None and str(value).strip():
+                return value
+    return None
+
+
+def target_radec_from_header(
+    header: Mapping[str, Any],
+    *,
+    ra_keys: tuple[str, ...] = TARGET_RA_HEADER_KEYS,
+    dec_keys: tuple[str, ...] = TARGET_DEC_HEADER_KEYS,
+) -> tuple[float, float]:
+    """
+        Reads a moving target's per-frame RA/Dec (degrees) from a frame header.
+
+        RA is parsed as sexagesimal hours and Dec as sexagesimal degrees (the LCO CAT-RA/CAT-DEC
+        convention). Raises ValueError if the keywords are absent or unparseable; callers wrap this
+        in their own error type.
+    """
+    ra_raw = _first_present_header_value(header, ra_keys)
+    dec_raw = _first_present_header_value(header, dec_keys)
+    if ra_raw is None or dec_raw is None:
+        raise ValueError(
+            f"Missing moving-target coordinate keywords (looked for RA in {ra_keys}, Dec in {dec_keys})."
+        )
+    try:
+        ra_deg = Angle(str(ra_raw), unit=u.hourangle).to(u.deg).value
+        dec_deg = Angle(str(dec_raw), unit=u.deg).to(u.deg).value
+    except Exception as exc:
+        raise ValueError(f"Unparseable moving-target coordinates: RA={ra_raw!r}, Dec={dec_raw!r}.") from exc
+    if not math.isfinite(ra_deg) or not math.isfinite(dec_deg):
+        raise ValueError(f"Non-finite moving-target coordinates: RA={ra_raw!r}, Dec={dec_raw!r}.")
+    return float(ra_deg), float(dec_deg)
 
 
 def header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: float) -> float:
