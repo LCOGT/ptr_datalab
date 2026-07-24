@@ -19,6 +19,7 @@ from datalab.datalab_session.utils.comparison_calibration import COMPARISON_AUTO
 from datalab.datalab_session.utils.diagnostic_images import save_diagnostic_images_to_s3
 from datalab.datalab_session.utils.filecache import FileCache
 from datalab.datalab_session.utils.format import Format
+from datalab.datalab_session.utils.period_analysis import period_output_from_light_curve_rows
 
 
 log = logging.getLogger()
@@ -91,6 +92,7 @@ def run_light_curve(
     submitter: User,
     *,
     target_position_mode: str,
+    compute_period: bool = True,
     light_curve_kwargs: dict[str, Any] | None = None,
     output_data: dict[str, Any] | None = None,
     log_summary: str = '',
@@ -103,6 +105,10 @@ def run_light_curve(
         upload and output shape -- is shared here. target_position_mode selects the localization mode;
         light_curve_kwargs adds any mode-specific arguments for generate_light_curve, output_data any
         mode-specific keys to echo back, and log_summary is appended to the completion log.
+
+        compute_period adds a Lomb-Scargle period analysis of the finished light curve (for folding a
+        rotation curve), emitting the same output keys as the VariableStar operation; it is skipped
+        when the light curve has too few measured points to be meaningful.
     """
     input_files = operation._validate_inputs(
         input_key='input_files',
@@ -147,6 +153,9 @@ def run_light_curve(
         temp_dir=operation.temp,
         diagnostic_image_jpegs_by_fits_basename=result.diagnostic_image_jpegs_by_fits_basename,
     )
+    period_output = period_output_from_light_curve_rows(result.light_curve_rows) if compute_period else None
+    if compute_period and period_output is None:
+        log.info(f"{operation.name()}: too few measured points for a period search; skipped.")
     filter_value = input_files[0].get('filter', input_files[0].get('primary_optical_element', 'None'))
     output = {
         'output_data': [
@@ -161,6 +170,7 @@ def run_light_curve(
                 ],
                 'diagnostics': result.diagnostics_by_fits_basename,
                 'diagnostic_images': diagnostic_image_urls,
+                **(period_output or {}),
                 **(output_data or {}),
             }
         ]

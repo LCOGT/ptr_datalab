@@ -9,7 +9,7 @@ from datalab.datalab_session.utils.fits_metadata import optional_float
 from datalab.datalab_session.utils.geometry import angular_distance_arcsec
 from datalab.datalab_session.utils.target_track import (
     TargetTrack,
-    TrackSeed,
+    TrackSample,
     fit_target_track,
 )
 
@@ -19,7 +19,7 @@ log.setLevel(logging.INFO)
 
 
 # How far from the predicted position to look for the target. An interpolated track is only as good
-# as the seeds and the arc it spans, so the search has to be wider than the aperture -- but every
+# as the samples and the arc it spans, so the search has to be wider than the aperture -- but every
 # extra arcsecond admits more field stars to be confused with, so this is a deliberate compromise
 # rather than a generous default. Exposed as a parameter for fast movers and long arcs.
 DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC = 10.0
@@ -46,7 +46,7 @@ TRACK_RESIDUAL_CLIP_SIGMA = 3.0
 MIN_TRACK_RESIDUAL_ARCSEC = 1.0
 TRACK_CLIP_ITERATIONS = 3
 # Below this many surviving picks there is nothing to cross-check, so the refinement is abandoned in
-# favour of the user's own seeds rather than trusted on the strength of one or two detections.
+# favour of the user's own samples rather than trusted on the strength of one or two detections.
 MIN_ACCEPTED_PICKS = 3
 # If every pick sits within this distance of every other, the "track" is a stationary source: the
 # search locked onto one field star on every frame. Refuse it however well it fits.
@@ -70,7 +70,7 @@ class TrackRefinement:
         Outcome of searching for the target near the predicted track and cross-checking the picks.
 
         positions is what the pipeline measures at: the refined track where the refinement held, and
-        the seed track everywhere it did not. Frames with no pick still get a position -- a predicted
+        the sample track everywhere it did not. Frames with no pick still get a position -- a predicted
         one -- because the target is presumed present and simply undetected, which is a routine
         outcome for a faint object rather than a reason to drop the frame.
     """
@@ -88,7 +88,7 @@ def refine_positions_from_catalog(
     frame_times: Sequence[tuple[str, float]],
     catalog_rows_by_frame: Mapping[str, Sequence[Mapping[str, Any]]],
     track: TargetTrack,
-    seeds: Sequence[TrackSeed],
+    samples: Sequence[TrackSample],
     search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
 ) -> TrackRefinement:
     """
@@ -128,12 +128,12 @@ def refine_positions_from_catalog(
         refinement.diagnostics.append(rejection)
         return refinement
 
-    # Refit against the accepted picks together with the user's own sightings: the picks are precise
-    # but automatic, the seeds are coarse but human-verified, and keeping both means a run where the
+    # Refit against the accepted picks together with the user's own samples: the picks are precise
+    # but automatic, the samples are coarse but human-verified, and keeping both means a run where the
     # search drifted onto a companion is still anchored to the positions the user confirmed.
     refined_track = fit_target_track(
-        [TrackSeed(mjd=pick.mjd, ra_deg=pick.ra_deg, dec_deg=pick.dec_deg) for pick in accepted]
-        + list(seeds)
+        [TrackSample(mjd=pick.mjd, ra_deg=pick.ra_deg, dec_deg=pick.dec_deg) for pick in accepted]
+        + list(samples)
     )
     refinement.refined_track = refined_track
     refinement.picks = accepted
@@ -348,7 +348,7 @@ def _clip_inconsistent_picks(picks: Sequence[TargetPick]) -> tuple[list[TargetPi
             break
         try:
             candidate_track = fit_target_track(
-                [TrackSeed(mjd=pick.mjd, ra_deg=pick.ra_deg, dec_deg=pick.dec_deg) for pick in accepted]
+                [TrackSample(mjd=pick.mjd, ra_deg=pick.ra_deg, dec_deg=pick.dec_deg) for pick in accepted]
             )
         except ValueError:
             break

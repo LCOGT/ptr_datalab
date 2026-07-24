@@ -18,7 +18,8 @@ from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
     generate_light_curve,
 )
-from datalab.datalab_session.utils.target_track import track_seeds_from_input
+from datalab.datalab_session.utils.period_analysis import period_output_from_light_curve_rows
+from datalab.datalab_session.utils.target_track import track_samples_from_input
 
 
 log = logging.getLogger()
@@ -124,10 +125,10 @@ class AperturePhotometry(BaseDataOperation):
         raw_track = self.input_data.get('target_track')
         if raw_track:
             try:
-                seeds = track_seeds_from_input(raw_track, minimum=1)
+                samples = track_samples_from_input(raw_track, minimum=1)
             except ValueError as exc:
                 raise ClientAlertException(f'Invalid target position: {exc}') from exc
-            return seeds[0].ra_deg, seeds[0].dec_deg
+            return samples[0].ra_deg, samples[0].dec_deg
 
         source = self.input_data.get('source')
         if source:
@@ -184,6 +185,10 @@ class AperturePhotometry(BaseDataOperation):
             raise ClientAlertException(f'Operation {self.name()} received invalid input.') from exc
 
         diagnostic_image_urls = self._save_diagnostic_images_to_s3(result.diagnostic_image_jpegs_by_fits_basename)
+        # Lomb-Scargle period analysis of the finished light curve, for folding a periodic (e.g.
+        # variable-star) target; emits the same keys as the VariableStar operation, or nothing when
+        # the light curve has too few measured points to be meaningful.
+        period_output = period_output_from_light_curve_rows(result.light_curve_rows)
         filter_value = input_files[0].get('filter', input_files[0].get('primary_optical_element', 'None'))
         output = {
             'output_data': [
@@ -199,6 +204,7 @@ class AperturePhotometry(BaseDataOperation):
                     ],
                     'diagnostics': result.diagnostics_by_fits_basename,
                     'diagnostic_images': diagnostic_image_urls,
+                    **(period_output or {}),
                 }
             ]
         }

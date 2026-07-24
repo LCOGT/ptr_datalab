@@ -10,29 +10,29 @@ log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 
-MINIMUM_TRACK_SEEDS = 2
-# A user-seeded track is fitted with a polynomial of degree min(distinct_seed_times - 1, this). Two
-# seeds give a straight line, three or more a quadratic. Higher degrees are deliberately not offered:
-# extra seeds sharpen the quadratic by least squares instead of raising the degree, which would let
-# the fit oscillate between seeds and wander off the object in the gaps.
+MINIMUM_TRACK_SAMPLES = 2
+# A user-supplied track is fitted with a polynomial of degree min(distinct_sample_times - 1, this). Two
+# samples give a straight line, three or more a quadratic. Higher degrees are deliberately not offered:
+# extra samples sharpen the quadratic by least squares instead of raising the degree, which would let
+# the fit oscillate between samples and wander off the object in the gaps.
 MAX_TRACK_FIT_ORDER = 2
 # Apparent tracks curve, so a straight line drifts off the object as the arc lengthens. Measured
 # against the JPL Horizons ephemeris for a main-belt asteroid (216 Kleopatra, 0.55 arcsec/min), the
-# worst-case deviation of a two-seed line is 0.4" over 12 h, 1.1" at 24 h and 4.4" at 48 h -- by two
-# days comparable to the whole aperture radius. A three-seed quadratic holds to ~0.5" out to four
-# days. Past this span with only two seeds we emit a diagnostic recommending a third. Faster movers
+# worst-case deviation of a two-sample line is 0.4" over 12 h, 1.1" at 24 h and 4.4" at 48 h -- by two
+# days comparable to the whole aperture radius. A three-sample quadratic holds to ~0.5" out to four
+# days. Past this span with only two samples we emit a diagnostic recommending a third. Faster movers
 # (near-Earth objects) curve harder and go bad sooner, so this is guidance, not a guarantee.
 LINEAR_TRACK_MAX_SPAN_HOURS = 12.0
 
-SEED_MJD_KEY = "mjd"
-SEED_RA_KEY = "ra"
-SEED_DEC_KEY = "dec"
+SAMPLE_MJD_KEY = "mjd"
+SAMPLE_RA_KEY = "ra"
+SAMPLE_DEC_KEY = "dec"
 
 
 @dataclass(frozen=True)
-class TrackSeed:
+class TrackSample:
     """
-        One user-supplied sighting of the moving target: where it was, and when.
+        One user-supplied sample of the moving target: where it was, and when.
 
         mjd is the MJD (UTC) of the *exposure midpoint* of the frame the user marked it on, which is
         the position the object's trail is centred on. Callers sending exposure start times instead
@@ -50,18 +50,18 @@ class TrackSeed:
 @dataclass(frozen=True, eq=False)
 class TargetTrack:
     """
-        A polynomial track through user-supplied seed positions, evaluated per frame.
+        A polynomial track through user-supplied sample positions, evaluated per frame.
 
-        The fit is done in a gnomonic tangent plane about the mean seed direction rather than
+        The fit is done in a gnomonic tangent plane about the mean sample direction rather than
         directly in RA/Dec, which removes the RA wrap at 0h, the cos(dec) compression of RA, and the
         degeneracy at the poles in one step. Over the hours-to-days arcs this mode targets the
         tangent plane is very nearly flat, so a low-order polynomial in the projected coordinates
         tracks the real apparent motion closely.
     """
-    seeds: tuple[TrackSeed, ...]
+    samples: tuple[TrackSample, ...]
     order: int
     reference_mjd: float
-    # Orthonormal tangent-plane basis at the mean seed direction: outward (line of sight), east, north.
+    # Orthonormal tangent-plane basis at the mean sample direction: outward (line of sight), east, north.
     radial_axis: np.ndarray = field(repr=False)
     east_axis: np.ndarray = field(repr=False)
     north_axis: np.ndarray = field(repr=False)
@@ -70,14 +70,14 @@ class TargetTrack:
     eta_coefficients: np.ndarray = field(repr=False)
 
     @property
-    def seed_mjd_span(self) -> tuple[float, float]:
-        """Earliest and latest seed time; frames outside this range are extrapolated, not interpolated."""
-        times = [seed.mjd for seed in self.seeds]
+    def sample_mjd_span(self) -> tuple[float, float]:
+        """Earliest and latest sample time; frames outside this range are extrapolated, not interpolated."""
+        times = [sample.mjd for sample in self.samples]
         return min(times), max(times)
 
     @property
-    def seed_span_hours(self) -> float:
-        first, last = self.seed_mjd_span
+    def sample_span_hours(self) -> float:
+        first, last = self.sample_mjd_span
         return (last - first) * 24.0
 
     def position_at(self, mjd: float) -> tuple[float, float]:
@@ -91,94 +91,94 @@ class TargetTrack:
         return _deproject(self.radial_axis, self.east_axis, self.north_axis, xi, eta)
 
     def covers(self, mjd: float) -> bool:
-        """Whether a time falls inside the seed span (an interpolation rather than an extrapolation)."""
-        first, last = self.seed_mjd_span
+        """Whether a time falls inside the sample span (an interpolation rather than an extrapolation)."""
+        first, last = self.sample_mjd_span
         return first <= float(mjd) <= last
 
 
-def track_seeds_from_input(raw_seeds: Any, *, minimum: int = MINIMUM_TRACK_SEEDS) -> tuple[TrackSeed, ...]:
+def track_samples_from_input(raw_samples: Any, *, minimum: int = MINIMUM_TRACK_SAMPLES) -> tuple[TrackSample, ...]:
     """
-        Parses the user-supplied track seeds into TrackSeed records, sorted by time.
+        Parses the user-supplied track samples into TrackSample records, sorted by time.
 
-        Each seed is a mapping with "mjd", "ra" and "dec" -- decimal degrees, and MJD (UTC) of the
-        exposure midpoint. Deliberately carries no frame identity: seeds are just sightings on the
+        Each sample is a mapping with "mjd", "ra" and "dec" -- decimal degrees, and MJD (UTC) of the
+        exposure midpoint. Deliberately carries no frame identity: samples are just positions on the
         sky, so they need not come from the submitted frames at all. Raises ValueError on anything
         malformed; callers wrap it in their own error type.
 
-        minimum is how many seeds the caller needs: fitting a track needs the default two, but a
+        minimum is how many samples the caller needs: fitting a track needs the default two, but a
         fixed-target operation reuses this parser for a single {mjd, ra, dec} position (minimum=1),
         where the mjd is carried but unused. The distinct-times check only applies once more than one
-        seed is required -- a lone seed has nothing to be distinct from.
+        sample is required -- a lone sample has nothing to be distinct from.
     """
-    if not isinstance(raw_seeds, Sequence) or isinstance(raw_seeds, (str, bytes)):
-        raise ValueError("Track seeds must be a list of {mjd, ra, dec} entries.")
-    if len(raw_seeds) < minimum:
+    if not isinstance(raw_samples, Sequence) or isinstance(raw_samples, (str, bytes)):
+        raise ValueError("Track samples must be a list of {mjd, ra, dec} entries.")
+    if len(raw_samples) < minimum:
         raise ValueError(
-            f"A target track needs at least {minimum} seed position(s), got {len(raw_seeds)}."
+            f"A target track needs at least {minimum} sample position(s), got {len(raw_samples)}."
         )
 
-    seeds: list[TrackSeed] = []
-    for index, raw_seed in enumerate(raw_seeds):
-        if not isinstance(raw_seed, Mapping):
-            raise ValueError(f"Track seed {index} must be a mapping with {SEED_MJD_KEY}/{SEED_RA_KEY}/{SEED_DEC_KEY}.")
+    samples: list[TrackSample] = []
+    for index, raw_sample in enumerate(raw_samples):
+        if not isinstance(raw_sample, Mapping):
+            raise ValueError(f"Track sample {index} must be a mapping with {SAMPLE_MJD_KEY}/{SAMPLE_RA_KEY}/{SAMPLE_DEC_KEY}.")
         try:
-            mjd = float(raw_seed[SEED_MJD_KEY])
-            ra_deg = float(raw_seed[SEED_RA_KEY])
-            dec_deg = float(raw_seed[SEED_DEC_KEY])
+            mjd = float(raw_sample[SAMPLE_MJD_KEY])
+            ra_deg = float(raw_sample[SAMPLE_RA_KEY])
+            dec_deg = float(raw_sample[SAMPLE_DEC_KEY])
         except KeyError as exc:
-            raise ValueError(f"Track seed {index} is missing {exc.args[0]!r}.") from exc
+            raise ValueError(f"Track sample {index} is missing {exc.args[0]!r}.") from exc
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"Track seed {index} has a non-numeric {SEED_MJD_KEY}/{SEED_RA_KEY}/{SEED_DEC_KEY}.") from exc
+            raise ValueError(f"Track sample {index} has a non-numeric {SAMPLE_MJD_KEY}/{SAMPLE_RA_KEY}/{SAMPLE_DEC_KEY}.") from exc
         if not (math.isfinite(mjd) and math.isfinite(ra_deg) and math.isfinite(dec_deg)):
-            raise ValueError(f"Track seed {index} has non-finite values.")
+            raise ValueError(f"Track sample {index} has non-finite values.")
         if not -90.0 <= dec_deg <= 90.0:
-            raise ValueError(f"Track seed {index} has dec {dec_deg} outside [-90, 90].")
-        seeds.append(TrackSeed(mjd=mjd, ra_deg=ra_deg, dec_deg=dec_deg))
+            raise ValueError(f"Track sample {index} has dec {dec_deg} outside [-90, 90].")
+        samples.append(TrackSample(mjd=mjd, ra_deg=ra_deg, dec_deg=dec_deg))
 
-    seeds.sort(key=lambda seed: seed.mjd)
-    if minimum >= MINIMUM_TRACK_SEEDS and len({seed.mjd for seed in seeds}) < MINIMUM_TRACK_SEEDS:
-        raise ValueError("Track seeds must be at two or more distinct times.")
-    return tuple(seeds)
+    samples.sort(key=lambda sample: sample.mjd)
+    if minimum >= MINIMUM_TRACK_SAMPLES and len({sample.mjd for sample in samples}) < MINIMUM_TRACK_SAMPLES:
+        raise ValueError("Track samples must be at two or more distinct times.")
+    return tuple(samples)
 
 
-def fit_target_track(seeds: Sequence[TrackSeed]) -> TargetTrack:
+def fit_target_track(samples: Sequence[TrackSample]) -> TargetTrack:
     """
-        Fits a track through the seed positions, for predicting where the target is on each frame.
+        Fits a track through the sample positions, for predicting where the target is on each frame.
 
-        The polynomial degree follows the number of *distinct* seed times: two give a line, three or
+        The polynomial degree follows the number of *distinct* sample times: two give a line, three or
         more a quadratic, capped at MAX_TRACK_FIT_ORDER. Over-determined fits are solved by least
-        squares, so extra seeds reduce the influence of an imprecise click rather than forcing the
+        squares, so extra samples reduce the influence of an imprecise click rather than forcing the
         curve through every one of them.
     """
-    if len(seeds) < MINIMUM_TRACK_SEEDS:
+    if len(samples) < MINIMUM_TRACK_SAMPLES:
         raise ValueError(
-            f"A target track needs at least {MINIMUM_TRACK_SEEDS} seed positions, got {len(seeds)}."
+            f"A target track needs at least {MINIMUM_TRACK_SAMPLES} sample positions, got {len(samples)}."
         )
-    ordered = tuple(sorted(seeds, key=lambda seed: seed.mjd))
-    distinct_times = len({seed.mjd for seed in ordered})
-    if distinct_times < MINIMUM_TRACK_SEEDS:
-        raise ValueError("Track seeds must be at two or more distinct times.")
+    ordered = tuple(sorted(samples, key=lambda sample: sample.mjd))
+    distinct_times = len({sample.mjd for sample in ordered})
+    if distinct_times < MINIMUM_TRACK_SAMPLES:
+        raise ValueError("Track samples must be at two or more distinct times.")
     order = min(distinct_times - 1, MAX_TRACK_FIT_ORDER)
 
-    directions = np.array([_unit_vector(seed.ra_deg, seed.dec_deg) for seed in ordered])
+    directions = np.array([_unit_vector(sample.ra_deg, sample.dec_deg) for sample in ordered])
     radial_axis, east_axis, north_axis = _tangent_basis(directions.mean(axis=0))
 
-    # Project each seed into the tangent plane. The denominator is the cosine of the angle from the
-    # plane's centre; seeds more than 90 degrees away would project behind the observer, which for a
-    # short-arc track means the seeds are not of the same object.
+    # Project each sample into the tangent plane. The denominator is the cosine of the angle from the
+    # plane's centre; samples more than 90 degrees away would project behind the observer, which for a
+    # short-arc track means the samples are not of the same object.
     along_radial = directions @ radial_axis
     if np.any(along_radial <= 0.0):
-        raise ValueError("Track seeds span more than 90 degrees on the sky; they cannot be one short arc.")
+        raise ValueError("Track samples span more than 90 degrees on the sky; they cannot be one short arc.")
     xi = (directions @ east_axis) / along_radial
     eta = (directions @ north_axis) / along_radial
 
-    reference_mjd = float(np.mean([seed.mjd for seed in ordered]))
-    elapsed = np.array([seed.mjd - reference_mjd for seed in ordered])
+    reference_mjd = float(np.mean([sample.mjd for sample in ordered]))
+    elapsed = np.array([sample.mjd - reference_mjd for sample in ordered])
     xi_coefficients = np.polyfit(elapsed, xi, order)
     eta_coefficients = np.polyfit(elapsed, eta, order)
 
     track = TargetTrack(
-        seeds=ordered,
+        samples=ordered,
         order=order,
         reference_mjd=reference_mjd,
         radial_axis=radial_axis,
@@ -189,7 +189,7 @@ def fit_target_track(seeds: Sequence[TrackSeed]) -> TargetTrack:
     )
     log.info(
         "Aperture Photometry target track fitted: "
-        f"seeds={len(ordered)}, order={order}, span_hours={track.seed_span_hours:.3f}, "
+        f"samples={len(ordered)}, order={order}, span_hours={track.sample_span_hours:.3f}, "
         f"rate_arcsec_per_min={track_rate_arcsec_per_minute(track):.4f}"
     )
     return track
@@ -201,7 +201,7 @@ def track_rate_arcsec_per_minute(track: TargetTrack) -> float:
         guidance (a target moving fast enough to streak within one exposure loses flux from a
         circular aperture).
     """
-    first, last = track.seed_mjd_span
+    first, last = track.sample_mjd_span
     if last <= first:
         return 0.0
     start = track.position_at(first)

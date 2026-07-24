@@ -49,7 +49,7 @@ from datalab.datalab_session.utils.photometry import measure_aperture
 from datalab.datalab_session.utils.target_track import (
     LINEAR_TRACK_MAX_SPAN_HOURS,
     MAX_TRACK_FIT_ORDER,
-    TrackSeed,
+    TrackSample,
     fit_target_track,
     track_rate_arcsec_per_minute,
 )
@@ -204,7 +204,7 @@ def generate_light_curve(
     target_position_mode: str = TARGET_POSITION_FIXED,
     refinement_mode: str = REFINEMENT_CENTROID,
     comparison_mode: str = COMPARISON_SHARED,
-    target_track_seeds: Sequence[TrackSeed] | None = None,
+    target_track_samples: Sequence[TrackSample] | None = None,
     track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
 ) -> LightCurveResult:
     """
@@ -222,7 +222,7 @@ def generate_light_curve(
 
         target_position_mode selects where the target's per-frame RA/Dec comes from: "fixed" uses the
         single series-wide target_ra_deg/target_dec_deg (sidereal); "header" reads each frame's
-        moving-target keywords (non-sidereal); "track" interpolates target_track_seeds, the positions
+        moving-target keywords (non-sidereal); "track" interpolates target_track_samples, the positions
         a user marked on two or more frames, to every frame's observation time. refinement_mode
         selects "centroid" (recenter with a cap, falling back to the predicted pixel) or "forced"
         (measure at the predicted pixel).
@@ -251,7 +251,7 @@ def generate_light_curve(
         target_position_mode=target_position_mode,
         target_ra_deg=target_ra_deg,
         target_dec_deg=target_dec_deg,
-        target_track_seeds=target_track_seeds,
+        target_track_samples=target_track_samples,
         track_search_radius_arcsec=track_search_radius_arcsec,
         diagnostics=diagnostics,
     )
@@ -461,7 +461,7 @@ def _resolve_target_positions(
     target_position_mode: str,
     target_ra_deg: float | None,
     target_dec_deg: float | None,
-    target_track_seeds: Sequence[TrackSeed] | None = None,
+    target_track_samples: Sequence[TrackSample] | None = None,
     track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
     diagnostics: list[str] | None = None,
 ) -> dict[str, tuple[float, float]]:
@@ -472,7 +472,7 @@ def _resolve_target_positions(
         moving target's position is read from each frame's ephemeris keywords, so the pixel it lands
         on changes frame to frame; a frame whose keywords are absent/unparseable raises, since the
         target cannot be located without them. In "track" mode a polynomial is fitted through the
-        user's seed positions and evaluated at each frame's exposure midpoint.
+        user's sample positions and evaluated at each frame's exposure midpoint.
     """
     if target_position_mode == TARGET_POSITION_FIXED:
         if target_ra_deg is None or target_dec_deg is None:
@@ -483,7 +483,7 @@ def _resolve_target_positions(
     if target_position_mode == TARGET_POSITION_TRACK:
         return _track_target_positions(
             frames=frames,
-            target_track_seeds=target_track_seeds,
+            target_track_samples=target_track_samples,
             track_search_radius_arcsec=track_search_radius_arcsec,
             diagnostics=diagnostics if diagnostics is not None else [],
         )
@@ -505,14 +505,14 @@ def _resolve_target_positions(
 def _track_target_positions(
     *,
     frames: Sequence[FrameContext],
-    target_track_seeds: Sequence[TrackSeed] | None,
+    target_track_samples: Sequence[TrackSample] | None,
     track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
     diagnostics: list[str],
 ) -> dict[str, tuple[float, float]]:
     """
-        Locates the moving target on every frame, starting from the user's seed positions.
+        Locates the moving target on every frame, starting from the user's sample positions.
 
-        The seeds are interpolated to each frame's exposure midpoint -- not its start, because that
+        The samples are interpolated to each frame's exposure midpoint -- not its start, because that
         is the position the target's trail is centred on -- to predict where the target should be.
         That prediction is then used as a search position: the frame's own source catalog is checked
         for a detection near it that is not a field star, and the track is refitted through the
@@ -520,25 +520,25 @@ def _track_target_positions(
         detected position rather than an interpolated guess; where it does not, the interpolated
         position stands, so a faint or uncatalogued target still yields a measurement.
 
-        Frames outside the seed time span are extrapolated rather than dropped -- the fit is still
+        Frames outside the sample time span are extrapolated rather than dropped -- the fit is still
         the best information available -- but both extrapolation and a long arc carried by only two
-        seeds are surfaced as diagnostics, since those are the two ways a predicted position quietly
+        samples are surfaced as diagnostics, since those are the two ways a predicted position quietly
         drifts off the object.
     """
-    if not target_track_seeds:
+    if not target_track_samples:
         raise LightCurveError(
-            f"Target position mode {TARGET_POSITION_TRACK!r} requires target_track_seeds: "
+            f"Target position mode {TARGET_POSITION_TRACK!r} requires target_track_samples: "
             "the positions the target was identified at on two or more frames."
         )
     try:
-        track = fit_target_track(target_track_seeds)
+        track = fit_target_track(target_track_samples)
     except ValueError as exc:
-        raise LightCurveError(f"Cannot fit a target track from the supplied seeds: {exc}") from exc
+        raise LightCurveError(f"Cannot fit a target track from the supplied samples: {exc}") from exc
 
     rate_arcsec_per_minute = track_rate_arcsec_per_minute(track)
     diagnostics.append(
-        f"Fitted a degree-{track.order} target track from {len(track.seeds)} sighting(s) over a "
-        f"{track.seed_span_hours:.2f} h arc, mean rate {rate_arcsec_per_minute:.3f} arcsec/min."
+        f"Fitted a degree-{track.order} target track from {len(track.samples)} sample(s) over a "
+        f"{track.sample_span_hours:.2f} h arc, mean rate {rate_arcsec_per_minute:.3f} arcsec/min."
     )
 
     frame_times: list[tuple[str, float]] = []
@@ -556,7 +556,7 @@ def _track_target_positions(
         frame_times=frame_times,
         catalog_rows_by_frame={frame.fits_path: frame.second_hdu_rows for frame in frames},
         track=track,
-        seeds=track.seeds,
+        samples=track.samples,
         search_radius_arcsec=track_search_radius_arcsec,
     )
     positions = refinement.positions
@@ -570,13 +570,13 @@ def _track_target_positions(
 
     if extrapolated:
         diagnostics.append(
-            f"Extrapolated {len(extrapolated)} frame(s) outside the sighting time span: "
+            f"Extrapolated {len(extrapolated)} frame(s) outside the sample time span: "
             f"{', '.join(extrapolated)}."
         )
-    if track.order < MAX_TRACK_FIT_ORDER and track.seed_span_hours > LINEAR_TRACK_MAX_SPAN_HOURS:
+    if track.order < MAX_TRACK_FIT_ORDER and track.sample_span_hours > LINEAR_TRACK_MAX_SPAN_HOURS:
         diagnostics.append(
-            f"Track is a straight line from {len(track.seeds)} sightings over a "
-            f"{track.seed_span_hours:.1f} h arc. Tracks curve beyond about "
+            f"Track is a straight line from {len(track.samples)} samples over a "
+            f"{track.sample_span_hours:.1f} h arc. Tracks curve beyond about "
             f"{LINEAR_TRACK_MAX_SPAN_HOURS:.0f} h -- identify the target on a third, mid-series frame "
             "to fit a curve."
         )

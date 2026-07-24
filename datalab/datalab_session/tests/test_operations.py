@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import shutil
 import tempfile
 from types import SimpleNamespace
@@ -453,6 +453,44 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         self.assertNotIn('source', inputs)
         self.assertEqual(inputs['target_track']['type'], Format.SOURCE)
         self.assertTrue(inputs['target_track'].get('name_lookup'))
+
+    def test_operate_emits_period_analysis_for_a_measured_light_curve(self):
+        """A light curve with enough points gets Lomb-Scargle period keys in the output."""
+        input_data = self.valid_input_data()
+        rows = [
+            LightCurveRow(
+                fits_path=f'/tmp/fits_{i}.fits',
+                date_obs=datetime(2026, 5, 13, tzinfo=timezone.utc) + timedelta(hours=float(i)),
+                target_centroid_x=1.0, target_centroid_y=2.0,
+                target_net_source_counts=3.0, target_source_uncertainty=4.0,
+                comparison_ensemble_total_counts=5.0, comparison_ensemble_uncertainty=6.0,
+                target_differential_flux=7.0, target_differential_flux_uncertainty=8.0,
+                target_calibrated_apparent_magnitude=15.0 + 0.2 * math.sin(2 * math.pi * i / 12.0),
+                target_calibrated_apparent_magnitude_uncertainty=0.01,
+            )
+            for i in range(12)
+        ]
+
+        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.save_files_to_s3') as mock_save, \
+                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
+                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
+                mock.patch.object(AperturePhotometry, 'set_message'), \
+                mock.patch.object(AperturePhotometry, 'set_status'):
+            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
+            mock_save.return_value = {'diagnostic_url': 'https://bucket/x.jpg'}
+            mock_generate_light_curve.return_value = SimpleNamespace(
+                light_curve_rows=rows, selected_comparison_stars=[], diagnostics=[],
+                diagnostics_by_fits_basename={}, diagnostic_image_jpegs_by_fits_basename={},
+            )
+            operation = AperturePhotometry(input_data)
+            operation.temp = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, operation.temp, ignore_errors=True)
+            operation.operate(None)
+
+        output = mock_set_output.call_args.args[0]['output_data'][0]
+        self.assertLessEqual({'period', 'fap', 'frequency', 'power', 'period_candidates'}, set(output))
 
 
 class TestColorImageOperation(FileExtendedTestCase):

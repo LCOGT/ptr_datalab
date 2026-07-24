@@ -26,12 +26,13 @@ from datalab.datalab_session.utils.moving_target_search import (
     MIN_ACCEPTED_PICKS,
     refine_positions_from_catalog,
 )
+from datalab.datalab_session.utils.period_analysis import period_output_from_light_curve_rows
 from datalab.datalab_session.utils.target_track import (
     LINEAR_TRACK_MAX_SPAN_HOURS,
-    TrackSeed,
+    TrackSample,
     fit_target_track,
     track_rate_arcsec_per_minute,
-    track_seeds_from_input,
+    track_samples_from_input,
 )
 
 
@@ -177,8 +178,8 @@ def build_tracked_frame_set(
     return frames, truth
 
 
-def _seeds_from_truth(truth: list[tuple[float, float, float]], indices: tuple[int, ...]) -> list[TrackSeed]:
-    return [TrackSeed(mjd=truth[i][0], ra_deg=truth[i][1], dec_deg=truth[i][2]) for i in indices]
+def _samples_from_truth(truth: list[tuple[float, float, float]], indices: tuple[int, ...]) -> list[TrackSample]:
+    return [TrackSample(mjd=truth[i][0], ra_deg=truth[i][1], dec_deg=truth[i][2]) for i in indices]
 
 
 def _separation_arcsec(first: tuple[float, float], second: tuple[float, float]) -> float:
@@ -194,17 +195,17 @@ def _separation_arcsec(first: tuple[float, float], second: tuple[float, float]) 
 class TestTargetTrackFitting(unittest.TestCase):
     """The track fit on its own, independent of any frames or photometry."""
 
-    def test_two_seeds_fit_a_line_and_recover_a_linear_track(self) -> None:
+    def test_two_samples_fit_a_line_and_recover_a_linear_track(self) -> None:
         _, truth = build_tracked_frame_set(frame_count=9)
-        track = fit_target_track(_seeds_from_truth(truth, (0, 8)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 8)))
         self.assertEqual(track.order, 1)
         for mjd, ra, dec in truth:
             self.assertLess(_separation_arcsec(track.position_at(mjd), (ra, dec)), 0.01)
 
-    def test_three_seeds_fit_a_quadratic_and_beat_a_line_on_a_curved_track(self) -> None:
+    def test_three_samples_fit_a_quadratic_and_beat_a_line_on_a_curved_track(self) -> None:
         _, truth = build_tracked_frame_set(frame_count=9, target_curvature_arcsec=12.0)
-        linear = fit_target_track(_seeds_from_truth(truth, (0, 8)))
-        quadratic = fit_target_track(_seeds_from_truth(truth, (0, 4, 8)))
+        linear = fit_target_track(_samples_from_truth(truth, (0, 8)))
+        quadratic = fit_target_track(_samples_from_truth(truth, (0, 4, 8)))
         self.assertEqual(linear.order, 1)
         self.assertEqual(quadratic.order, 2)
 
@@ -216,66 +217,66 @@ class TestTargetTrackFitting(unittest.TestCase):
 
     def test_fit_order_is_capped_at_quadratic_and_uses_least_squares(self) -> None:
         _, truth = build_tracked_frame_set(frame_count=9, target_curvature_arcsec=6.0)
-        track = fit_target_track(_seeds_from_truth(truth, (0, 2, 4, 6, 8)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 2, 4, 6, 8)))
         self.assertEqual(track.order, 2)
-        self.assertEqual(len(track.seeds), 5)
+        self.assertEqual(len(track.samples), 5)
 
     def test_track_handles_the_ra_wrap_at_zero_hours(self) -> None:
         start = _to_mjd(datetime(2025, 3, 1, tzinfo=timezone.utc))
-        seeds = [
-            TrackSeed(mjd=start, ra_deg=359.99, dec_deg=5.0),
-            TrackSeed(mjd=start + 0.25, ra_deg=0.01, dec_deg=5.0),
+        samples = [
+            TrackSample(mjd=start, ra_deg=359.99, dec_deg=5.0),
+            TrackSample(mjd=start + 0.25, ra_deg=0.01, dec_deg=5.0),
         ]
-        track = fit_target_track(seeds)
+        track = fit_target_track(samples)
         midpoint = track.position_at(start + 0.125)
         # Halfway between 359.99 and 0.01 is 0.0, not the 180.0 a naive average of the two would give.
         self.assertLess(min(midpoint[0], 360.0 - midpoint[0]), 0.001)
         self.assertAlmostEqual(midpoint[1], 5.0, places=4)
 
-    def test_track_handles_a_seed_at_the_celestial_pole(self) -> None:
+    def test_track_handles_a_sample_at_the_celestial_pole(self) -> None:
         start = _to_mjd(datetime(2025, 3, 1, tzinfo=timezone.utc))
-        seeds = [
-            TrackSeed(mjd=start, ra_deg=0.0, dec_deg=89.99),
-            TrackSeed(mjd=start + 0.25, ra_deg=180.0, dec_deg=89.99),
+        samples = [
+            TrackSample(mjd=start, ra_deg=0.0, dec_deg=89.99),
+            TrackSample(mjd=start + 0.25, ra_deg=180.0, dec_deg=89.99),
         ]
-        track = fit_target_track(seeds)
+        track = fit_target_track(samples)
         midpoint = track.position_at(start + 0.125)
         self.assertGreater(midpoint[1], 89.9)
 
     def test_apparent_rate_is_reported(self) -> None:
         _, truth = build_tracked_frame_set(frame_count=9, target_rate_arcsec_per_hour=60.0)
-        track = fit_target_track(_seeds_from_truth(truth, (0, 8)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 8)))
         self.assertAlmostEqual(track_rate_arcsec_per_minute(track), 1.0, delta=0.01)
 
-    def test_seeds_are_sorted_by_time(self) -> None:
+    def test_samples_are_sorted_by_time(self) -> None:
         _, truth = build_tracked_frame_set(frame_count=5)
-        track = fit_target_track(_seeds_from_truth(truth, (4, 0, 2)))
-        self.assertEqual([seed.mjd for seed in track.seeds], sorted(seed.mjd for seed in track.seeds))
+        track = fit_target_track(_samples_from_truth(truth, (4, 0, 2)))
+        self.assertEqual([sample.mjd for sample in track.samples], sorted(sample.mjd for sample in track.samples))
 
 
-class TestTrackSeedParsing(unittest.TestCase):
-    def test_parses_and_sorts_valid_seeds(self) -> None:
-        seeds = track_seeds_from_input(
+class TestTrackSampleParsing(unittest.TestCase):
+    def test_parses_and_sorts_valid_samples(self) -> None:
+        samples = track_samples_from_input(
             [
                 {"mjd": 60002.0, "ra": 100.2, "dec": 20.0},
                 {"mjd": 60000.0, "ra": 100.0, "dec": 20.0},
             ]
         )
-        self.assertEqual(len(seeds), 2)
-        self.assertEqual(seeds[0].mjd, 60000.0)
-        self.assertEqual(seeds[1].ra_deg, 100.2)
+        self.assertEqual(len(samples), 2)
+        self.assertEqual(samples[0].mjd, 60000.0)
+        self.assertEqual(samples[1].ra_deg, 100.2)
 
-    def test_rejects_fewer_than_two_seeds(self) -> None:
+    def test_rejects_fewer_than_two_samples(self) -> None:
         with self.assertRaises(ValueError):
-            track_seeds_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}])
+            track_samples_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}])
 
-    def test_minimum_one_accepts_a_single_seed(self) -> None:
+    def test_minimum_one_accepts_a_single_sample(self) -> None:
         """The fixed-target operations reuse the parser for one {mjd, ra, dec} position."""
-        seeds = track_seeds_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}], minimum=1)
-        self.assertEqual(len(seeds), 1)
-        self.assertEqual((seeds[0].ra_deg, seeds[0].dec_deg), (100.0, 20.0))
+        samples = track_samples_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}], minimum=1)
+        self.assertEqual(len(samples), 1)
+        self.assertEqual((samples[0].ra_deg, samples[0].dec_deg), (100.0, 20.0))
         # The distinct-times rule only applies once a track (>= 2) is required.
-        singles = track_seeds_from_input(
+        singles = track_samples_from_input(
             [{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}, {"mjd": 60000.0, "ra": 100.1, "dec": 20.0}],
             minimum=1,
         )
@@ -283,25 +284,25 @@ class TestTrackSeedParsing(unittest.TestCase):
 
     def test_rejects_missing_key(self) -> None:
         with self.assertRaises(ValueError):
-            track_seeds_from_input([{"mjd": 60000.0, "ra": 100.0}, {"mjd": 60001.0, "ra": 100.1, "dec": 20.0}])
+            track_samples_from_input([{"mjd": 60000.0, "ra": 100.0}, {"mjd": 60001.0, "ra": 100.1, "dec": 20.0}])
 
     def test_rejects_non_numeric_and_non_finite(self) -> None:
         with self.assertRaises(ValueError):
-            track_seeds_from_input([{"mjd": 60000.0, "ra": "abc", "dec": 20.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
+            track_samples_from_input([{"mjd": 60000.0, "ra": "abc", "dec": 20.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
         with self.assertRaises(ValueError):
-            track_seeds_from_input([{"mjd": 60000.0, "ra": float("nan"), "dec": 20.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
+            track_samples_from_input([{"mjd": 60000.0, "ra": float("nan"), "dec": 20.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
 
     def test_rejects_out_of_range_declination(self) -> None:
         with self.assertRaises(ValueError):
-            track_seeds_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 120.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
+            track_samples_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 120.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
 
-    def test_rejects_seeds_all_at_the_same_time(self) -> None:
+    def test_rejects_samples_all_at_the_same_time(self) -> None:
         with self.assertRaises(ValueError):
-            track_seeds_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}, {"mjd": 60000.0, "ra": 100.1, "dec": 20.0}])
+            track_samples_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}, {"mjd": 60000.0, "ra": 100.1, "dec": 20.0}])
 
     def test_rejects_non_list_input(self) -> None:
         with self.assertRaises(ValueError):
-            track_seeds_from_input("60000,100,20")
+            track_samples_from_input("60000,100,20")
 
 
 class TestExposureMidpoint(unittest.TestCase):
@@ -324,9 +325,9 @@ class TestExposureMidpoint(unittest.TestCase):
         start_moment = datetime(2025, 3, 1, tzinfo=timezone.utc)
         exposure_seconds = 1200.0
         rate_arcsec_per_hour = 3600.0  # 1 arcsec/sec, a deliberately fast mover
-        seeds = [
-            TrackSeed(mjd=_to_mjd(start_moment), ra_deg=BASE_RA, dec_deg=BASE_DEC),
-            TrackSeed(
+        samples = [
+            TrackSample(mjd=_to_mjd(start_moment), ra_deg=BASE_RA, dec_deg=BASE_DEC),
+            TrackSample(
                 mjd=_to_mjd(start_moment + timedelta(hours=2)),
                 ra_deg=BASE_RA + _ra_offset_deg(rate_arcsec_per_hour * 2.0),
                 dec_deg=BASE_DEC,
@@ -340,7 +341,7 @@ class TestExposureMidpoint(unittest.TestCase):
             width=100,
             height=100,
         )
-        positions = _track_target_positions(frames=[frame], target_track_seeds=seeds, diagnostics=[])
+        positions = _track_target_positions(frames=[frame], target_track_samples=samples, diagnostics=[])
         predicted = positions["frame.fits"]
         start_position = (BASE_RA, BASE_DEC)
         # Half of a 1200 s exposure at 1 arcsec/s is 600 arcsec of motion past the start position.
@@ -397,9 +398,9 @@ class TestMovingTargetSearch(unittest.TestCase):
     def test_finds_the_moving_target_in_the_catalog(self) -> None:
         truth = _linear_truth(6)
         frame_times, catalogs = self._frames_and_catalogs(truth)
-        track = fit_target_track(_seeds_from_truth(truth, (0, 5)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 5)))
         result = refine_positions_from_catalog(
-            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, seeds=track.seeds
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
         )
         self.assertEqual(len(result.picks), 6)
         self.assertTrue(all(pick.source_id == "moving-target" for pick in result.picks))
@@ -412,9 +413,9 @@ class TestMovingTargetSearch(unittest.TestCase):
         # Sits right on the middle of the track, so on some frames it is nearer than the target.
         star_ra_offset = 6.0 * 2.5
         frame_times, catalogs = self._frames_and_catalogs(truth, static_stars=((star_ra_offset, 0.0),))
-        track = fit_target_track(_seeds_from_truth(truth, (0, 5)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 5)))
         result = refine_positions_from_catalog(
-            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, seeds=track.seeds
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
         )
         self.assertTrue(result.picks)
         self.assertTrue(all(pick.source_id == "moving-target" for pick in result.picks))
@@ -427,9 +428,9 @@ class TestMovingTargetSearch(unittest.TestCase):
         frame_times, catalogs = self._frames_and_catalogs(
             truth, include_target_on=set(), extra_rows_by_frame=extra
         )
-        track = fit_target_track(_seeds_from_truth(truth, (0, 5)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 5)))
         result = refine_positions_from_catalog(
-            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, seeds=track.seeds
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
         )
         self.assertIsNone(result.refined_track)
         self.assertEqual(len(result.picks), 0)
@@ -449,9 +450,9 @@ class TestMovingTargetSearch(unittest.TestCase):
         frame_times, catalogs = self._frames_and_catalogs(
             truth, include_target_on=set(), extra_rows_by_frame=extra
         )
-        track = fit_target_track(_seeds_from_truth(truth, (0, 7)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 7)))
         result = refine_positions_from_catalog(
-            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, seeds=track.seeds
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
         )
         self.assertIsNone(result.refined_track)
         self.assertTrue(any("stationary source" in message for message in result.diagnostics))
@@ -467,33 +468,33 @@ class TestMovingTargetSearch(unittest.TestCase):
             include_target_on={0, 1, 2, 4, 5, 6},
             extra_rows_by_frame={3: [_catalog_row("rogue", rogue_ra, rogue_dec)]},
         )
-        track = fit_target_track(_seeds_from_truth(truth, (0, 6)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 6)))
         result = refine_positions_from_catalog(
-            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, seeds=track.seeds
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
         )
         self.assertIn("rogue", {pick.source_id for pick in result.rejected_picks})
         self.assertNotIn("rogue", {pick.source_id for pick in result.picks})
         self.assertTrue(any("inconsistently-moving" in message.lower() for message in result.diagnostics))
 
-    def test_falls_back_to_the_seed_track_when_too_few_candidates(self) -> None:
+    def test_falls_back_to_the_sample_track_when_too_few_candidates(self) -> None:
         truth = _linear_truth(6)
         frame_times, catalogs = self._frames_and_catalogs(truth, include_target_on={0})
-        track = fit_target_track(_seeds_from_truth(truth, (0, 5)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 5)))
         result = refine_positions_from_catalog(
-            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, seeds=track.seeds
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
         )
         self.assertIsNone(result.refined_track)
         self.assertLess(len(result.picks), MIN_ACCEPTED_PICKS)
-        # Every frame still gets a position, from the user's own sightings.
+        # Every frame still gets a position, from the user's own samples.
         self.assertEqual(len(result.positions), len(frame_times))
         self.assertTrue(any("interpolated positions" in message.lower() for message in result.diagnostics))
 
     def test_frames_without_a_detection_keep_the_predicted_position(self) -> None:
         truth = _linear_truth(7)
         frame_times, catalogs = self._frames_and_catalogs(truth, include_target_on={0, 1, 2, 4, 5, 6})
-        track = fit_target_track(_seeds_from_truth(truth, (0, 6)))
+        track = fit_target_track(_samples_from_truth(truth, (0, 6)))
         result = refine_positions_from_catalog(
-            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, seeds=track.seeds
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
         )
         self.assertEqual(result.frames_without_pick, ["frame_03.fits"])
         self.assertIn("frame_03.fits", result.positions)
@@ -503,15 +504,15 @@ class TestMovingTargetSearch(unittest.TestCase):
         truth = _linear_truth(6)
         frame_times, catalogs = self._frames_and_catalogs(truth)
         # A track offset in declination by more than the search radius finds nothing.
-        offset_seeds = [
-            TrackSeed(mjd=mjd, ra_deg=ra, dec_deg=dec + 30.0 / 3600.0) for mjd, ra, dec in (truth[0], truth[5])
+        offset_samples = [
+            TrackSample(mjd=mjd, ra_deg=ra, dec_deg=dec + 30.0 / 3600.0) for mjd, ra, dec in (truth[0], truth[5])
         ]
-        track = fit_target_track(offset_seeds)
+        track = fit_target_track(offset_samples)
         result = refine_positions_from_catalog(
             frame_times=frame_times,
             catalog_rows_by_frame=catalogs,
             track=track,
-            seeds=track.seeds,
+            samples=track.samples,
             search_radius_arcsec=10.0,
         )
         self.assertEqual(len(result.picks), 0)
@@ -520,7 +521,7 @@ class TestMovingTargetSearch(unittest.TestCase):
             frame_times=frame_times,
             catalog_rows_by_frame=catalogs,
             track=track,
-            seeds=track.seeds,
+            samples=track.samples,
             search_radius_arcsec=45.0,
         )
         self.assertEqual(len(widened.picks), 6)
@@ -561,7 +562,7 @@ class TestMovingTargetLightCurve(unittest.TestCase):
                 columns.append(fits.Column(name=key, format="D", array=np.asarray(values, dtype=float)))
         return fits.BinTableHDU.from_columns(columns, name="CAT")
 
-    def _run(self, fits_paths: list[str], seeds: list[TrackSeed], **kwargs: Any) -> Any:
+    def _run(self, fits_paths: list[str], samples: list[TrackSample], **kwargs: Any) -> Any:
         return generate_light_curve(
             fits_paths,
             aperture_radius=5.0,
@@ -571,7 +572,7 @@ class TestMovingTargetLightCurve(unittest.TestCase):
             max_comparisons=10,
             target_position_mode=TARGET_POSITION_TRACK,
             comparison_mode=COMPARISON_AUTO,
-            target_track_seeds=seeds,
+            target_track_samples=samples,
             **kwargs,
         )
 
@@ -581,10 +582,10 @@ class TestMovingTargetLightCurve(unittest.TestCase):
             if math.isfinite(row.target_calibrated_apparent_magnitude)
         ]
 
-    def test_two_seeds_measure_the_target_on_every_frame(self) -> None:
+    def test_two_samples_measure_the_target_on_every_frame(self) -> None:
         frames, truth = build_tracked_frame_set(frame_count=8)
         paths = self.write_frames(frames)
-        result = self._run(paths, _seeds_from_truth(truth, (0, 7)))
+        result = self._run(paths, _samples_from_truth(truth, (0, 7)))
         self.assertEqual(len(self._finite_rows(result)), 8)
 
     def test_recovers_injected_brightness_variation(self) -> None:
@@ -592,7 +593,7 @@ class TestMovingTargetLightCurve(unittest.TestCase):
         fluxes = [_flux_for_mag(15.0 + 0.2 * math.sin(2 * math.pi * i / frame_count)) for i in range(frame_count)]
         frames, truth = build_tracked_frame_set(frame_count=frame_count, target_flux_by_frame=fluxes)
         paths = self.write_frames(frames)
-        result = self._run(paths, _seeds_from_truth(truth, (0, frame_count - 1)))
+        result = self._run(paths, _samples_from_truth(truth, (0, frame_count - 1)))
 
         rows = self._finite_rows(result)
         self.assertEqual(len(rows), frame_count)
@@ -602,15 +603,15 @@ class TestMovingTargetLightCurve(unittest.TestCase):
         for want, got in zip(expected, measured):
             self.assertAlmostEqual(got - offset, want, delta=0.02)
 
-    def test_three_seeds_needed_for_a_curved_track(self) -> None:
+    def test_three_samples_needed_for_a_curved_track(self) -> None:
         """A line through the endpoints of a curved track walks the aperture off the target."""
         frames, truth = build_tracked_frame_set(frame_count=9, target_curvature_arcsec=25.0)
         paths = self.write_frames(frames)
 
-        quadratic = self._run(paths, _seeds_from_truth(truth, (0, 4, 8)))
+        quadratic = self._run(paths, _samples_from_truth(truth, (0, 4, 8)))
         self.assertEqual(len(self._finite_rows(quadratic)), 9)
 
-        linear = self._run(paths, _seeds_from_truth(truth, (0, 8)))
+        linear = self._run(paths, _samples_from_truth(truth, (0, 8)))
         mid_linear = [row for row in self._finite_rows(linear) if "frame_05" in row.fits_path]
         mid_quadratic = [row for row in self._finite_rows(quadratic) if "frame_05" in row.fits_path]
         self.assertTrue(mid_quadratic)
@@ -623,10 +624,10 @@ class TestMovingTargetLightCurve(unittest.TestCase):
                 0.3,
             )
 
-    def test_catalog_search_rescues_a_curved_track_seeded_with_only_two_points(self) -> None:
+    def test_catalog_search_rescues_a_curved_track_sampleed_with_only_two_points(self) -> None:
         """
             The interpolated position is a search position, not the final answer. With curvature
-            inside the search radius, a two-seed straight line mispredicts by several arcseconds --
+            inside the search radius, a two-sample straight line mispredicts by several arcseconds --
             far beyond the centroid recenter cap -- and the catalog search still recovers the target
             on every frame. Without the target in the catalog there is nothing to find, and the same
             run degrades.
@@ -635,7 +636,7 @@ class TestMovingTargetLightCurve(unittest.TestCase):
         found, truth = build_tracked_frame_set(
             frame_count=9, target_curvature_arcsec=curvature_arcsec, include_target_in_catalog=True
         )
-        result = self._run(self.write_frames(found), _seeds_from_truth(truth, (0, 8)))
+        result = self._run(self.write_frames(found), _samples_from_truth(truth, (0, 8)))
         self.assertEqual(len(self._finite_rows(result)), 9)
         self.assertTrue(any("located the target" in message.lower() for message in result.diagnostics))
 
@@ -645,17 +646,17 @@ class TestMovingTargetLightCurve(unittest.TestCase):
         missing, truth = build_tracked_frame_set(
             frame_count=9, target_curvature_arcsec=curvature_arcsec, include_target_in_catalog=False
         )
-        degraded = self._run(self.write_frames(missing), _seeds_from_truth(truth, (0, 8)))
+        degraded = self._run(self.write_frames(missing), _samples_from_truth(truth, (0, 8)))
         self.assertTrue(any("interpolated positions" in message.lower() for message in degraded.diagnostics))
 
     def test_extrapolated_frames_are_flagged(self) -> None:
         frames, truth = build_tracked_frame_set(frame_count=8)
         paths = self.write_frames(frames)
-        # Seed only the middle of the series, so the first and last frames are extrapolated.
-        result = self._run(paths, _seeds_from_truth(truth, (2, 5)))
+        # Sample only the middle of the series, so the first and last frames are extrapolated.
+        result = self._run(paths, _samples_from_truth(truth, (2, 5)))
         self.assertTrue(any("extrapolated" in message.lower() for message in result.diagnostics))
 
-    def test_long_arc_with_two_seeds_recommends_a_third(self) -> None:
+    def test_long_arc_with_two_samples_recommends_a_third(self) -> None:
         span_hours = LINEAR_TRACK_MAX_SPAN_HOURS * 3.0
         frames, truth = build_tracked_frame_set(
             frame_count=6,
@@ -663,22 +664,22 @@ class TestMovingTargetLightCurve(unittest.TestCase):
             target_rate_arcsec_per_hour=0.3,
         )
         paths = self.write_frames(frames)
-        result = self._run(paths, _seeds_from_truth(truth, (0, 5)))
+        result = self._run(paths, _samples_from_truth(truth, (0, 5)))
         self.assertTrue(any("third, mid-series frame" in message.lower() for message in result.diagnostics))
 
-    def test_short_arc_with_two_seeds_is_not_warned_about(self) -> None:
+    def test_short_arc_with_two_samples_is_not_warned_about(self) -> None:
         frames, truth = build_tracked_frame_set(frame_count=6, cadence_hours=0.5)
         paths = self.write_frames(frames)
-        result = self._run(paths, _seeds_from_truth(truth, (0, 5)))
+        result = self._run(paths, _samples_from_truth(truth, (0, 5)))
         self.assertFalse(any("third, mid-series frame" in message.lower() for message in result.diagnostics))
 
     def test_track_fit_is_reported_in_diagnostics(self) -> None:
         frames, truth = build_tracked_frame_set(frame_count=6)
         paths = self.write_frames(frames)
-        result = self._run(paths, _seeds_from_truth(truth, (0, 5)))
+        result = self._run(paths, _samples_from_truth(truth, (0, 5)))
         self.assertTrue(any("fitted a degree-" in message.lower() for message in result.diagnostics))
 
-    def test_missing_seeds_raises(self) -> None:
+    def test_missing_samples_raises(self) -> None:
         frames, _ = build_tracked_frame_set(frame_count=3)
         paths = self.write_frames(frames)
         with self.assertRaises(LightCurveError):
@@ -687,10 +688,26 @@ class TestMovingTargetLightCurve(unittest.TestCase):
     def test_target_own_catalog_entry_is_not_used_as_a_comparison(self) -> None:
         frames, truth = build_tracked_frame_set(frame_count=6, include_target_in_catalog=True)
         paths = self.write_frames(frames)
-        result = self._run(paths, _seeds_from_truth(truth, (0, 5)))
+        result = self._run(paths, _samples_from_truth(truth, (0, 5)))
         self.assertNotIn(
             "target-shadow",
             {star.candidate_id for star in result.selected_comparison_stars},
+        )
+
+    def test_period_analysis_runs_on_the_real_light_curve_rows(self) -> None:
+        """Feed the actual pipeline output to the period helper: proves the LightCurveRow contract."""
+        frame_count = 10
+        fluxes = [_flux_for_mag(15.0 + 0.2 * math.sin(2 * math.pi * i / frame_count)) for i in range(frame_count)]
+        frames, truth = build_tracked_frame_set(frame_count=frame_count, target_flux_by_frame=fluxes)
+        paths = self.write_frames(frames)
+        result = self._run(paths, _samples_from_truth(truth, (0, frame_count - 1)))
+
+        period_output = period_output_from_light_curve_rows(result.light_curve_rows)
+        self.assertIsNotNone(period_output)
+        # Same keys VariableStar emits, plus the doubled-period candidate.
+        self.assertLessEqual({"period", "fap", "frequency", "power"}, set(period_output))
+        self.assertEqual(
+            {c["kind"] for c in period_output["period_candidates"]}, {"peak", "double"}
         )
 
 
@@ -745,7 +762,7 @@ class TestMovingTargetOperations(unittest.TestCase):
         self.assertTrue(referenced, "expected the shared runner to read fields off the result")
         self.assertEqual(referenced - available, set())
 
-    def test_track_operation_rejects_missing_sightings(self) -> None:
+    def test_track_operation_rejects_missing_samples(self) -> None:
         from datalab.datalab_session.data_operations.moving_target_aperture_photometry import (
             MovingTargetAperturePhotometry,
         )
@@ -754,7 +771,7 @@ class TestMovingTargetOperations(unittest.TestCase):
         with self.assertRaises(ClientAlertException):
             operation.operate(submitter=None)
 
-    def test_track_operation_rejects_malformed_sightings(self) -> None:
+    def test_track_operation_rejects_malformed_samples(self) -> None:
         from datalab.datalab_session.data_operations.moving_target_aperture_photometry import (
             MovingTargetAperturePhotometry,
         )
