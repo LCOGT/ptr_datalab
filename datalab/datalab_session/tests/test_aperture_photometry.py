@@ -4,7 +4,6 @@ import math
 import os
 import tempfile
 import unittest
-import base64
 from io import BytesIO
 from dataclasses import asdict
 from pathlib import Path
@@ -33,11 +32,11 @@ APERTURE_PHOTOMETRY_TEST_DIR = Path(__file__).resolve().parent / "test_files" / 
 TEST_DEG_PER_PIXEL = 1.0 / 3600.0
 
 def print_nearest_fits_catalog_target_matches(
-    input_handlers: list[Any],
+    fits_paths: list[str],
     target_ra_deg: float,
     target_dec_deg: float,
 ) -> None:
-    frames = _validated_frame_contexts(input_handlers)
+    frames = _validated_frame_contexts(fits_paths)
     print("\nNearest FITS catalog rows to target:")
     for frame in frames:
         candidates = [
@@ -179,8 +178,8 @@ class TestAperturePhotometry(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def write_frames(self, frames: dict[str, dict[str, Any]]) -> list[Any]:
-        input_handlers: list[Any] = []
+    def write_frames(self, frames: dict[str, dict[str, Any]]) -> list[str]:
+        fits_paths: list[str] = []
         for name, frame in frames.items():
             path = os.path.join(self.temp_dir.name, name)
             header = fits.Header()
@@ -192,19 +191,8 @@ class TestAperturePhotometry(unittest.TestCase):
             ]
             hdus.append(self._cat_hdu(frame["second_hdu"]))
             fits.HDUList(hdus).writeto(path, overwrite=True)
-            input_handlers.append(self.input_handler_for_path(path))
-        return input_handlers
-
-    def input_handler_for_path(self, path: str) -> Any:
-        with fits.open(path) as hdul:
-            hdus = {hdu.name: hdu.copy() for hdu in hdul}
-            hdus["PRIMARY"] = hdul[0].copy()
-        return SimpleNamespace(
-            fits_file=path,
-            sci_hdu=hdus["SCI"],
-            sci_data=hdus["SCI"].data,
-            get_hdu=lambda extension=None, hdus=hdus: hdus[extension or "SCI"],
-        )
+            fits_paths.append(path)
+        return fits_paths
 
     def _cat_hdu(self, rows: list[dict[str, Any]]) -> fits.BinTableHDU:
         if not rows:
@@ -326,8 +314,8 @@ class TestAperturePhotometry(unittest.TestCase):
         # Point the target at an empty patch of sky (~16px from any source) so centroiding cannot
         # lock on. _measure_target must never raise or drift onto a neighbour: it measures at the
         # authoritative WCS position instead of the real source at (30.3, 28.8).
-        from datalab.datalab_session.utils.aperture_light_curve import _measure_target
-        from datalab.datalab_session.utils.fits_metadata import world_to_pixel
+        from datalab.datalab_session.utils.aperture_light_curve import _load_frame_image, _measure_target
+        from datalab.datalab_session.utils.fits_metadata import frame_geometry, world_to_pixel
 
         frames, _ = build_frame_set()
         header = frames["frame_1.fits"]["header"]
@@ -338,11 +326,10 @@ class TestAperturePhotometry(unittest.TestCase):
 
         measurement = _measure_target(
             frame=frame,
+            image=_load_frame_image(frame.fits_path),
+            geometry=frame_geometry(frame.header, 4.0, 6.0, 9.0),
             target_ra_deg=empty_ra,
             target_dec_deg=empty_dec,
-            aperture_radius=4.0,
-            annulus_inner_radius=6.0,
-            annulus_outer_radius=9.0,
         )
 
         self.assertAlmostEqual(measurement.x, initial_x, delta=1.0e-6)
@@ -580,20 +567,22 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertNotIn("cand-blended", kept_ids)
         self.assertEqual(len(kept), 5)
 
-    def test_diagnostic_images_include_labeled_candidate_overlay_jpegs(self) -> None:
+    def test_diagnostic_images_include_candidate_overlay_jpegs(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
         result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
 
         self.assertEqual(
-            set(result.diagnostic_images_by_fits_basename),
+            set(result.diagnostic_image_jpegs_by_fits_basename),
             {"frame_1.fits", "frame_2.fits", "frame_3.fits"},
         )
-        image_data = base64.b64decode(result.diagnostic_images_by_fits_basename["frame_1.fits"])
+        from datalab.datalab_session.utils.photometry_diagnostics import OVERLAY_MAX_DIMENSION
+
+        image_data = result.diagnostic_image_jpegs_by_fits_basename["frame_1.fits"]
         image = Image.open(BytesIO(image_data))
         self.assertEqual(image.format, "JPEG")
-        self.assertEqual(image.size, (80, 80))
+        self.assertEqual(max(image.size), OVERLAY_MAX_DIMENSION)
         rgb = np.asarray(image.convert("RGB"))
         blue_overlay_pixels = np.count_nonzero(
             (rgb[:, :, 0] < 80) &
@@ -614,7 +603,30 @@ class TestAperturePhotometry(unittest.TestCase):
             (rgb[:, :, 1] < 170) &
             (rgb[:, :, 2] < 90)
         )[:, 0]
-        self.assertGreater(float(np.mean(orange_rows)), 40.0)
+        self.assertGreater(float(np.mean(orange_rows)), rgb.shape[0] * 0.5)
+
+    def test_progress_callback_reports_monotonic_per_frame_progress(self) -> None:
+        from datalab.datalab_session.utils.aperture_light_curve import PROGRESS_PHASES
+
+        frames, (target_ra, target_dec) = build_frame_set()
+        fits_paths = self.write_frames(frames)
+        reported: list[tuple[str, float]] = []
+
+        generate_light_curve(
+            fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0,
+            progress_callback=lambda phase, fraction: reported.append((phase, fraction)),
+        )
+
+        phases = [phase for phase, _ in reported]
+        # Phases arrive in pipeline order and every phase reports.
+        self.assertEqual(sorted(set(phases), key=PROGRESS_PHASES.index), list(PROGRESS_PHASES))
+        self.assertEqual(phases, sorted(phases, key=PROGRESS_PHASES.index))
+        # The frame-iterating phases report an increasing fraction once per frame, ending at 1.0.
+        for phase in ("validate", "catalog", "measure", "render"):
+            fractions = [fraction for reported_phase, fraction in reported if reported_phase == phase]
+            self.assertEqual(len(fractions), len(fits_paths))
+            self.assertEqual(fractions, sorted(fractions))
+            self.assertAlmostEqual(fractions[-1], 1.0)
 
     def test_determinism(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
@@ -630,6 +642,96 @@ class TestAperturePhotometry(unittest.TestCase):
             [row.target_calibrated_apparent_magnitude for row in result1.light_curve_rows],
             [row.target_calibrated_apparent_magnitude for row in result2.light_curve_rows],
         )
+
+    def test_pixel_data_streams_one_frame_at_a_time(self) -> None:
+        # The pipeline exists to keep memory flat in the input count: each frame's pixels are
+        # loaded once for measurement and once for overlay rendering, at most one frame's pixels
+        # may be alive at any moment, and nothing in the result may retain pixel arrays after
+        # the run.
+        import gc
+        import weakref
+        from unittest import mock
+
+        from datalab.datalab_session.utils import aperture_light_curve as light_curve_module
+
+        frames, (target_ra, target_dec) = build_frame_set()
+        fits_paths = self.write_frames(frames)
+
+        loaded_refs: list[weakref.ref] = []
+        loaded_paths: list[str] = []
+        max_concurrent_images = 0
+        original_load = light_curve_module._load_frame_image
+
+        def tracking_load(fits_path: str):
+            nonlocal max_concurrent_images
+            image = original_load(fits_path)
+            alive = sum(1 for ref in loaded_refs if ref() is not None) + 1
+            max_concurrent_images = max(max_concurrent_images, alive)
+            loaded_refs.append(weakref.ref(image))
+            loaded_paths.append(fits_path)
+            return image
+
+        with mock.patch.object(light_curve_module, "_load_frame_image", new=tracking_load):
+            result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+
+        gc.collect()
+        self.assertEqual(len(result.light_curve_rows), 3)
+        self.assertEqual(sorted(loaded_paths), sorted(fits_paths * 2))
+        self.assertEqual(max_concurrent_images, 1)
+        self.assertTrue(all(ref() is None for ref in loaded_refs))
+
+    def test_overlay_crops_full_resolution_before_resampling(self) -> None:
+        from datalab.datalab_session.utils.photometry_diagnostics import (
+            OVERLAY_MAX_DIMENSION,
+            candidate_overlay_jpeg_bytes,
+        )
+
+        height, width = 2400, 3200
+        header = {
+            "CTYPE1": "RA---TAN",
+            "CTYPE2": "DEC--TAN",
+            "CUNIT1": "deg",
+            "CUNIT2": "deg",
+            "CRVAL1": 100.0,
+            "CRVAL2": 20.0,
+            "CRPIX1": 0.0,
+            "CRPIX2": 0.0,
+            "CD1_1": TEST_DEG_PER_PIXEL,
+            "CD1_2": 0.0,
+            "CD2_1": 0.0,
+            "CD2_2": TEST_DEG_PER_PIXEL,
+        }
+        frame = SimpleNamespace(fits_path="big.fits", header=header, width=width, height=height)
+        image_data = np.full((height, width), 100.0, dtype=np.float32)
+        # Bright marker centered on the target's full-resolution position: the crop happens at
+        # full resolution around the target circle, and the circle must surround the marker.
+        image_data[297:304, 597:604] = 5000.0
+        target_full_res = SimpleNamespace(x=600.0, y=300.0)
+
+        jpeg_bytes = candidate_overlay_jpeg_bytes(
+            frame=frame,
+            image=image_data,
+            stars=[],
+            measurements=[],
+            target_measurement=target_full_res,
+            aperture_radius=4.0,
+        )
+
+        rgb = np.asarray(Image.open(BytesIO(jpeg_bytes)).convert("RGB"))
+        # The tight square crop around the single target circle is resampled up to the output
+        # size; cropping after the whole-frame downsample would have produced a 750x1000 image.
+        self.assertEqual(rgb.shape[:2], (OVERLAY_MAX_DIMENSION, OVERLAY_MAX_DIMENSION))
+        orange = np.argwhere(
+            (rgb[:, :, 0] > 180) &
+            (rgb[:, :, 1] > 80) &
+            (rgb[:, :, 1] < 170) &
+            (rgb[:, :, 2] < 90)
+        )
+        self.assertGreater(len(orange), 0)
+        marker = np.argwhere(np.all(rgb > 200, axis=2))
+        self.assertGreater(len(marker), 0)
+        self.assertAlmostEqual(float(np.mean(orange[:, 1])), float(np.mean(marker[:, 1])), delta=5.0)
+        self.assertAlmostEqual(float(np.mean(orange[:, 0])), float(np.mean(marker[:, 0])), delta=5.0)
 
     def test_default_fits_dependencies_read_sci_header_and_cat_rows(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set(frame_count=1)
@@ -659,9 +761,8 @@ class TestAperturePhotometry(unittest.TestCase):
         ])
         hdul.writeto(path, overwrite=True)
         try:
-            input_handler = self.input_handler_for_path(path)
             result = generate_light_curve(
-                [input_handler],
+                [path],
                 target_ra_deg=target_ra,
                 target_dec_deg=target_dec,
                 aperture_radius=4.0,
@@ -699,18 +800,17 @@ class TestAperturePhotometry(unittest.TestCase):
     def test_real_compressed_fits_aperture_photometry_prints_diagnostics_and_results(self) -> None:
         fits_paths = sorted(str(path) for path in APERTURE_PHOTOMETRY_TEST_DIR.glob("*.fits.fz"))
         self.assertEqual(len(fits_paths), 3)
-        input_handlers = [self.input_handler_for_path(path) for path in fits_paths]
         target_ra_deg = 199.150264
         target_dec_deg = 42.093592
 
         print_nearest_fits_catalog_target_matches(
-            input_handlers,
+            fits_paths,
             target_ra_deg=target_ra_deg,
             target_dec_deg=target_dec_deg,
         )
 
         result = generate_light_curve(
-            input_handlers,
+            fits_paths,
             target_ra_deg=target_ra_deg,
             target_dec_deg=target_dec_deg,
             aperture_radius=7.64,
@@ -751,9 +851,8 @@ class TestAperturePhotometry(unittest.TestCase):
             fits.ImageHDU(data=np.zeros((20, 20), dtype=float), header=header, name="SCI"),
         ]).writeto(path, overwrite=True)
         try:
-            input_handler = self.input_handler_for_path(path)
             with self.assertRaisesRegex(LightCurveError, "requires at least 1 valid input file"):
-                generate_light_curve([input_handler], 100.0, 20.0, 2.0, 3.0, 5.0)
+                generate_light_curve([path], 100.0, 20.0, 2.0, 3.0, 5.0)
         finally:
             os.remove(path)
 

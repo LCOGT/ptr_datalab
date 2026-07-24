@@ -1,8 +1,7 @@
-import numpy as np
 from django.contrib.auth.models import User
 
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.utils.file_utils import get_hdu, scale_points
+from datalab.datalab_session.utils.file_utils import get_fits_dimensions, get_hdu, scale_points
 from datalab.datalab_session.utils.filecache import FileCache
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
@@ -33,7 +32,6 @@ def source_catalog(input: dict, user: User):
     raise ClientAlertException(f"Download of {input['basename']} timed out")
   
   cat_hdu = get_hdu(file_path, 'CAT')
-  sci_hdu = get_hdu(file_path, 'SCI')
 
   DECIMALS_OF_PRECISION = 6
   MAX_SOURCE_CATALOG_SIZE = min(len(cat_hdu.data["x"]), 1000)
@@ -65,7 +63,8 @@ def source_catalog(input: dict, user: User):
     dec = None
 
   # scale the x_points and y_points from the fits pixel coords to the jpg coords
-  fits_height, fits_width = np.shape(sci_hdu.data)
+  # Shape comes from the SCI header: touching sci_hdu.data would decompress the whole image
+  fits_height, fits_width = get_fits_dimensions(file_path)
   x_points, y_points = scale_points(fits_height, fits_width, input['width'], input['height'], x_points=x_points, y_points=y_points)
   x, y = scale_points(fits_height, fits_width, input['width'], input['height'], x_points=x, y_points=y)
 
