@@ -1,6 +1,7 @@
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import shutil
+import tempfile
 from types import SimpleNamespace
 from unittest import mock
 import math
@@ -288,8 +289,9 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             'annulus_outer_radius': 19.10,
         }
 
+    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve')
-    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.InputDataHandler')
+    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache')
     @mock.patch.object(AperturePhotometry, 'set_status')
     @mock.patch.object(AperturePhotometry, 'set_output')
     @mock.patch.object(AperturePhotometry, 'set_operation_progress')
@@ -298,11 +300,12 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         mock_set_operation_progress,
         mock_set_output,
         mock_set_status,
-        mock_input_data_handler,
+        mock_file_cache,
         mock_generate_light_curve,
+        mock_save_files_to_s3,
     ):
-        input_handler = SimpleNamespace(fits_file='/tmp/fits_1.fits')
-        mock_input_data_handler.return_value = input_handler
+        mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
+        mock_save_files_to_s3.return_value = {'diagnostic_url': 'https://bucket/fits_1-diagnostic.jpg'}
         mock_generate_light_curve.return_value = SimpleNamespace(
             light_curve_rows=[
                 LightCurveRow(
@@ -325,15 +328,18 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             diagnostics_by_fits_basename={
                 'fits_1.fits': ['loaded 1 frame', 'selected 5 comparison stars'],
             },
-            diagnostic_images_by_fits_basename={},
+            diagnostic_image_jpegs_by_fits_basename={'fits_1.fits': b'jpeg-bytes'},
         )
         input_data = self.valid_input_data()
 
         aperture_photometry = AperturePhotometry(input_data)
+        aperture_photometry.temp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, aperture_photometry.temp, ignore_errors=True)
         aperture_photometry.operate(None)
 
+        mock_file_cache.return_value.get_fits.assert_called_once_with('fits_1', 'local', None)
         mock_generate_light_curve.assert_called_once_with(
-            input_handlers=[input_handler],
+            fits_paths=['/tmp/fits_1.fits'],
             target_ra_deg=10.0,
             target_dec_deg=20.0,
             aperture_radius=7.64,
@@ -341,6 +347,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             annulus_outer_radius=19.10,
             min_comparisons=5,
             max_comparisons=10,
+            progress_callback=mock.ANY,
         )
         output, is_raw = mock_set_output.call_args.args[0], mock_set_output.call_args.kwargs['is_raw']
         self.assertTrue(is_raw)
@@ -355,6 +362,13 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         self.assertTrue(math.isnan(
             output['output_data'][0]['light_curve'][0]['target_calibrated_apparent_magnitude_uncertainty']
         ))
+        mock_save_files_to_s3.assert_called_once_with(
+            aperture_photometry.cache_key, Format.IMAGE, mock.ANY, index=1
+        )
+        self.assertEqual(
+            output['output_data'][0]['diagnostic_images'],
+            {'fits_1.fits': 'https://bucket/fits_1-diagnostic.jpg'},
+        )
         mock_set_status.assert_called_once_with('COMPLETED')
 
     def test_operate_requires_aperture_radius(self):
@@ -383,23 +397,100 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         del input_data['input_files'][0]['filter']
 
         with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
-                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.InputDataHandler') as mock_input_data_handler, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
                 mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
                 mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
                 mock.patch.object(AperturePhotometry, 'set_status'):
-            mock_input_data_handler.return_value = SimpleNamespace(fits_file='/tmp/fits_1.fits')
+            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
             mock_generate_light_curve.return_value = SimpleNamespace(
                 light_curve_rows=[],
                 selected_comparison_stars=[],
                 diagnostics=[],
                 diagnostics_by_fits_basename={},
-                diagnostic_images_by_fits_basename={},
+                diagnostic_image_jpegs_by_fits_basename={},
             )
 
             AperturePhotometry(input_data).operate(None)
 
         output = mock_set_output.call_args.args[0]
         self.assertEqual(output['output_data'][0]['filter'], 'None')
+
+    def test_operate_accepts_unified_target_track(self):
+        """The fixed target may arrive as a one-element {mjd, ra, dec} list (the shared contract)."""
+        input_data = self.valid_input_data()
+        del input_data['source']
+        input_data['target_track'] = [{'mjd': 61208.5, 'ra': 10.0, 'dec': 20.0}]
+
+        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
+                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
+                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
+                mock.patch.object(AperturePhotometry, 'set_status'):
+            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
+            mock_generate_light_curve.return_value = SimpleNamespace(
+                light_curve_rows=[], selected_comparison_stars=[], diagnostics=[],
+                diagnostics_by_fits_basename={}, diagnostic_image_jpegs_by_fits_basename={},
+            )
+
+            AperturePhotometry(input_data).operate(None)
+
+        # The mjd is carried but unused; the position feeds through as a fixed target.
+        _, kwargs = mock_generate_light_curve.call_args
+        self.assertEqual((kwargs['target_ra_deg'], kwargs['target_dec_deg']), (10.0, 20.0))
+        output = mock_set_output.call_args.args[0]
+        self.assertEqual(output['output_data'][0]['source'], {'ra': 10.0, 'dec': 20.0})
+
+    def test_operate_requires_a_target_position(self):
+        input_data = self.valid_input_data()
+        del input_data['source']
+
+        with self.assertRaisesRegex(ClientAlertException, 'requires a target position'):
+            AperturePhotometry(input_data).operate(None)
+
+    def test_wizard_advertises_the_unified_target_input(self):
+        inputs = AperturePhotometry.wizard_description()['inputs']
+        self.assertIn('target_track', inputs)
+        self.assertNotIn('source', inputs)
+        self.assertEqual(inputs['target_track']['type'], Format.SOURCE)
+        self.assertTrue(inputs['target_track'].get('name_lookup'))
+
+    def test_operate_emits_period_analysis_for_a_measured_light_curve(self):
+        """A light curve with enough points gets Lomb-Scargle period keys in the output."""
+        input_data = self.valid_input_data()
+        rows = [
+            LightCurveRow(
+                fits_path=f'/tmp/fits_{i}.fits',
+                date_obs=datetime(2026, 5, 13, tzinfo=timezone.utc) + timedelta(hours=float(i)),
+                target_centroid_x=1.0, target_centroid_y=2.0,
+                target_net_source_counts=3.0, target_source_uncertainty=4.0,
+                comparison_ensemble_total_counts=5.0, comparison_ensemble_uncertainty=6.0,
+                target_differential_flux=7.0, target_differential_flux_uncertainty=8.0,
+                target_calibrated_apparent_magnitude=15.0 + 0.2 * math.sin(2 * math.pi * i / 12.0),
+                target_calibrated_apparent_magnitude_uncertainty=0.01,
+            )
+            for i in range(12)
+        ]
+
+        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.save_files_to_s3') as mock_save, \
+                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
+                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
+                mock.patch.object(AperturePhotometry, 'set_message'), \
+                mock.patch.object(AperturePhotometry, 'set_status'):
+            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
+            mock_save.return_value = {'diagnostic_url': 'https://bucket/x.jpg'}
+            mock_generate_light_curve.return_value = SimpleNamespace(
+                light_curve_rows=rows, selected_comparison_stars=[], diagnostics=[],
+                diagnostics_by_fits_basename={}, diagnostic_image_jpegs_by_fits_basename={},
+            )
+            operation = AperturePhotometry(input_data)
+            operation.temp = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, operation.temp, ignore_errors=True)
+            operation.operate(None)
+
+        output = mock_set_output.call_args.args[0]['output_data'][0]
+        self.assertLessEqual({'period', 'fap', 'frequency', 'power', 'period_candidates'}, set(output))
 
 
 class TestColorImageOperation(FileExtendedTestCase):

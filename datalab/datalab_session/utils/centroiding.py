@@ -140,19 +140,19 @@ def calculate_background_model(
   j2 = int(y_center + r_back2)
 
   annulus_pixels: list[tuple[float, float, float]] = []
-  if remove_background_stars:
-    for j in range(j1, j2 + 1):
-      dj = j - y_center + HALF_PIXEL
-      for i in range(i1, i2 + 1):
-        di = i - x_center + HALF_PIXEL
-        radius2 = di * di + dj * dj
-        if r12 <= radius2 <= r22:
-          value = _pixel(image, i, j)
-          if not math.isnan(value):
-            annulus_pixels.append((di, dj, value))
+  for j in range(j1, j2 + 1):
+    dj = j - y_center + HALF_PIXEL
+    for i in range(i1, i2 + 1):
+      di = i - x_center + HALF_PIXEL
+      radius2 = di * di + dj * dj
+      if r12 <= radius2 <= r22:
+        value = _pixel(image, i, j)
+        if not math.isnan(value):
+          annulus_pixels.append((di, dj, value))
 
-    back_mean = 0.0
-    back2_mean = 0.0
+  back_mean = 0.0
+  back2_mean = 0.0
+  if remove_background_stars:
     previous_back_mean = 0.0
     for iteration in range(max_iterations):
       back_stdev = math.sqrt(max(0.0, back2_mean - back_mean * back_mean))
@@ -169,26 +169,16 @@ def calculate_background_model(
       if abs(previous_back_mean - back_mean) < tolerance:
         break
       previous_back_mean = back_mean
-  else:
-    back_mean = 0.0
-    back2_mean = 0.0
 
   back_stdev = math.sqrt(max(0.0, back2_mean - back_mean * back_mean))
   lower = back_mean - 2.0 * back_stdev
   upper = back_mean + 2.0 * back_stdev
 
-  kept: list[tuple[float, float, float]] = []
-  for j in range(j1, j2 + 1):
-    dj = j - y_center + HALF_PIXEL
-    for i in range(i1, i2 + 1):
-      di = i - x_center + HALF_PIXEL
-      radius2 = di * di + dj * dj
-      if r12 <= radius2 <= r22:
-        value = _pixel(image, i, j)
-        if math.isnan(value):
-          continue
-        if not remove_background_stars or (lower <= value <= upper):
-          kept.append((di, dj, value))
+  kept = [
+    (di, dj, value)
+    for di, dj, value in annulus_pixels
+    if not remove_background_stars or (lower <= value <= upper)
+  ]
 
   background = sum(value for _, _, value in kept) / len(kept) if kept else 0.0
   plane = _fit_plane(kept) if use_plane_background else None
@@ -257,7 +247,9 @@ def centroid(
 
     Returns a CentroidResult containing the centroid position, localbackground estimate, peak value, and any relevant messages.
   """
-  image = np.asarray(image, dtype=float)
+  # No dtype here: forcing float64 would copy the entire frame on every call, and this runs once
+  # per comparison candidate per frame. Pixels are read as Python floats, so any numeric dtype works.
+  image = np.asarray(image)
   x_center = x_click
   y_center = y_click
   radius = max(radius, 3.0)

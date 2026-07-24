@@ -1,13 +1,12 @@
 import logging
 
-import numpy as np
-from astropy.timeseries import LombScargle
 from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.data_operations.light_curve import light_curve
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.format import Format
+from datalab.datalab_session.utils.period_analysis import analyze_period
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -115,21 +114,15 @@ The output is the lightcurve and periodogram data for period stacking of the pho
 
 def calculate_period(light_curve):
   """
-  Use the astropy lomb scargle to perform the periodogram analysis on the light curve
+  Use the astropy lomb scargle to perform the periodogram analysis on the light curve.
+
+  Delegates to the shared analyze_period so the aperture photometry operations reuse the same
+  period search. The default (no alias exclusion) reproduces the original result exactly.
   """
-  ls = LombScargle(
+  analysis = analyze_period(
     [lc['julian_date'] for lc in light_curve],
     [lc['mag'] for lc in light_curve],
-    [lc['magerr'] for lc in light_curve]
+    [lc['magerr'] for lc in light_curve],
   )
-
-  frequency, power = ls.autopower()
-
-  # Find the best frequency
-  best_frequency = frequency[np.argmax(power)]
-  period = 1 / best_frequency
-
-  fap = ls.false_alarm_probability(power.max())
-
-  log.info(f"Best period found: {period} days with FAP: {fap}")
-  return frequency, power, period, fap
+  log.info(f"Best period found: {analysis.period} days with FAP: {analysis.false_alarm_probability}")
+  return analysis.frequency, analysis.power, analysis.period, analysis.false_alarm_probability
