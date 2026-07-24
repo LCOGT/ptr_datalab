@@ -415,6 +415,45 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         output = mock_set_output.call_args.args[0]
         self.assertEqual(output['output_data'][0]['filter'], 'None')
 
+    def test_operate_accepts_unified_target_track(self):
+        """The fixed target may arrive as a one-element {mjd, ra, dec} list (the shared contract)."""
+        input_data = self.valid_input_data()
+        del input_data['source']
+        input_data['target_track'] = [{'mjd': 61208.5, 'ra': 10.0, 'dec': 20.0}]
+
+        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
+                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
+                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
+                mock.patch.object(AperturePhotometry, 'set_status'):
+            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
+            mock_generate_light_curve.return_value = SimpleNamespace(
+                light_curve_rows=[], selected_comparison_stars=[], diagnostics=[],
+                diagnostics_by_fits_basename={}, diagnostic_image_jpegs_by_fits_basename={},
+            )
+
+            AperturePhotometry(input_data).operate(None)
+
+        # The mjd is carried but unused; the position feeds through as a fixed target.
+        _, kwargs = mock_generate_light_curve.call_args
+        self.assertEqual((kwargs['target_ra_deg'], kwargs['target_dec_deg']), (10.0, 20.0))
+        output = mock_set_output.call_args.args[0]
+        self.assertEqual(output['output_data'][0]['source'], {'ra': 10.0, 'dec': 20.0})
+
+    def test_operate_requires_a_target_position(self):
+        input_data = self.valid_input_data()
+        del input_data['source']
+
+        with self.assertRaisesRegex(ClientAlertException, 'requires a target position'):
+            AperturePhotometry(input_data).operate(None)
+
+    def test_wizard_advertises_the_unified_target_input(self):
+        inputs = AperturePhotometry.wizard_description()['inputs']
+        self.assertIn('target_track', inputs)
+        self.assertNotIn('source', inputs)
+        self.assertEqual(inputs['target_track']['type'], Format.SOURCE)
+        self.assertTrue(inputs['target_track'].get('name_lookup'))
+
 
 class TestColorImageOperation(FileExtendedTestCase):
     temp_color_path = f'{test_path}temp_color.fits'

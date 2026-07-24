@@ -58,10 +58,9 @@ class MovingTargetAperturePhotometry(BaseDataOperation):
                         'line, which holds for a night; add a third near the middle for a series spanning '
                         'more than about half a day, since apparent tracks curve.'
                     ),
-                    # No existing operation takes a list of timed sky positions, so this input has no
-                    # settled frontend representation yet: Format.SOURCE carries the coordinates but
-                    # not the time, and the multiple/minimum keys below are not yet honoured by the
-                    # wizard. The backend accepts a plain list of {mjd, ra, dec} mappings regardless.
+                    # The shared target-position contract across all aperture photometry operations:
+                    # a list of {mjd, ra, dec}. The fixed and header operations take one or zero
+                    # positions; this one takes MINIMUM_TRACK_SEEDS or more to fit a track through.
                     'type': Format.SOURCE,
                     'multiple': True,
                     'required': True,

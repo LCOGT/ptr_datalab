@@ -96,7 +96,7 @@ class TargetTrack:
         return first <= float(mjd) <= last
 
 
-def track_seeds_from_input(raw_seeds: Any) -> tuple[TrackSeed, ...]:
+def track_seeds_from_input(raw_seeds: Any, *, minimum: int = MINIMUM_TRACK_SEEDS) -> tuple[TrackSeed, ...]:
     """
         Parses the user-supplied track seeds into TrackSeed records, sorted by time.
 
@@ -104,12 +104,17 @@ def track_seeds_from_input(raw_seeds: Any) -> tuple[TrackSeed, ...]:
         exposure midpoint. Deliberately carries no frame identity: seeds are just sightings on the
         sky, so they need not come from the submitted frames at all. Raises ValueError on anything
         malformed; callers wrap it in their own error type.
+
+        minimum is how many seeds the caller needs: fitting a track needs the default two, but a
+        fixed-target operation reuses this parser for a single {mjd, ra, dec} position (minimum=1),
+        where the mjd is carried but unused. The distinct-times check only applies once more than one
+        seed is required -- a lone seed has nothing to be distinct from.
     """
     if not isinstance(raw_seeds, Sequence) or isinstance(raw_seeds, (str, bytes)):
         raise ValueError("Track seeds must be a list of {mjd, ra, dec} entries.")
-    if len(raw_seeds) < MINIMUM_TRACK_SEEDS:
+    if len(raw_seeds) < minimum:
         raise ValueError(
-            f"A target track needs at least {MINIMUM_TRACK_SEEDS} seed positions, got {len(raw_seeds)}."
+            f"A target track needs at least {minimum} seed position(s), got {len(raw_seeds)}."
         )
 
     seeds: list[TrackSeed] = []
@@ -131,7 +136,7 @@ def track_seeds_from_input(raw_seeds: Any) -> tuple[TrackSeed, ...]:
         seeds.append(TrackSeed(mjd=mjd, ra_deg=ra_deg, dec_deg=dec_deg))
 
     seeds.sort(key=lambda seed: seed.mjd)
-    if len({seed.mjd for seed in seeds}) < MINIMUM_TRACK_SEEDS:
+    if minimum >= MINIMUM_TRACK_SEEDS and len({seed.mjd for seed in seeds}) < MINIMUM_TRACK_SEEDS:
         raise ValueError("Track seeds must be at two or more distinct times.")
     return tuple(seeds)
 

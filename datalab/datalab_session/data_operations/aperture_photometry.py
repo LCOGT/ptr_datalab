@@ -18,6 +18,7 @@ from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
     generate_light_curve,
 )
+from datalab.datalab_session.utils.target_track import track_seeds_from_input
 
 
 log = logging.getLogger()
@@ -57,11 +58,13 @@ class AperturePhotometry(BaseDataOperation):
             'description': AperturePhotometry.description(),
             'category': 'image',
             'inputs': {
-                'source': {
-                    'name': 'Source Star',
+                'target_track': {
+                    'name': 'Target',
                     'type': Format.SOURCE,
-                    'description': 'The source star to measure',
-                    'name_lookup': True
+                    'description': 'The target to measure, as one {mjd, ra, dec} position. The mjd is carried but unused for a fixed target.',
+                    'name_lookup': True,
+                    'multiple': True,
+                    'minimum': 1,
                 },
                 'input_files': {
                     'name': 'Input Files',
@@ -109,15 +112,39 @@ class AperturePhotometry(BaseDataOperation):
             }
         }
 
+    def _resolve_fixed_target(self) -> tuple[float, float]:
+        """
+            The fixed target's RA/Dec (degrees), from the unified target_track input or a legacy source.
+
+            All aperture photometry operations now receive the target position as a list of
+            {mjd, ra, dec}; a fixed target is a single-element list whose mjd is carried but unused.
+            The legacy source input ({ra, dec}) is still accepted so existing API clients and saved
+            sessions keep working, but is no longer advertised in the wizard.
+        """
+        raw_track = self.input_data.get('target_track')
+        if raw_track:
+            try:
+                seeds = track_seeds_from_input(raw_track, minimum=1)
+            except ValueError as exc:
+                raise ClientAlertException(f'Invalid target position: {exc}') from exc
+            return seeds[0].ra_deg, seeds[0].dec_deg
+
+        source = self.input_data.get('source')
+        if source:
+            try:
+                return float(source['ra']), float(source['dec'])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ClientAlertException(f'Invalid source coordinates: {exc}') from exc
+
+        raise ClientAlertException(f'Operation {self.name()} requires a target position.')
+
     def operate(self, submitter: User):
         """
             Runs aperture photometry for the submitted source and input FITS files.
             
             Returns a calibrated light curve and diagnostic data for the frontend.
         """
-        source = self.input_data.get('source')
-        if not source:
-            raise ClientAlertException(f'Operation {self.name()} requires a source.')
+        target_ra, target_dec = self._resolve_fixed_target()
 
         input_files = self._validate_inputs(
             input_key='input_files',
@@ -126,8 +153,6 @@ class AperturePhotometry(BaseDataOperation):
         log.info(f"Aperture Photometry operation on {', '.join([image['basename'] for image in input_files])}")
 
         try:
-            target_ra = float(source.get('ra'))
-            target_dec = float(source.get('dec'))
             aperture_radius = float(self.input_data['aperture_radius'])
             annulus_inner_radius = float(self.input_data['annulus_inner_radius'])
             annulus_outer_radius = float(self.input_data['annulus_outer_radius'])
@@ -163,7 +188,7 @@ class AperturePhotometry(BaseDataOperation):
         output = {
             'output_data': [
                 {
-                    'source': source,
+                    'source': self.input_data.get('source') or {'ra': target_ra, 'dec': target_dec},
                     'aperture_radius': aperture_radius,
                     'annulus_inner_radius': annulus_inner_radius,
                     'annulus_outer_radius': annulus_outer_radius,

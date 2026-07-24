@@ -269,6 +269,18 @@ class TestTrackSeedParsing(unittest.TestCase):
         with self.assertRaises(ValueError):
             track_seeds_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}])
 
+    def test_minimum_one_accepts_a_single_seed(self) -> None:
+        """The fixed-target operations reuse the parser for one {mjd, ra, dec} position."""
+        seeds = track_seeds_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}], minimum=1)
+        self.assertEqual(len(seeds), 1)
+        self.assertEqual((seeds[0].ra_deg, seeds[0].dec_deg), (100.0, 20.0))
+        # The distinct-times rule only applies once a track (>= 2) is required.
+        singles = track_seeds_from_input(
+            [{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}, {"mjd": 60000.0, "ra": 100.1, "dec": 20.0}],
+            minimum=1,
+        )
+        self.assertEqual(len(singles), 2)
+
     def test_rejects_missing_key(self) -> None:
         with self.assertRaises(ValueError):
             track_seeds_from_input([{"mjd": 60000.0, "ra": 100.0}, {"mjd": 60001.0, "ra": 100.1, "dec": 20.0}])
