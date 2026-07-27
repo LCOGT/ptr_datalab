@@ -367,6 +367,8 @@ def generate_light_curve(
             measurements=comparison_measurements,
             target_measurement=target,
             aperture_radius=aperture_radius,
+            annulus_inner_radius=annulus_inner_radius,
+            annulus_outer_radius=annulus_outer_radius,
         )
 
         frame_results.append(
@@ -581,6 +583,8 @@ def _render_frame_overlay(
     measurements: Sequence[ComparisonMeasurement],
     target_measurement: TargetMeasurement,
     aperture_radius: float,
+    annulus_inner_radius: float,
+    annulus_outer_radius: float,
 ) -> bytes:
     """
         Reloads one frame's pixels and renders its diagnostic overlay, cropped at full resolution
@@ -597,6 +601,8 @@ def _render_frame_overlay(
         measurements=measurements,
         target_measurement=target_measurement,
         aperture_radius=aperture_radius,
+        annulus_inner_radius=annulus_inner_radius,
+        annulus_outer_radius=annulus_outer_radius,
     )
 
 
