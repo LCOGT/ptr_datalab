@@ -117,12 +117,14 @@ def calculate_period(light_curve):
   Use the astropy lomb scargle to perform the periodogram analysis on the light curve.
 
   Delegates to the shared analyze_period so the aperture photometry operations reuse the same
-  period search. The default (no alias exclusion) reproduces the original result exactly.
+  period search, reproducing the original result exactly. This operation returns only the peak, so
+  it skips the extras (doubled-period candidate, window function) the photometry operations emit.
   """
   analysis = analyze_period(
     [lc['julian_date'] for lc in light_curve],
     [lc['mag'] for lc in light_curve],
     [lc['magerr'] for lc in light_curve],
+    include_extras=False,
   )
   log.info(f"Best period found: {analysis.period} days with FAP: {analysis.false_alarm_probability}")
   return analysis.frequency, analysis.power, analysis.period, analysis.false_alarm_probability

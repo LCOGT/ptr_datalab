@@ -32,7 +32,7 @@ class NonSiderealAperturePhotometry(BaseDataOperation):
 
     @staticmethod
     def description():
-        return """The non-sidereal aperture photometry operation measures a moving solar-system target across input images, locating it per frame from the ephemeris header keywords, and calibrates the light curve against comparison stars from the source catalog -- carrying the calibration across a drifting star field. Extended (cometary) targets may need a larger aperture."""
+        return """The non-sidereal aperture photometry operation measures a moving solar-system target across input images, locating it per frame from the ephemeris header keywords, and calibrates the light curve against comparison stars from the source catalog -- carrying the calibration across a drifting star field."""
 
     @staticmethod
     def wizard_description():

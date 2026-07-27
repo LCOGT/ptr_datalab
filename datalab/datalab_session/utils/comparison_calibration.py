@@ -145,6 +145,7 @@ def _dispatch_calibration(
             measurements_by_candidate=measurements_by_candidate,
             target_measurements=target_measurements,
             min_comparisons=min_comparisons,
+            max_comparisons=max_comparisons,
             error_class=error_class,
         )
     if comparison_mode == COMPARISON_SHARED:
@@ -178,6 +179,7 @@ def _dispatch_calibration(
             measurements_by_candidate=measurements_by_candidate,
             target_measurements=target_measurements,
             min_comparisons=min_comparisons,
+            max_comparisons=max_comparisons,
             error_class=error_class,
         )
         return (
@@ -284,6 +286,7 @@ def _calibrate_evolving(
     measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]],
     target_measurements: Mapping[str, "TargetMeasurement"],
     min_comparisons: int,
+    max_comparisons: int,
     error_class: type[Exception],
 ) -> tuple[dict[str, FrameCalibration], tuple[ComparisonStar, ...], list[str]]:
     """
@@ -294,6 +297,10 @@ def _calibrate_evolving(
         completely without stepping the light curve. Disconnected groups (a fully turned-over field
         or a long time gap with no shared stars) are each anchored to catalog magnitudes on their own
         and flagged, since they cannot be tied steplessly.
+
+        Every star that links frames contributes to the joint solve, since that linkage is what
+        keeps the series on one magnitude system, but each frame's ensemble is capped at
+        max_comparisons.
     """
     star_by_id = {candidate.candidate_id: candidate for candidate in candidate_stars}
     # present[candidate_id][fits_path] = (instrumental_mag, measurement) for positive measurements.
@@ -314,6 +321,16 @@ def _calibrate_evolving(
 
     frame_paths = [frame.fits_path for frame in frames]
     components = _connected_components(present)
+    # The target's own instrumental magnitude per frame, to rank each frame's ensemble by brightness
+    # closeness to the target (see _capped_frame_comparisons).
+    target_instrumental_mag_by_frame = {
+        fits_path: (
+            -2.5 * math.log10(measurement.net_source_counts)
+            if measurement.net_source_counts > 0.0
+            else math.nan
+        )
+        for fits_path, measurement in target_measurements.items()
+    }
 
     zero_point_by_frame: dict[str, float] = {}
     zp_sigma_by_frame: dict[str, float] = {}
@@ -325,6 +342,8 @@ def _calibrate_evolving(
             frame_paths=component["frames"],
             present=present,
             star_by_id=star_by_id,
+            max_comparisons=max_comparisons,
+            target_instrumental_mag_by_frame=target_instrumental_mag_by_frame,
         )
         zero_point_by_frame.update(zero_points)
         zp_sigma_by_frame.update(zp_sigmas)
@@ -509,6 +528,8 @@ def _solve_component_zero_points(
     frame_paths: Sequence[str],
     present: Mapping[str, Mapping[str, tuple[float, Any]]],
     star_by_id: Mapping[str, ComparisonStar],
+    max_comparisons: int,
+    target_instrumental_mag_by_frame: Mapping[str, float],
 ) -> tuple[dict[str, float], dict[str, float], dict[str, list[str]]]:
     """
         Robustly solves per-frame zero points ZP_f and internal star magnitudes M_c for one connected
@@ -516,6 +537,10 @@ def _solve_component_zero_points(
         (median) updates of ZP_f and M_c, re-anchoring the absolute scale to catalog magnitudes each
         pass so the internal system stays on the catalog scale. After an initial solve it drops
         variable stars (large residual scatter) and re-solves once.
+
+        The solve uses every star in the component; only the ensemble each frame calibrates against
+        is capped at max_comparisons. ZP_f is the median over that capped set, so the zero point and
+        its standard error describe the same stars.
 
         Returns per-frame ZP_f, per-frame ZP standard error, and the active (kept) star ids per frame.
     """
@@ -534,15 +559,20 @@ def _solve_component_zero_points(
     zp_sigma_by_frame: dict[str, float] = {}
     active_ids_by_frame: dict[str, list[str]] = {}
     for fits_path in frame_paths:
+        active_ids = _capped_frame_comparisons(
+            candidate_ids=[candidate_id for candidate_id in star_ids if fits_path in present[candidate_id]],
+            fits_path=fits_path,
+            present=present,
+            max_comparisons=max_comparisons,
+            target_instrumental_mag=target_instrumental_mag_by_frame.get(fits_path, math.nan),
+        )
         per_star_zero_points = [
             internal_mag[candidate_id] - present[candidate_id][fits_path][0]
-            for candidate_id in star_ids
-            if fits_path in present[candidate_id]
+            for candidate_id in active_ids
         ]
-        active_ids = sorted(candidate_id for candidate_id in star_ids if fits_path in present[candidate_id])
         active_ids_by_frame[fits_path] = active_ids
         if per_star_zero_points:
-            zp_by_frame[fits_path] = zero_points[fits_path]
+            zp_by_frame[fits_path] = float(np.median(per_star_zero_points))
             if len(per_star_zero_points) > 1:
                 zp_sigma_by_frame[fits_path] = float(
                     np.std(per_star_zero_points, ddof=1) / math.sqrt(len(per_star_zero_points))
@@ -553,6 +583,33 @@ def _solve_component_zero_points(
             zp_by_frame[fits_path] = math.nan
             zp_sigma_by_frame[fits_path] = math.nan
     return zp_by_frame, zp_sigma_by_frame, active_ids_by_frame
+
+
+def _capped_frame_comparisons(
+    *,
+    candidate_ids: Sequence[str],
+    fits_path: str,
+    present: Mapping[str, Mapping[str, tuple[float, Any]]],
+    max_comparisons: int,
+    target_instrumental_mag: float,
+) -> list[str]:
+    """
+        Trims one frame's comparison ensemble to the user's maximum, ranked by closeness in measured
+        brightness to the target. That is the criterion _source_catalog_sort_key uses for the shared
+        strategy, and it is valid here for the same reason: both magnitudes are instrumental and
+        measured by this pipeline. Where the target has no positive counts the brightest stars are
+        kept instead. Returned sorted by candidate id, so ensemble order does not depend on the rank.
+    """
+    if len(candidate_ids) <= max_comparisons:
+        return sorted(candidate_ids)
+
+    def rank(candidate_id: str) -> tuple[float, str]:
+        instrumental_mag = present[candidate_id][fits_path][0]
+        if math.isfinite(target_instrumental_mag):
+            return abs(instrumental_mag - target_instrumental_mag), candidate_id
+        return instrumental_mag, candidate_id
+
+    return sorted(sorted(candidate_ids, key=rank)[:max_comparisons])
 
 
 def _iterate_component_solve(
@@ -591,13 +648,14 @@ def _iterate_component_solve(
                 updated = float(np.median(estimates))
                 max_delta = max(max_delta, abs(updated - internal_mag[candidate_id]))
                 internal_mag[candidate_id] = updated
-        # Anchor the absolute scale: the model has a gauge freedom (add a constant to every M_c and
-        # subtract it from every ZP_f), so pin it to the catalog scale each pass.
+        # Anchor the absolute scale: the model m + ZP = M has a gauge freedom (add a constant to
+        # every M_c and to every ZP_f), so pin it to the catalog scale each pass. Both shift by the
+        # same signed amount, since ZP_f = M_c - m[c,f].
         shift = float(np.median([internal_mag[candidate_id] - catalog_mag[candidate_id] for candidate_id in star_ids]))
         for candidate_id in star_ids:
             internal_mag[candidate_id] -= shift
         for fits_path in frame_paths:
-            zero_points[fits_path] += shift
+            zero_points[fits_path] -= shift
         if max_delta < EVOLVING_SOLVE_TOLERANCE_MAG:
             break
     return internal_mag, zero_points

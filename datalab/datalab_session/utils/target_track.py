@@ -96,7 +96,12 @@ class TargetTrack:
         return first <= float(mjd) <= last
 
 
-def track_samples_from_input(raw_samples: Any, *, minimum: int = MINIMUM_TRACK_SAMPLES) -> tuple[TrackSample, ...]:
+def track_samples_from_input(
+    raw_samples: Any,
+    *,
+    minimum: int = MINIMUM_TRACK_SAMPLES,
+    require_mjd: bool = True,
+) -> tuple[TrackSample, ...]:
     """
         Parses the user-supplied track samples into TrackSample records, sorted by time.
 
@@ -106,9 +111,13 @@ def track_samples_from_input(raw_samples: Any, *, minimum: int = MINIMUM_TRACK_S
         malformed; callers wrap it in their own error type.
 
         minimum is how many samples the caller needs: fitting a track needs the default two, but a
-        fixed-target operation reuses this parser for a single {mjd, ra, dec} position (minimum=1),
-        where the mjd is carried but unused. The distinct-times check only applies once more than one
-        sample is required -- a lone sample has nothing to be distinct from.
+        fixed-target operation reuses this parser for a single position (minimum=1). The
+        distinct-times check only applies once more than one sample is required; a lone sample has
+        nothing to be distinct from.
+
+        require_mjd=False accepts a sample with no "mjd" at all, recording it as NaN. A fixed target
+        never uses the time, and the Format.SOURCE payload the wizard sends for one ({ra, dec, name})
+        carries no time field, so demanding one there would reject every wizard-selected target.
     """
     if not isinstance(raw_samples, Sequence) or isinstance(raw_samples, (str, bytes)):
         raise ValueError("Track samples must be a list of {mjd, ra, dec} entries.")
@@ -122,20 +131,25 @@ def track_samples_from_input(raw_samples: Any, *, minimum: int = MINIMUM_TRACK_S
         if not isinstance(raw_sample, Mapping):
             raise ValueError(f"Track sample {index} must be a mapping with {SAMPLE_MJD_KEY}/{SAMPLE_RA_KEY}/{SAMPLE_DEC_KEY}.")
         try:
-            mjd = float(raw_sample[SAMPLE_MJD_KEY])
+            if require_mjd or SAMPLE_MJD_KEY in raw_sample:
+                mjd = float(raw_sample[SAMPLE_MJD_KEY])
+            else:
+                mjd = math.nan
             ra_deg = float(raw_sample[SAMPLE_RA_KEY])
             dec_deg = float(raw_sample[SAMPLE_DEC_KEY])
         except KeyError as exc:
             raise ValueError(f"Track sample {index} is missing {exc.args[0]!r}.") from exc
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Track sample {index} has a non-numeric {SAMPLE_MJD_KEY}/{SAMPLE_RA_KEY}/{SAMPLE_DEC_KEY}.") from exc
-        if not (math.isfinite(mjd) and math.isfinite(ra_deg) and math.isfinite(dec_deg)):
+        if (require_mjd and not math.isfinite(mjd)) or not (math.isfinite(ra_deg) and math.isfinite(dec_deg)):
             raise ValueError(f"Track sample {index} has non-finite values.")
         if not -90.0 <= dec_deg <= 90.0:
             raise ValueError(f"Track sample {index} has dec {dec_deg} outside [-90, 90].")
         samples.append(TrackSample(mjd=mjd, ra_deg=ra_deg, dec_deg=dec_deg))
 
-    samples.sort(key=lambda sample: sample.mjd)
+    # Untimed samples (require_mjd=False) sort last, keeping their submitted order: list.sort is
+    # stable, and comparing NaN would otherwise leave the order undefined.
+    samples.sort(key=lambda sample: (math.isnan(sample.mjd), 0.0 if math.isnan(sample.mjd) else sample.mjd))
     if minimum >= MINIMUM_TRACK_SAMPLES and len({sample.mjd for sample in samples}) < MINIMUM_TRACK_SAMPLES:
         raise ValueError("Track samples must be at two or more distinct times.")
     return tuple(samples)

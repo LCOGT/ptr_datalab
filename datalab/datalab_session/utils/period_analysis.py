@@ -41,7 +41,8 @@ class PeriodAnalysis:
         frequency/power/period/false_alarm_probability reproduce the existing VariableStar result
         exactly (autopower, the strongest peak, and its analytic FAP). The rest is additive: ranked
         candidates including the doubled period, and the sampling window function on the same grid so
-        a plot can show which peaks are cadence artifacts rather than signal.
+        a plot can show which peaks are cadence artifacts rather than signal. Callers that want only
+        the peak pass include_extras=False, and candidates/window_power come back empty.
     """
     frequency: np.ndarray = field(repr=False)
     power: np.ndarray = field(repr=False)
@@ -55,6 +56,8 @@ def analyze_period(
     times: Sequence[float],
     magnitudes: Sequence[float],
     magnitude_errors: Sequence[float],
+    *,
+    include_extras: bool = True,
 ) -> PeriodAnalysis:
     """
         Runs a Lomb-Scargle period search over a light curve.
@@ -63,6 +66,9 @@ def analyze_period(
         light curve and its per-point uncertainties. The strongest periodogram peak is taken as the
         best period; the returned window function shows which peaks are sampling-cadence artifacts
         rather than signal.
+
+        include_extras=False skips the doubled-period candidate and the window function, the latter
+        a second full periodogram over the same grid, for callers that read only the peak.
     """
     times_arr = np.asarray(times, dtype=float)
     magnitudes_arr = np.asarray(magnitudes, dtype=float)
@@ -77,8 +83,12 @@ def analyze_period(
     period = 1.0 / best_frequency
     false_alarm_probability = float(lomb_scargle.false_alarm_probability(best_power))
 
-    candidates = _candidates(lomb_scargle, best_frequency, best_power, false_alarm_probability)
-    window_power = _window_function(times_arr, frequency)
+    if include_extras:
+        candidates = _candidates(lomb_scargle, best_frequency, best_power, false_alarm_probability)
+        window_power = _window_function(times_arr, frequency)
+    else:
+        candidates = []
+        window_power = np.empty(0)
 
     log.info(
         "Period analysis: best period %.6f d (FAP %.3g) from %d points; %d candidate period(s)",

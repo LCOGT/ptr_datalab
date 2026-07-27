@@ -53,7 +53,7 @@ def shared_wizard_inputs() -> dict[str, Any]:
         },
         'aperture_radius': {
             'name': 'Aperture Radius',
-            'description': 'Source aperture radius, in arcseconds (use a larger value for extended cometary targets)',
+            'description': 'Source aperture radius, in arcseconds (use a larger value in poor seeing, or if the target trails within an exposure)',
             'type': Format.FLOAT,
             'required': True,
             'default': DEFAULT_APERTURE_RADIUS,
@@ -169,6 +169,7 @@ def run_light_curve(
                     asdict(star) for star in result.selected_comparison_stars
                 ],
                 'diagnostics': result.diagnostics_by_fits_basename,
+                'pipeline_diagnostics': result.pipeline_diagnostics,
                 'diagnostic_images': diagnostic_image_urls,
                 **(period_output or {}),
                 **(output_data or {}),

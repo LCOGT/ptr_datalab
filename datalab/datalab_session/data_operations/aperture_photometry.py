@@ -5,10 +5,9 @@ from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation, ProgressStep
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.utils.diagnostic_images import save_diagnostic_images_to_s3
 from datalab.datalab_session.utils.filecache import FileCache
-from datalab.datalab_session.utils.file_utils import temp_file_manager
 from datalab.datalab_session.utils.format import Format
-from datalab.datalab_session.utils.s3_utils import save_files_to_s3
 from datalab.datalab_session.utils.aperture_light_curve import (
     DEFAULT_ANNULUS_INNER_RADIUS,
     DEFAULT_ANNULUS_OUTER_RADIUS,
@@ -62,7 +61,7 @@ class AperturePhotometry(BaseDataOperation):
                 'target_track': {
                     'name': 'Target',
                     'type': Format.SOURCE,
-                    'description': 'The target to measure, as one {mjd, ra, dec} position. The mjd is carried but unused for a fixed target.',
+                    'description': 'The target to measure, as one {ra, dec} position in decimal degrees. An mjd may be supplied for consistency with the moving-target operations but is unused: a fixed target does not move.',
                     'name_lookup': True,
                     'multiple': True,
                     'minimum': 1,
@@ -113,27 +112,35 @@ class AperturePhotometry(BaseDataOperation):
             }
         }
 
-    def _resolve_fixed_target(self) -> tuple[float, float]:
+    def _resolve_fixed_target(self) -> dict:
         """
-            The fixed target's RA/Dec (degrees), from the unified target_track input or a legacy source.
+            The fixed target, from the unified target_track input or a legacy source.
 
             All aperture photometry operations now receive the target position as a list of
-            {mjd, ra, dec}; a fixed target is a single-element list whose mjd is carried but unused.
-            The legacy source input ({ra, dec}) is still accepted so existing API clients and saved
-            sessions keep working, but is no longer advertised in the wizard.
+            {ra, dec}, optionally with an mjd; a fixed target is a single-element list, and its mjd
+            (if any) is ignored, since the position does not change with time. The legacy source input
+            ({ra, dec}) is still accepted so existing API clients and saved sessions keep working,
+            but is no longer advertised in the wizard.
+
+            Returns the source dict echoed back in the output, so any name the wizard resolved
+            survives alongside the coordinates.
         """
         raw_track = self.input_data.get('target_track')
         if raw_track:
             try:
-                samples = track_samples_from_input(raw_track, minimum=1)
+                samples = track_samples_from_input(raw_track, minimum=1, require_mjd=False)
             except ValueError as exc:
                 raise ClientAlertException(f'Invalid target position: {exc}') from exc
-            return samples[0].ra_deg, samples[0].dec_deg
+            first = raw_track[0] if isinstance(raw_track[0], dict) else {}
+            source = {'ra': samples[0].ra_deg, 'dec': samples[0].dec_deg}
+            if first.get('name'):
+                source['name'] = first['name']
+            return source
 
         source = self.input_data.get('source')
         if source:
             try:
-                return float(source['ra']), float(source['dec'])
+                return {**source, 'ra': float(source['ra']), 'dec': float(source['dec'])}
             except (KeyError, TypeError, ValueError) as exc:
                 raise ClientAlertException(f'Invalid source coordinates: {exc}') from exc
 
@@ -145,7 +152,8 @@ class AperturePhotometry(BaseDataOperation):
             
             Returns a calibrated light curve and diagnostic data for the frontend.
         """
-        target_ra, target_dec = self._resolve_fixed_target()
+        target_source = self._resolve_fixed_target()
+        target_ra, target_dec = target_source['ra'], target_source['dec']
 
         input_files = self._validate_inputs(
             input_key='input_files',
@@ -184,7 +192,12 @@ class AperturePhotometry(BaseDataOperation):
         except (KeyError, TypeError, ValueError) as exc:
             raise ClientAlertException(f'Operation {self.name()} received invalid input.') from exc
 
-        diagnostic_image_urls = self._save_diagnostic_images_to_s3(result.diagnostic_image_jpegs_by_fits_basename)
+        diagnostic_image_urls = save_diagnostic_images_to_s3(
+            cache_key=self.cache_key,
+            temp_dir=self.temp,
+            diagnostic_image_jpegs_by_fits_basename=result.diagnostic_image_jpegs_by_fits_basename,
+            on_progress=lambda fraction: self._report_pipeline_progress('save', fraction),
+        )
         # Lomb-Scargle period analysis of the finished light curve, for folding a periodic (e.g.
         # variable-star) target; emits the same keys as the VariableStar operation, or nothing when
         # the light curve has too few measured points to be meaningful.
@@ -193,7 +206,7 @@ class AperturePhotometry(BaseDataOperation):
         output = {
             'output_data': [
                 {
-                    'source': self.input_data.get('source') or {'ra': target_ra, 'dec': target_dec},
+                    'source': target_source,
                     'aperture_radius': aperture_radius,
                     'annulus_inner_radius': annulus_inner_radius,
                     'annulus_outer_radius': annulus_outer_radius,
@@ -203,6 +216,7 @@ class AperturePhotometry(BaseDataOperation):
                         asdict(star) for star in result.selected_comparison_stars
                     ],
                     'diagnostics': result.diagnostics_by_fits_basename,
+                    'pipeline_diagnostics': result.pipeline_diagnostics,
                     'diagnostic_images': diagnostic_image_urls,
                     **(period_output or {}),
                 }
@@ -231,20 +245,3 @@ class AperturePhotometry(BaseDataOperation):
         step = steps[band]
         self.set_operation_progress(band_start + (step.progress - band_start) * fraction)
         self.set_message(f"{step.message}: {fraction * 100:.0f}%")
-
-    def _save_diagnostic_images_to_s3(self, diagnostic_image_jpegs_by_fits_basename: dict) -> dict:
-        """
-            Uploads each frame's diagnostic overlay JPEG to the operation bucket.
-
-            Returns a dict mapping FITS basename to the presigned bucket url for its overlay.
-        """
-        diagnostic_image_urls = {}
-        total = len(diagnostic_image_jpegs_by_fits_basename)
-        for index, (fits_basename, jpeg_bytes) in enumerate(diagnostic_image_jpegs_by_fits_basename.items(), start=1):
-            with temp_file_manager(f'{self.cache_key}-{index}-diagnostic.jpg', dir=self.temp) as jpeg_path:
-                with open(jpeg_path, 'wb') as jpeg_file:
-                    jpeg_file.write(jpeg_bytes)
-                s3_output = save_files_to_s3(self.cache_key, Format.IMAGE, {'diagnostic_jpg_path': jpeg_path}, index=index)
-            diagnostic_image_urls[fits_basename] = s3_output['diagnostic_url']
-            self._report_pipeline_progress('save', index / total)
-        return diagnostic_image_urls

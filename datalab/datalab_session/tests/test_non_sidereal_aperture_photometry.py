@@ -16,8 +16,10 @@ from astropy.wcs import WCS
 from datalab.datalab_session.tests.test_aperture_photometry import gaussian_star
 from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
+    MAX_CANDIDATE_MEASUREMENTS,
+    MIN_COMPARISON_CANDIDATES,
     TARGET_POSITION_HEADER,
-    REFINEMENT_FORCED,
+    _candidate_pool_limit,
     generate_light_curve,
 )
 from datalab.datalab_session.utils.comparison_calibration import (
@@ -236,20 +238,6 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
             self.assertAlmostEqual(row.target_centroid_y, 60.0, delta=1.5)
         self.assertEqual(len(self._finite_rows(result)), 6)
 
-    def test_forced_refinement_measures_at_ephemeris_pixel(self) -> None:
-        frames, _ = build_non_sidereal_frame_set(frame_count=4, ra_drift_arcsec_per_frame=8.0)
-        fits_paths = self.write_frames(frames)
-        result = generate_light_curve(
-            fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_AUTO,
-            refinement_mode=REFINEMENT_FORCED,
-        )
-        # Forced photometry never recenters: it measures at the ephemeris (frame-center) pixel, to
-        # projection precision, rather than chasing a light centroid.
-        for row in result.light_curve_rows:
-            self.assertAlmostEqual(row.target_centroid_x, 60.0, delta=0.01)
-            self.assertAlmostEqual(row.target_centroid_y, 60.0, delta=0.01)
-
     # ------------------------------------------------------------- evolving path
 
     def test_shared_fails_but_evolving_carries_turned_over_field(self) -> None:
@@ -368,6 +356,62 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
             if math.isfinite(row.target_calibrated_apparent_magnitude):
                 self.assertTrue(math.isfinite(row.target_calibrated_apparent_magnitude_uncertainty))
                 self.assertGreater(row.target_calibrated_apparent_magnitude_uncertainty, 0.0)
+
+    def test_evolving_respects_the_maximum_comparison_stars(self) -> None:
+        """
+            The evolving solve links frames through every star it can, but the ensemble each frame
+            calibrates against is the user's maximum. Both moving-target operations hardcode auto,
+            so this is the path they normally take.
+        """
+        frames, _ = build_non_sidereal_frame_set(frame_count=10, ra_drift_arcsec_per_frame=10.0)
+        fits_paths = self.write_frames(frames)
+        common = dict(
+            aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
+            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_EVOLVING,
+            min_comparisons=2,
+        )
+        capped = generate_light_curve(fits_paths, max_comparisons=3, **common)
+        for frame in capped.frames:
+            self.assertLessEqual(len(frame.comparison_measurements), 3)
+
+        # The field really does offer more than the cap, so the assertion above has teeth.
+        uncapped = generate_light_curve(fits_paths, max_comparisons=50, **common)
+        self.assertGreater(
+            max(len(frame.comparison_measurements) for frame in uncapped.frames), 3
+        )
+
+    def test_candidate_pool_budget_spares_ordinary_series(self) -> None:
+        """
+            The pool cap trades comparison stars away, so it must only bind on series long enough for
+            candidates x frames to run away. A real 13-frame LCO field carries ~1300 candidates and
+            has to pass through untouched.
+        """
+        self.assertGreater(_candidate_pool_limit(13), 1300)
+        self.assertGreater(_candidate_pool_limit(100), MIN_COMPARISON_CANDIDATES)
+        # A 999-frame submission is bounded, and never below a workable ensemble.
+        self.assertLessEqual(_candidate_pool_limit(999) * 999, MAX_CANDIDATE_MEASUREMENTS)
+        self.assertGreaterEqual(_candidate_pool_limit(10**6), MIN_COMPARISON_CANDIDATES)
+
+    def test_offframe_candidates_are_not_measured(self) -> None:
+        """
+            A drifted field leaves most of the catalog off any given frame, and the evolving strategy
+            never drops a failed candidate, so measuring them anyway costs work quadratic in the
+            series length.
+        """
+        frames, _ = build_non_sidereal_frame_set(frame_count=10, ra_drift_arcsec_per_frame=12.0)
+        fits_paths = self.write_frames(frames)
+        result = generate_light_curve(
+            fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
+            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_EVOLVING,
+            min_comparisons=2, max_comparisons=50,
+        )
+        # Every reported measurement landed inside its own frame, well clear of the edge.
+        for frame in result.frames:
+            with fits.open(frame.fits_path) as hdul:
+                height, width = hdul["SCI"].data.shape
+            for measurement in frame.comparison_measurements:
+                self.assertTrue(0.0 <= measurement.x < width)
+                self.assertTrue(0.0 <= measurement.y < height)
 
     def test_moving_target_excluded_from_comparisons(self) -> None:
         frames, _ = build_non_sidereal_frame_set(

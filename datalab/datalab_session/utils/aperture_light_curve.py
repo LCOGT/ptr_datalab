@@ -89,6 +89,11 @@ DEFAULT_MAX_COMPARISONS = 10
 # so requiring presence in all frames discards good stars and collapses the candidate pool. Selected
 # stars are still measured via WCS on all frames, so the ensemble stays consistent frame-to-frame.
 COMPARISON_FRAME_COVERAGE_FRACTION = 0.8
+# Backstop for the evolving/auto strategies, which keep sparsely-detected stars. Cost runs as
+# candidates x frames, so bound that product: long series get a smaller pool, short ones are
+# untouched. Sized to clear an ordinary deep field, since trimming changes the stars on offer.
+MAX_CANDIDATE_MEASUREMENTS = 200_000
+MIN_COMPARISON_CANDIDATES = 50
 # Pipeline phases reported to progress_callback, in execution order.
 PROGRESS_PHASES = ("validate", "catalog", "measure", "select", "render")
 
@@ -104,11 +109,6 @@ ProgressCallback = Callable[[str, float], None]
 TARGET_POSITION_FIXED = "fixed"
 TARGET_POSITION_HEADER = "header"
 TARGET_POSITION_TRACK = "track"
-# Target refinement: centroid around the predicted pixel with a recenter cap ("centroid"), or measure
-# at the predicted pixel without recentering ("forced" — for extended/cometary targets whose centroid
-# wanders off the ephemeris, reusing the WCS-fallback measurement path).
-REFINEMENT_CENTROID = "centroid"
-REFINEMENT_FORCED = "forced"
 
 
 class LightCurveError(ValueError):
@@ -181,11 +181,16 @@ class LightCurveRow:
 class LightCurveResult:
     """
         Complete aperture photometry result returned by the generate_light_curve function, including light curve rows, selected comparison stars, and diagnostics.
+
+        pipeline_diagnostics are series-level (target localization, catalog search, calibration
+        strategy); diagnostics_by_fits_basename are the per-frame comparison-star checks; and
+        diagnostics is both concatenated, for in-process callers that want the lot.
     """
     frames: list[FrameResult]
     selected_comparison_stars: list[ComparisonStar]
     light_curve_rows: list[LightCurveRow]
     diagnostics: list[str]
+    pipeline_diagnostics: list[str]
     diagnostics_by_fits_basename: dict[str, list[str]]
     diagnostic_image_jpegs_by_fits_basename: dict[str, bytes]
 
@@ -202,7 +207,6 @@ def generate_light_curve(
     progress_callback: ProgressCallback | None = None,
     *,
     target_position_mode: str = TARGET_POSITION_FIXED,
-    refinement_mode: str = REFINEMENT_CENTROID,
     comparison_mode: str = COMPARISON_SHARED,
     target_track_samples: Sequence[TrackSample] | None = None,
     track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
@@ -223,11 +227,9 @@ def generate_light_curve(
         target_position_mode selects where the target's per-frame RA/Dec comes from: "fixed" uses the
         single series-wide target_ra_deg/target_dec_deg (sidereal); "header" reads each frame's
         moving-target keywords (non-sidereal); "track" interpolates target_track_samples, the positions
-        a user marked on two or more frames, to every frame's observation time. refinement_mode
-        selects "centroid" (recenter with a cap, falling back to the predicted pixel) or "forced"
-        (measure at the predicted pixel).
+        a user marked on two or more frames, to every frame's observation time.
     """
-    _validate_modes(target_position_mode, refinement_mode, comparison_mode)
+    _validate_modes(target_position_mode, comparison_mode)
     _validate_inputs(
         fits_paths=fits_paths,
         aperture_radius=aperture_radius,
@@ -258,7 +260,6 @@ def generate_light_curve(
     log.info(
         "Aperture Photometry pipeline starting: "
         f"fits_count={len(fits_paths)}, target_position_mode={target_position_mode}, "
-        f"refinement_mode={refinement_mode}, "
         f"aperture_radius={aperture_radius:.3f}, "
         f"annulus_inner_radius={annulus_inner_radius:.3f}, "
         f"annulus_outer_radius={annulus_outer_radius:.3f}, "
@@ -283,6 +284,7 @@ def generate_light_curve(
         annulus_outer_radius=annulus_outer_radius,
         min_coverage_fraction=min_coverage_fraction,
         on_frame=lambda index, total: report_progress("catalog", index / total),
+        diagnostics=diagnostics,
     )
     log.info(
         "Aperture Photometry comparison catalog built: "
@@ -311,7 +313,6 @@ def generate_light_curve(
             aperture_radius=aperture_radius,
             annulus_inner_radius=annulus_inner_radius,
             annulus_outer_radius=annulus_outer_radius,
-            refinement_mode=refinement_mode,
         )
         target_measurements[frame.fits_path] = target
         if drop_failed_candidates:
@@ -347,6 +348,9 @@ def generate_light_curve(
     report_progress("select", 1.0)
 
     diagnostics.extend(calibration_diagnostics)
+    # Everything accumulated so far describes the series as a whole; snapshot it before the
+    # per-frame checks below are appended.
+    pipeline_diagnostics = list(diagnostics)
 
     frame_results: list[FrameResult] = []
     light_curve_rows: list[LightCurveRow] = []
@@ -413,6 +417,7 @@ def generate_light_curve(
         selected_comparison_stars=list(selected_comparison_stars),
         light_curve_rows=light_curve_rows,
         diagnostics=diagnostics,
+        pipeline_diagnostics=pipeline_diagnostics,
         diagnostics_by_fits_basename=diagnostics_by_fits_basename,
         diagnostic_image_jpegs_by_fits_basename=diagnostic_image_jpegs_by_fits_basename,
     )
@@ -439,15 +444,11 @@ def _validate_inputs(
         raise LightCurveError("min_comparisons and max_comparisons must be positive and min_comparisons <= max_comparisons.")
 
 
-def _validate_modes(target_position_mode: str, refinement_mode: str, comparison_mode: str) -> None:
+def _validate_modes(target_position_mode: str, comparison_mode: str) -> None:
     if target_position_mode not in (TARGET_POSITION_FIXED, TARGET_POSITION_HEADER, TARGET_POSITION_TRACK):
         raise LightCurveError(
             f"target_position_mode must be one of {TARGET_POSITION_FIXED!r}, "
             f"{TARGET_POSITION_HEADER!r}, {TARGET_POSITION_TRACK!r}."
-        )
-    if refinement_mode not in (REFINEMENT_CENTROID, REFINEMENT_FORCED):
-        raise LightCurveError(
-            f"refinement_mode must be {REFINEMENT_CENTROID!r} or {REFINEMENT_FORCED!r}."
         )
     if comparison_mode not in (COMPARISON_SHARED, COMPARISON_EVOLVING, COMPARISON_AUTO):
         raise LightCurveError(
@@ -685,7 +686,6 @@ def _measure_frame_pixels(
     aperture_radius: float,
     annulus_inner_radius: float,
     annulus_outer_radius: float,
-    refinement_mode: str = REFINEMENT_CENTROID,
 ) -> tuple[TargetMeasurement, dict[str, ComparisonMeasurement], set[str]]:
     """
         Runs all pixel-dependent work for one frame: the target measurement and a measurement of
@@ -693,6 +693,9 @@ def _measure_frame_pixels(
 
         The full-resolution image exists only inside this function, so it is released before the
         caller moves on to the next frame.
+
+        Candidates whose sky position does not land on this frame are skipped before any pixel work
+        (see _candidates_in_field).
 
         Returns the target measurement, this frame's candidate measurements by candidate_id, and
         the ids of candidates that failed to measure on this frame.
@@ -708,12 +711,12 @@ def _measure_frame_pixels(
         geometry=geometry,
         target_ra_deg=target_ra_deg,
         target_dec_deg=target_dec_deg,
-        refinement_mode=refinement_mode,
     )
     candidate_measurements: dict[str, ComparisonMeasurement] = {}
     failed_candidate_ids: set[str] = set()
-    for candidate in candidate_stars:
-        if candidate.candidate_id in skip_candidate_ids:
+    in_field = _candidates_in_field(frame=frame, geometry=geometry, candidate_stars=candidate_stars)
+    for candidate, is_in_field in zip(candidate_stars, in_field):
+        if candidate.candidate_id in skip_candidate_ids or not is_in_field:
             continue
         try:
             candidate_measurements[candidate.candidate_id] = measure_candidate_on_frame(
@@ -726,6 +729,34 @@ def _measure_frame_pixels(
         except LightCurveError:
             failed_candidate_ids.add(candidate.candidate_id)
     return target_measurement, candidate_measurements, failed_candidate_ids
+
+
+def _candidates_in_field(
+    *,
+    frame: FrameContext,
+    geometry: FrameGeometry,
+    candidate_stars: Sequence[ComparisonStar],
+) -> np.ndarray:
+    """
+        Which candidates fall on this frame with room for their background annulus, by the same edge
+        criterion _build_field_star_catalog applies when the candidates are first collected.
+
+        A drifted non-sidereal field leaves most of the catalog off any given frame, and the evolving
+        strategy never drops a candidate permanently, so without this every candidate is centroided
+        on every frame. Positions that do not project return NaN, which fails every comparison below.
+    """
+    if not candidate_stars:
+        return np.zeros(0, dtype=bool)
+    ra_values = np.asarray([candidate.ra_deg for candidate in candidate_stars], dtype=float)
+    dec_values = np.asarray([candidate.dec_deg for candidate in candidate_stars], dtype=float)
+    x_values, y_values = geometry.wcs.world_to_pixel_values(ra_values, dec_values)
+    margin = geometry.annulus_outer_radius_px
+    return (
+        (x_values - margin >= EDGE_MARGIN_PX)
+        & (y_values - margin >= EDGE_MARGIN_PX)
+        & (x_values + margin < frame.width - EDGE_MARGIN_PX)
+        & (y_values + margin < frame.height - EDGE_MARGIN_PX)
+    )
 
 
 def _render_frame_overlay(
@@ -802,19 +833,15 @@ def _measure_target(
     geometry: FrameGeometry,
     target_ra_deg: float,
     target_dec_deg: float,
-    refinement_mode: str = REFINEMENT_CENTROID,
 ) -> TargetMeasurement:
     """
-        Converts the target RA and Dec to pixel coordinates, optionally centroids the source, and
-        measures aperture photometry. image is the frame's pixel data, passed separately from the
-        metadata so the streaming pixel pass controls how long it stays in memory. geometry carries
-        the frame's cached WCS and pixel-space aperture radii.
+        Converts the target RA and Dec to pixel coordinates, centroids the source, and measures
+        aperture photometry. image is the frame's pixel data, passed separately from the metadata so
+        the streaming pixel pass controls how long it stays in memory. geometry carries the frame's
+        cached WCS and pixel-space aperture radii.
 
-        In "centroid" mode the target is never allowed to drop a frame: if centroiding fails or the
-        refinement drifts too far from the WCS position, it measures at the authoritative WCS
-        position instead. In "forced" mode it always measures at the WCS/ephemeris position without
-        recentering -- for extended (cometary) targets whose light centroid wanders off the
-        ephemeris, where chasing the centroid would bias the position.
+        The target is never allowed to drop a frame: if centroiding fails or the refinement drifts
+        too far from the WCS position, it measures at the authoritative WCS position instead.
 
         Returns the target measurement for a single frame.
     """
@@ -831,24 +858,19 @@ def _measure_target(
         f"frame={frame.fits_path}, initial_pixel=({initial_x:.3f}, {initial_y:.3f})"
     )
 
-    if refinement_mode == REFINEMENT_FORCED:
-        centroid_result = None
-        recenter_shift_px = 0.0
-        accept_centroid = False
-    else:
-        centroid_result = centroid(
-            image=image,
-            x_click=initial_x,
-            y_click=initial_y,
-            radius=aperture_radius_px,
-            r_back1=annulus_inner_radius_px,
-            r_back2=annulus_outer_radius_px,
-        )
-        # A failed centroid, or a refinement that drifts more than TARGET_RECENTER_MAX_SHIFT_PX from
-        # the WCS position, means it locked onto the host galaxy or a neighbour, so fall back to the
-        # WCS position.
-        recenter_shift_px = math.hypot(centroid_result.x - initial_x, centroid_result.y - initial_y)
-        accept_centroid = centroid_result.success and recenter_shift_px <= TARGET_RECENTER_MAX_SHIFT_PX
+    centroid_result = centroid(
+        image=image,
+        x_click=initial_x,
+        y_click=initial_y,
+        radius=aperture_radius_px,
+        r_back1=annulus_inner_radius_px,
+        r_back2=annulus_outer_radius_px,
+    )
+    # A failed centroid, or a refinement that drifts more than TARGET_RECENTER_MAX_SHIFT_PX from
+    # the WCS position, means it locked onto the host galaxy or a neighbour, so fall back to the
+    # WCS position.
+    recenter_shift_px = math.hypot(centroid_result.x - initial_x, centroid_result.y - initial_y)
+    accept_centroid = centroid_result.success and recenter_shift_px <= TARGET_RECENTER_MAX_SHIFT_PX
 
     if accept_centroid:
         x_center, y_center = centroid_result.x, centroid_result.y
@@ -867,9 +889,7 @@ def _measure_target(
             remove_background_stars=True,
             use_plane_background=False,
         )
-        if refinement_mode == REFINEMENT_FORCED:
-            reason = "forced photometry at ephemeris position"
-        elif not centroid_result.success:
+        if not centroid_result.success:
             reason = "centroiding failed"
         else:
             reason = f"centroid shift {recenter_shift_px:.2f}px exceeded {TARGET_RECENTER_MAX_SHIFT_PX:.2f}px limit"
@@ -914,6 +934,7 @@ def _build_field_star_catalog(
     annulus_outer_radius: float,
     min_coverage_fraction: float = COMPARISON_FRAME_COVERAGE_FRACTION,
     on_frame: Callable[[int, int], None] | None = None,
+    diagnostics: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
         Builds comp star candidates from the source catalogs across valid frames.
@@ -1050,13 +1071,48 @@ def _build_field_star_catalog(
                 "target_separation_px": target_sep,
             }
         )
+    # With no coverage filter the pool is every cross-matched cluster on the field, down to
+    # single-frame detections, so cap it at the best covered and most isolated.
+    capped_out = 0
+    pool_limit = _candidate_pool_limit(len(frames))
+    if min_coverage_fraction <= 0.0 and len(catalog) > pool_limit:
+        capped_out = len(catalog) - pool_limit
+        ranked = sorted(catalog, key=_candidate_pool_rank)[:pool_limit]
+        catalog = sorted(ranked, key=lambda candidate: candidate["candidate_id"])
+        if diagnostics is not None:
+            diagnostics.append(
+                f"Kept the {pool_limit} best-covered comparison candidates of "
+                f"{pool_limit + capped_out} found on this field, to bound measurement over "
+                f"{len(frames)} frames."
+            )
     log.info(
         "Aperture Photometry comparison catalog summary: "
         f"clusters={len(clusters)}, required_coverage={required_coverage}/{len(frames)} frames, "
         f"rejected_insufficient_coverage={rejected_for_coverage}, "
+        f"rejected_over_candidate_cap={capped_out}, "
         f"valid_catalog_candidates={len(catalog)}"
     )
     return catalog
+
+
+def _candidate_pool_limit(frame_count: int) -> int:
+    """How many candidates this many frames can afford, from the candidates x frames budget."""
+    return max(MIN_COMPARISON_CANDIDATES, MAX_CANDIDATE_MEASUREMENTS // max(frame_count, 1))
+
+
+def _candidate_pool_rank(candidate: Mapping[str, Any]) -> tuple[float, float, str]:
+    """
+        Ranks candidates for the pool cap: widest frame coverage first, then most isolated.
+
+        Coverage leads because a star present on many frames ties more of the series together, which
+        is what the evolving calibration runs on. A non-finite isolation sorts last.
+    """
+    isolation = float(candidate["isolation_arcsec"])
+    return (
+        -float(candidate["frame_coverage"]),
+        -isolation if math.isfinite(isolation) else math.inf,
+        str(candidate["candidate_id"]),
+    )
 
 
 def _extract_candidate_row(row: Mapping[str, Any], fits_path: str) -> dict[str, Any]:

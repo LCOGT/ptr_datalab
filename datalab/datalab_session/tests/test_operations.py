@@ -289,7 +289,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             'annulus_outer_radius': 19.10,
         }
 
-    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.save_files_to_s3')
+    @mock.patch('datalab.datalab_session.utils.diagnostic_images.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve')
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache')
     @mock.patch.object(AperturePhotometry, 'set_status')
@@ -325,6 +325,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             ],
             selected_comparison_stars=[],
             diagnostics=('loaded 1 frame', 'selected 5 comparison stars'),
+            pipeline_diagnostics=['selected 5 comparison stars'],
             diagnostics_by_fits_basename={
                 'fits_1.fits': ['loaded 1 frame', 'selected 5 comparison stars'],
             },
@@ -406,6 +407,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
                 light_curve_rows=[],
                 selected_comparison_stars=[],
                 diagnostics=[],
+                pipeline_diagnostics=[],
                 diagnostics_by_fits_basename={},
                 diagnostic_image_jpegs_by_fits_basename={},
             )
@@ -429,6 +431,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
             mock_generate_light_curve.return_value = SimpleNamespace(
                 light_curve_rows=[], selected_comparison_stars=[], diagnostics=[],
+                pipeline_diagnostics=[],
                 diagnostics_by_fits_basename={}, diagnostic_image_jpegs_by_fits_basename={},
             )
 
@@ -439,6 +442,61 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         self.assertEqual((kwargs['target_ra_deg'], kwargs['target_dec_deg']), (10.0, 20.0))
         output = mock_set_output.call_args.args[0]
         self.assertEqual(output['output_data'][0]['source'], {'ra': 10.0, 'dec': 20.0})
+
+    def test_operate_accepts_a_target_track_without_an_mjd(self):
+        """
+            The wizard's Format.SOURCE payload is {ra, dec, name}, with no time field. A fixed target
+            does not move, so the mjd is optional and the resolved name must survive into the echoed
+            source.
+        """
+        input_data = self.valid_input_data()
+        del input_data['source']
+        input_data['target_track'] = [{'ra': 10.0, 'dec': 20.0, 'name': 'NGC 7331'}]
+
+        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
+                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
+                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
+                mock.patch.object(AperturePhotometry, 'set_status'):
+            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
+            mock_generate_light_curve.return_value = SimpleNamespace(
+                light_curve_rows=[], selected_comparison_stars=[], diagnostics=[],
+                pipeline_diagnostics=[],
+                diagnostics_by_fits_basename={}, diagnostic_image_jpegs_by_fits_basename={},
+            )
+
+            AperturePhotometry(input_data).operate(None)
+
+        _, kwargs = mock_generate_light_curve.call_args
+        self.assertEqual((kwargs['target_ra_deg'], kwargs['target_dec_deg']), (10.0, 20.0))
+        output = mock_set_output.call_args.args[0]
+        self.assertEqual(
+            output['output_data'][0]['source'], {'ra': 10.0, 'dec': 20.0, 'name': 'NGC 7331'}
+        )
+
+    def test_operate_emits_pipeline_diagnostics_separately(self):
+        """Series-level findings must not be buried in the per-frame dict."""
+        input_data = self.valid_input_data()
+
+        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
+                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
+                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
+                mock.patch.object(AperturePhotometry, 'set_status'):
+            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
+            mock_generate_light_curve.return_value = SimpleNamespace(
+                light_curve_rows=[], selected_comparison_stars=[],
+                diagnostics=['applied a 4.0 mmag error floor', 'fits_1.fits: 6 stars checked'],
+                pipeline_diagnostics=['applied a 4.0 mmag error floor'],
+                diagnostics_by_fits_basename={'fits_1.fits': ['fits_1.fits: 6 stars checked']},
+                diagnostic_image_jpegs_by_fits_basename={},
+            )
+
+            AperturePhotometry(input_data).operate(None)
+
+        output = mock_set_output.call_args.args[0]['output_data'][0]
+        self.assertEqual(output['pipeline_diagnostics'], ['applied a 4.0 mmag error floor'])
+        self.assertEqual(output['diagnostics'], {'fits_1.fits': ['fits_1.fits: 6 stars checked']})
 
     def test_operate_requires_a_target_position(self):
         input_data = self.valid_input_data()
@@ -473,7 +531,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
 
         with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
                 mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
-                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.save_files_to_s3') as mock_save, \
+                mock.patch('datalab.datalab_session.utils.diagnostic_images.save_files_to_s3') as mock_save, \
                 mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
                 mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
                 mock.patch.object(AperturePhotometry, 'set_message'), \
@@ -482,6 +540,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             mock_save.return_value = {'diagnostic_url': 'https://bucket/x.jpg'}
             mock_generate_light_curve.return_value = SimpleNamespace(
                 light_curve_rows=rows, selected_comparison_stars=[], diagnostics=[],
+                pipeline_diagnostics=[],
                 diagnostics_by_fits_basename={}, diagnostic_image_jpegs_by_fits_basename={},
             )
             operation = AperturePhotometry(input_data)

@@ -282,6 +282,24 @@ class TestTrackSampleParsing(unittest.TestCase):
         )
         self.assertEqual(len(singles), 2)
 
+    def test_optional_mjd_accepts_a_bare_source_payload(self) -> None:
+        """
+            The wizard's Format.SOURCE payload for a fixed target is {ra, dec, name}, the same shape
+            light_curve and variable_star receive. Nothing on that path uses the time.
+        """
+        samples = track_samples_from_input(
+            [{"ra": 100.0, "dec": 20.0, "name": "M51"}], minimum=1, require_mjd=False
+        )
+        self.assertEqual((samples[0].ra_deg, samples[0].dec_deg), (100.0, 20.0))
+        self.assertTrue(math.isnan(samples[0].mjd))
+        # An mjd is still honoured when one is supplied, and still required when a track is fitted.
+        with_time = track_samples_from_input(
+            [{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}], minimum=1, require_mjd=False
+        )
+        self.assertEqual(with_time[0].mjd, 60000.0)
+        with self.assertRaises(ValueError):
+            track_samples_from_input([{"ra": 100.0, "dec": 20.0}, {"ra": 100.1, "dec": 20.0}])
+
     def test_rejects_missing_key(self) -> None:
         with self.assertRaises(ValueError):
             track_samples_from_input([{"mjd": 60000.0, "ra": 100.0}, {"mjd": 60001.0, "ra": 100.1, "dec": 20.0}])
@@ -456,6 +474,38 @@ class TestMovingTargetSearch(unittest.TestCase):
         )
         self.assertIsNone(result.refined_track)
         self.assertTrue(any("stationary source" in message for message in result.diagnostics))
+
+    def test_a_slow_target_is_not_rejected_as_a_field_star(self) -> None:
+        """
+            An asteroid near its stationary point moves less across the whole series than the radius
+            two detections are matched within, so it appears at the same position on every frame:
+            the signature the field-star test looks for. Judging that test against the motion the
+            track predicts is what stops it rejecting the target it is searching for.
+        """
+        # 0.15 arcsec/h over 6 hourly frames: 0.75 arcsec end to end, inside STATIC_SOURCE_MATCH_ARCSEC.
+        truth = _linear_truth(6, rate_arcsec_per_hour=0.15)
+        frame_times, catalogs = self._frames_and_catalogs(truth)
+        track = fit_target_track(_samples_from_truth(truth, (0, 5)))
+        result = refine_positions_from_catalog(
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
+        )
+        self.assertEqual(len(result.picks), 6)
+        self.assertTrue(all(pick.source_id == "moving-target" for pick in result.picks))
+        self.assertIsNotNone(result.refined_track)
+        # The user is told the discrimination could not be made, rather than it happening silently.
+        self.assertTrue(any("cannot be told apart" in message for message in result.diagnostics))
+
+    def test_a_fast_target_still_rejects_the_field_star_it_passes(self) -> None:
+        """The motion-aware test must not weaken the fast case: here every frame is discriminating."""
+        truth = _linear_truth(6, rate_arcsec_per_hour=6.0)
+        star_ra_offset = 6.0 * 2.5
+        frame_times, catalogs = self._frames_and_catalogs(truth, static_stars=((star_ra_offset, 0.0),))
+        track = fit_target_track(_samples_from_truth(truth, (0, 5)))
+        result = refine_positions_from_catalog(
+            frame_times=frame_times, catalog_rows_by_frame=catalogs, track=track, samples=track.samples
+        )
+        self.assertTrue(all(pick.source_id == "moving-target" for pick in result.picks))
+        self.assertFalse(any("cannot be told apart" in message for message in result.diagnostics))
 
     def test_clips_a_single_inconsistent_pick(self) -> None:
         truth = _linear_truth(7)
@@ -679,6 +729,26 @@ class TestMovingTargetLightCurve(unittest.TestCase):
         result = self._run(paths, _samples_from_truth(truth, (0, 5)))
         self.assertTrue(any("fitted a degree-" in message.lower() for message in result.diagnostics))
 
+    def test_pipeline_diagnostics_carry_the_series_level_findings(self) -> None:
+        """
+            The series-level findings (target localization, catalog search, calibration strategy) are
+            what tell a run measured at interpolated guesses apart from one confirmed on every frame,
+            so they are reported separately from the per-frame comparison-star checks.
+        """
+        frames, truth = build_tracked_frame_set(frame_count=6)
+        paths = self.write_frames(frames)
+        result = self._run(paths, _samples_from_truth(truth, (0, 5)))
+
+        self.assertTrue(any("fitted a degree-" in message.lower() for message in result.pipeline_diagnostics))
+        # Series-level entries lead the combined list; per-frame entries follow and are excluded.
+        self.assertEqual(result.diagnostics[:len(result.pipeline_diagnostics)], result.pipeline_diagnostics)
+        per_frame = [
+            message
+            for messages in result.diagnostics_by_fits_basename.values()
+            for message in messages
+        ]
+        self.assertEqual([m for m in per_frame if m in result.pipeline_diagnostics], [])
+
     def test_missing_samples_raises(self) -> None:
         frames, _ = build_tracked_frame_set(frame_count=3)
         paths = self.write_frames(frames)
@@ -761,6 +831,50 @@ class TestMovingTargetOperations(unittest.TestCase):
         referenced = set(re.findall(r"\bresult\.([a-zA-Z_][a-zA-Z0-9_]*)", source))
         self.assertTrue(referenced, "expected the shared runner to read fields off the result")
         self.assertEqual(referenced - available, set())
+
+    def test_operation_output_carries_both_diagnostic_scopes(self) -> None:
+        """
+            Both scopes must reach the frontend. Emitting only the per-frame dict is what made a run
+            whose catalog search failed entirely indistinguishable from a clean one.
+        """
+        from types import SimpleNamespace
+        from unittest import mock
+        from datalab.datalab_session.data_operations.non_sidereal_aperture_photometry import (
+            NonSiderealAperturePhotometry,
+        )
+
+        operation = NonSiderealAperturePhotometry({
+            "input_files": [{"basename": "frame_1", "source": "local", "filter": "rp"}],
+            "aperture_radius": 5.0,
+            "annulus_inner_radius": 8.0,
+            "annulus_outer_radius": 12.0,
+        })
+        with mock.patch(
+            "datalab.datalab_session.data_operations.moving_target_photometry.generate_light_curve"
+        ) as mock_generate, mock.patch(
+            "datalab.datalab_session.data_operations.moving_target_photometry.FileCache"
+        ) as mock_file_cache, mock.patch(
+            "datalab.datalab_session.data_operations.moving_target_photometry.save_diagnostic_images_to_s3",
+            return_value={},
+        ), mock.patch.object(
+            NonSiderealAperturePhotometry, "set_output"
+        ) as mock_set_output, mock.patch.object(
+            NonSiderealAperturePhotometry, "set_operation_progress"
+        ), mock.patch.object(NonSiderealAperturePhotometry, "set_status"):
+            mock_file_cache.return_value.get_fits.return_value = "/tmp/frame_1.fits"
+            mock_generate.return_value = SimpleNamespace(
+                light_curve_rows=[],
+                selected_comparison_stars=[],
+                diagnostics=["no ensemble spans every frame", "frame_1.fits: 2 usable stars"],
+                pipeline_diagnostics=["no ensemble spans every frame"],
+                diagnostics_by_fits_basename={"frame_1.fits": ["frame_1.fits: 2 usable stars"]},
+                diagnostic_image_jpegs_by_fits_basename={},
+            )
+            operation.operate(submitter=None)
+
+        output = mock_set_output.call_args.args[0]["output_data"][0]
+        self.assertEqual(output["pipeline_diagnostics"], ["no ensemble spans every frame"])
+        self.assertEqual(output["diagnostics"], {"frame_1.fits": ["frame_1.fits: 2 usable stars"]})
 
     def test_track_operation_rejects_missing_samples(self) -> None:
         from datalab.datalab_session.data_operations.moving_target_aperture_photometry import (
