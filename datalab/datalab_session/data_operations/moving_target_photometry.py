@@ -13,21 +13,26 @@ from datalab.datalab_session.utils.aperture_light_curve import (
     DEFAULT_MAX_COMPARISONS,
     DEFAULT_MIN_COMPARISONS,
     LightCurveError,
+    TARGET_POSITION_HEADER,
+    TARGET_POSITION_TRACK,
     generate_light_curve,
 )
 from datalab.datalab_session.utils.comparison_calibration import COMPARISON_AUTO
 from datalab.datalab_session.utils.diagnostic_images import save_diagnostic_images_to_s3
 from datalab.datalab_session.utils.filecache import FileCache
 from datalab.datalab_session.utils.format import Format
+from datalab.datalab_session.utils.moving_target_search import DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC
 from datalab.datalab_session.utils.period_analysis import period_output_from_light_curve_rows
+from datalab.datalab_session.utils.target_track import MINIMUM_TRACK_SAMPLES, track_samples_from_input
 
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 
-# Shared by both moving-target operations. Deliberately module-level functions rather than a common
-# base class: available_operations() registers every BaseDataOperation subclass it can import, so an
+# The two operations below differ only in how the target is located on each frame, so everything
+# else lives in the module-level helpers they share. Deliberately not a common base class:
+# available_operations() registers every BaseDataOperation subclass it can import, so an
 # intermediate base would register itself as an operation with no name.
 MINIMUM_NUMBER_OF_INPUTS = 1
 MAXIMUM_NUMBER_OF_INPUTS = 999
@@ -185,3 +190,140 @@ def run_light_curve(
         f"selected_comparison_stars={len(result.selected_comparison_stars)}, "
         f"diagnostic_images={len(diagnostic_image_urls)}{log_summary}"
     )
+
+
+class NonSiderealAperturePhotometry(BaseDataOperation):
+    """
+        Builds a calibrated aperture photometry light curve for a non-sidereal (moving) target, a
+        minor planet, comet, or NEO, across input images, for measuring rotation from brightness
+        modulation.
+
+        The target has no fixed sky position: it is read per frame from the moving-target ephemeris
+        header keywords (CAT-RA/CAT-DEC), so no source is supplied. Because the star field drifts as
+        the target moves, calibration falls back automatically from a single shared comparison
+        ensemble to an evolving, catalog-anchored per-frame zero point when no ensemble spans the
+        series. Returns light curve rows and diagnostic data for the frontend.
+    """
+    @staticmethod
+    def name():
+        return 'Non-Sidereal Aperture Photometry'
+
+    @staticmethod
+    def description():
+        return """The non-sidereal aperture photometry operation measures a moving solar-system target across input images, locating it per frame from the ephemeris header keywords, and calibrates the light curve against comparison stars from the source catalog -- carrying the calibration across a drifting star field."""
+
+    @staticmethod
+    def wizard_description():
+        return {
+            'name': NonSiderealAperturePhotometry.name(),
+            'description': NonSiderealAperturePhotometry.description(),
+            'category': 'image',
+            'inputs': shared_wizard_inputs(),
+        }
+
+    def operate(self, submitter: User):
+        """
+            Runs non-sidereal aperture photometry for the submitted input FITS files.
+
+            The moving target's position is read per frame from the ephemeris header keywords, so no
+            source is required. Returns a calibrated light curve and diagnostic data for the frontend.
+        """
+        run_light_curve(self, submitter, target_position_mode=TARGET_POSITION_HEADER)
+
+
+class MovingTargetAperturePhotometry(BaseDataOperation):
+    """
+        Builds a calibrated aperture photometry light curve for a moving solar-system target imaged
+        on sidereally-tracked frames, where no header keyword records where the object is.
+
+        The user identifies the target on two or more frames and submits those samples as
+        {mjd, ra, dec} samples. A polynomial track is fitted through them, a line from two samples, a
+        curve from three or more, and evaluated at each frame's exposure midpoint to predict where
+        the target is. That prediction is then used to search the frame's own source catalog for the
+        target, so the aperture lands on a detected source rather than an interpolated guess.
+
+        This is the counterpart to NonSiderealAperturePhotometry: there the mount tracked the object
+        and its position came from the ephemeris headers; here the mount tracked the stars, so the
+        object's position has to be interpolated from the user's own samples.
+    """
+    @staticmethod
+    def name():
+        return 'Moving Target Aperture Photometry'
+
+    @staticmethod
+    def description():
+        return """The moving target aperture photometry operation measures a solar-system object across sidereally-tracked images, where the object moves through a fixed star field. Identify the target on at least two frames -- ideally the first, the last, and one in the middle -- and the operation interpolates its position on every other frame, locates it in each frame's source catalog, and calibrates the light curve against comparison stars."""
+
+    @staticmethod
+    def wizard_description():
+        return {
+            'name': MovingTargetAperturePhotometry.name(),
+            'description': MovingTargetAperturePhotometry.description(),
+            'category': 'image',
+            'inputs': {
+                **shared_wizard_inputs(),
+                'target_track': {
+                    'name': 'Target Samples',
+                    'description': (
+                        'Where the target is on two or more frames, as {mjd, ra, dec} in decimal degrees, '
+                        'with mjd the UTC exposure midpoint. Two samples interpolate along a straight '
+                        'line, which holds for a night; add a third near the middle for a series spanning '
+                        'more than about half a day, since apparent tracks curve.'
+                    ),
+                    # The shared target-position contract across all aperture photometry operations:
+                    # a list of {mjd, ra, dec}. The fixed and header operations take one or zero
+                    # positions; this one takes MINIMUM_TRACK_SAMPLES or more to fit a track through.
+                    'type': Format.SOURCE,
+                    'multiple': True,
+                    'required': True,
+                    'minimum': MINIMUM_TRACK_SAMPLES,
+                },
+                'track_search_radius': {
+                    'name': 'Target Search Radius',
+                    'description': (
+                        'How far from the interpolated position to search each frame for the target, in '
+                        'arcseconds. Widen it if the samples are sparse or the object is fast; a wider '
+                        'search admits more field stars to be confused with the target.'
+                    ),
+                    'type': Format.FLOAT,
+                    'default': DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
+                },
+            }
+        }
+
+    def operate(self, submitter: User):
+        """
+            Runs moving-target aperture photometry for the submitted input FITS files.
+
+            The target's position on each frame is interpolated from the samples the user supplied
+            and then refined against the frame's source catalog, so no ephemeris header keywords are
+            needed. Returns a calibrated light curve and diagnostic data for the frontend.
+        """
+        raw_track = self.input_data.get('target_track')
+        if not raw_track:
+            raise ClientAlertException(
+                f'Operation {self.name()} requires the target to be identified on at least '
+                f'{MINIMUM_TRACK_SAMPLES} frames.'
+            )
+        try:
+            track_samples = track_samples_from_input(raw_track)
+            track_search_radius = float(
+                self.input_data.get('track_search_radius', DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ClientAlertException(f'Invalid target samples: {exc}') from exc
+
+        run_light_curve(
+            self,
+            submitter,
+            target_position_mode=TARGET_POSITION_TRACK,
+            light_curve_kwargs={
+                'target_track_samples': track_samples,
+                'track_search_radius_arcsec': track_search_radius,
+            },
+            output_data={
+                'track_search_radius': track_search_radius,
+                'target_track': [asdict(sample) for sample in track_samples],
+            },
+            log_summary=f", track_samples={len(track_samples)}",
+        )

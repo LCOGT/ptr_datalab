@@ -18,7 +18,6 @@ from datalab.datalab_session.utils.aperture_light_curve import (
     generate_light_curve,
 )
 from datalab.datalab_session.utils.period_analysis import period_output_from_light_curve_rows
-from datalab.datalab_session.utils.target_track import track_samples_from_input
 
 
 log = logging.getLogger()
@@ -58,13 +57,11 @@ class AperturePhotometry(BaseDataOperation):
             'description': AperturePhotometry.description(),
             'category': 'image',
             'inputs': {
-                'target_track': {
-                    'name': 'Target',
+                'source': {
+                    'name': 'Source Star',
                     'type': Format.SOURCE,
-                    'description': 'The target to measure, as one {ra, dec} position in decimal degrees. An mjd may be supplied for consistency with the moving-target operations but is unused: a fixed target does not move.',
-                    'name_lookup': True,
-                    'multiple': True,
-                    'minimum': 1,
+                    'description': 'The source star to measure',
+                    'name_lookup': True
                 },
                 'input_files': {
                     'name': 'Input Files',
@@ -114,37 +111,23 @@ class AperturePhotometry(BaseDataOperation):
 
     def _resolve_fixed_target(self) -> dict:
         """
-            The fixed target, from the unified target_track input or a legacy source.
+            The target source, as submitted.
 
-            All aperture photometry operations now receive the target position as a list of
-            {ra, dec}, optionally with an mjd; a fixed target is a single-element list, and its mjd
-            (if any) is ignored, since the position does not change with time. The legacy source input
-            ({ra, dec}) is still accepted so existing API clients and saved sessions keep working,
-            but is no longer advertised in the wizard.
+            A fixed target is one position that does not change with time, so it stays the plain
+            {ra, dec} source the wizard's name lookup produces, the same shape light_curve and
+            variable_star take. The moving-target operations take a list of timed samples instead,
+            which is a different thing and deliberately a different input.
 
-            Returns the source dict echoed back in the output, so any name the wizard resolved
+            Returns the source dict, echoed back in the output so any name the wizard resolved
             survives alongside the coordinates.
         """
-        raw_track = self.input_data.get('target_track')
-        if raw_track:
-            try:
-                samples = track_samples_from_input(raw_track, minimum=1, require_mjd=False)
-            except ValueError as exc:
-                raise ClientAlertException(f'Invalid target position: {exc}') from exc
-            first = raw_track[0] if isinstance(raw_track[0], dict) else {}
-            source = {'ra': samples[0].ra_deg, 'dec': samples[0].dec_deg}
-            if first.get('name'):
-                source['name'] = first['name']
-            return source
-
         source = self.input_data.get('source')
-        if source:
-            try:
-                return {**source, 'ra': float(source['ra']), 'dec': float(source['dec'])}
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ClientAlertException(f'Invalid source coordinates: {exc}') from exc
-
-        raise ClientAlertException(f'Operation {self.name()} requires a target position.')
+        if not source:
+            raise ClientAlertException(f'Operation {self.name()} requires a source.')
+        try:
+            return {**source, 'ra': float(source['ra']), 'dec': float(source['dec'])}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ClientAlertException(f'Invalid source coordinates: {exc}') from exc
 
     def operate(self, submitter: User):
         """

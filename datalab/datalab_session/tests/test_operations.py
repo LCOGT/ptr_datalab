@@ -417,41 +417,11 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         output = mock_set_output.call_args.args[0]
         self.assertEqual(output['output_data'][0]['filter'], 'None')
 
-    def test_operate_accepts_unified_target_track(self):
-        """The fixed target may arrive as a one-element {mjd, ra, dec} list (the shared contract)."""
+    def test_operate_echoes_the_source_including_its_resolved_name(self):
+        """A fixed target is one position with no time, so it stays the plain source input that
+        light_curve and variable_star also take. Any name the wizard resolved is echoed back."""
         input_data = self.valid_input_data()
-        del input_data['source']
-        input_data['target_track'] = [{'mjd': 61208.5, 'ra': 10.0, 'dec': 20.0}]
-
-        with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
-                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
-                mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
-                mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
-                mock.patch.object(AperturePhotometry, 'set_status'):
-            mock_file_cache.return_value.get_fits.return_value = '/tmp/fits_1.fits'
-            mock_generate_light_curve.return_value = SimpleNamespace(
-                light_curve_rows=[], selected_comparison_stars=[], diagnostics=[],
-                pipeline_diagnostics=[],
-                diagnostics_by_fits_basename={}, diagnostic_image_jpegs_by_fits_basename={},
-            )
-
-            AperturePhotometry(input_data).operate(None)
-
-        # The mjd is carried but unused; the position feeds through as a fixed target.
-        _, kwargs = mock_generate_light_curve.call_args
-        self.assertEqual((kwargs['target_ra_deg'], kwargs['target_dec_deg']), (10.0, 20.0))
-        output = mock_set_output.call_args.args[0]
-        self.assertEqual(output['output_data'][0]['source'], {'ra': 10.0, 'dec': 20.0})
-
-    def test_operate_accepts_a_target_track_without_an_mjd(self):
-        """
-            The wizard's Format.SOURCE payload is {ra, dec, name}, with no time field. A fixed target
-            does not move, so the mjd is optional and the resolved name must survive into the echoed
-            source.
-        """
-        input_data = self.valid_input_data()
-        del input_data['source']
-        input_data['target_track'] = [{'ra': 10.0, 'dec': 20.0, 'name': 'NGC 7331'}]
+        input_data['source'] = {'ra': 10.0, 'dec': 20.0, 'name': 'NGC 7331'}
 
         with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
                 mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
@@ -498,19 +468,20 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         self.assertEqual(output['pipeline_diagnostics'], ['applied a 4.0 mmag error floor'])
         self.assertEqual(output['diagnostics'], {'fits_1.fits': ['fits_1.fits: 6 stars checked']})
 
-    def test_operate_requires_a_target_position(self):
+    def test_operate_requires_a_source(self):
         input_data = self.valid_input_data()
         del input_data['source']
 
-        with self.assertRaisesRegex(ClientAlertException, 'requires a target position'):
+        with self.assertRaisesRegex(ClientAlertException, 'requires a source'):
             AperturePhotometry(input_data).operate(None)
 
-    def test_wizard_advertises_the_unified_target_input(self):
+    def test_wizard_advertises_a_plain_source_not_a_track(self):
+        """A fixed target does not move, so it must not be asked for as a track."""
         inputs = AperturePhotometry.wizard_description()['inputs']
-        self.assertIn('target_track', inputs)
-        self.assertNotIn('source', inputs)
-        self.assertEqual(inputs['target_track']['type'], Format.SOURCE)
-        self.assertTrue(inputs['target_track'].get('name_lookup'))
+        self.assertIn('source', inputs)
+        self.assertNotIn('target_track', inputs)
+        self.assertEqual(inputs['source']['type'], Format.SOURCE)
+        self.assertTrue(inputs['source'].get('name_lookup'))
 
     def test_operate_emits_period_analysis_for_a_measured_light_curve(self):
         """A light curve with enough points gets Lomb-Scargle period keys in the output."""
