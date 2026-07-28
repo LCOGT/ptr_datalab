@@ -12,9 +12,9 @@ from datalab.datalab_session.utils.fits_metadata import arcsec_to_pixels, option
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
 COMPARISON_STAR_COLOR = (0, 173, 239)
-TARGET_COLOR = (243, 131, 33)
+TARGET_COLOR = (255, 149, 0)
 # Diagnostic overlays are resampled so their long side is this many pixels.
-OVERLAY_MAX_DIMENSION = 1000
+OVERLAY_MAX_DIMENSION = 1500
 
 
 def candidate_overlay_jpeg_bytes(
