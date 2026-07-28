@@ -1,24 +1,17 @@
 """
 Comparison-set calibration strategies for the aperture photometry light curve.
 
-Both strategies place every frame on the catalog magnitude system via a per-frame, catalog-anchored
-zero point -- the calibration that already lets the sidereal pipeline combine frames across sites,
-instruments, and telescope classes. They differ only in the *identity* of the comparison ensemble:
-
-- "shared": one ensemble present on every frame (sidereal, and non-sidereal fields that barely drift).
-- "evolving": a per-frame ensemble whose zero points are solved jointly over the sparse (star x frame)
-  matrix and anchored to catalog magnitudes, so a drifting field whose comparison stars turn over
-  completely still yields one coherent light curve. Frames that share no stars (a fully turned-over
-  field, or a long time gap) form separate groups, each anchored to catalog magnitudes on its own and
-  flagged, since they cannot be tied together steplessly.
-
-Kept out of aperture_light_curve.py so that module stays focused on the pixel/measurement pipeline.
+Both place every frame on the catalog magnitude system via a per-frame, catalog-anchored zero point,
+the calibration that already lets the sidereal pipeline combine frames across sites, instruments and
+telescope classes. They differ only in the identity of the comparison ensemble: "shared" uses one
+ensemble present on every frame, "evolving" a per-frame ensemble tied together by a joint solve.
 """
 from __future__ import annotations
 
 import logging
 import math
 import os
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
@@ -32,6 +25,7 @@ from datalab.datalab_session.utils.comparison_stars import (
     select_comparison_stars,
 )
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
+from datalab.datalab_session.utils.light_curve_errors import LightCurveError
 
 if TYPE_CHECKING:  # avoid a runtime import cycle with aperture_light_curve
     from datalab.datalab_session.utils.aperture_light_curve import FrameContext, TargetMeasurement
@@ -39,18 +33,15 @@ if TYPE_CHECKING:  # avoid a runtime import cycle with aperture_light_curve
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
-# Comparison-set strategy: one ensemble present on every frame ("shared", sidereal); an evolving
-# ensemble whose per-frame zero point is solved jointly over the sparse star x frame matrix and
-# anchored to catalog magnitudes ("evolving", drifted non-sidereal fields); or "auto" -- try "shared"
-# and fall back to "evolving" when no ensemble spans the series.
-COMPARISON_SHARED = "shared"
-COMPARISON_EVOLVING = "evolving"
-COMPARISON_AUTO = "auto"
+# A comparison candidate is established if its cross-matched cluster is detected in at least this
+# fraction of frames. Catalog detection near the limiting magnitude is noisy, and heterogeneous
+# multi-telescope sets rarely catalog the same star in *every* frame, so requiring presence in all
+# frames discards good stars and collapses the candidate pool. Only the shared ensemble can afford
+# it: an evolving one must keep sparsely-detected stars, since they are what carry a drifted field.
+SHARED_FRAME_COVERAGE_FRACTION = 0.8
 # Evolving self-calibration solve controls.
 EVOLVING_SOLVE_ITERATIONS = 50
 EVOLVING_SOLVE_TOLERANCE_MAG = 1e-6
-# d(magnitude)/d(fractional flux error) = 2.5/ln(10); converts a flux SNR into a magnitude sigma.
-MAG_PER_DEX = 2.5 / math.log(10.0)
 
 
 @dataclass(frozen=True)
@@ -71,38 +62,218 @@ class FrameCalibration:
     calibrated_mag_sigma: float
 
 
+@dataclass(frozen=True)
+class CalibrationInputs:
+    """
+        Everything a calibration strategy works from: the validated frames, the comparison-star
+        candidates and their per-frame measurements, the target's measurements, and the ensemble
+        size limits the user set.
+
+        One object because every strategy needs all of it, and the whole set is threaded unchanged
+        from the pipeline down to each strategy.
+    """
+    frames: Sequence["FrameContext"]
+    candidate_stars: Sequence[ComparisonStar]
+    measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]]
+    target_measurements: Mapping[str, "TargetMeasurement"]
+    min_comparisons: int
+    max_comparisons: int
+
+    @property
+    def frame_paths(self) -> list[str]:
+        return [frame.fits_path for frame in self.frames]
+
+
+@dataclass(frozen=True)
+class ComparisonMatrix:
+    """
+        The sparse (star x frame) instrumental-magnitude matrix the evolving solve runs on, together
+        with what it needs to anchor and trim: each star's catalog magnitude, the target's own
+        brightness per frame, and the user's ensemble cap.
+
+        Sparse because a drifting field puts most stars outside most frames. An entry exists only
+        where a star was measured with positive counts, so `measured_on` is the membership test the
+        whole solve is written against.
+    """
+    rows: Mapping[str, Mapping[str, tuple[float, ComparisonMeasurement]]]
+    star_by_id: Mapping[str, ComparisonStar]
+    target_instrumental_mag_by_frame: Mapping[str, float]
+    max_comparisons: int
+
+    @classmethod
+    def build(cls, inputs: "CalibrationInputs") -> "ComparisonMatrix":
+        """
+            Keeps only what the solve can use: positive counts on a star that has a finite catalog
+            magnitude to anchor to.
+        """
+        star_by_id = {candidate.candidate_id: candidate for candidate in inputs.candidate_stars}
+        rows: dict[str, dict[str, tuple[float, ComparisonMeasurement]]] = {}
+        for candidate_id, per_frame in inputs.measurements_by_candidate.items():
+            candidate = star_by_id.get(candidate_id)
+            if candidate is None or not math.isfinite(candidate.reference_magnitude):
+                continue
+            measured = {
+                fits_path: (-2.5 * math.log10(measurement.net_source_counts), measurement)
+                for fits_path, measurement in per_frame.items()
+                if math.isfinite(measurement.net_source_counts) and measurement.net_source_counts > 0.0
+            }
+            if measured:
+                rows[candidate_id] = measured
+        return cls(
+            rows=rows,
+            star_by_id=star_by_id,
+            target_instrumental_mag_by_frame={
+                fits_path: (
+                    -2.5 * math.log10(measurement.net_source_counts)
+                    if measurement.net_source_counts > 0.0
+                    else math.nan
+                )
+                for fits_path, measurement in inputs.target_measurements.items()
+            },
+            max_comparisons=inputs.max_comparisons,
+        )
+
+    def __bool__(self) -> bool:
+        return bool(self.rows)
+
+    def measured_on(self, candidate_id: str, fits_path: str) -> bool:
+        return fits_path in self.rows[candidate_id]
+
+    def instrumental_mag(self, candidate_id: str, fits_path: str) -> float:
+        return self.rows[candidate_id][fits_path][0]
+
+    def measurement(self, candidate_id: str, fits_path: str) -> ComparisonMeasurement:
+        return self.rows[candidate_id][fits_path][1]
+
+    def catalog_mag(self, candidate_id: str) -> float:
+        return float(self.star_by_id[candidate_id].reference_magnitude)
+
+    def target_instrumental_mag(self, fits_path: str) -> float:
+        """The target's own instrumental magnitude, NaN where it had no positive counts."""
+        return self.target_instrumental_mag_by_frame.get(fits_path, math.nan)
+
+
+@dataclass(frozen=True)
+class EvolvingSolution:
+    """
+        The evolving strategy's solve, merged across every connected component: each frame's zero
+        point, its standard error, and the comparison stars that frame calibrates against.
+
+        populated_components is how many groups the field split into; more than one means parts of
+        the series share no stars and were anchored separately, so steps between them are possible.
+    """
+    zero_point_by_frame: dict[str, float]
+    zp_sigma_by_frame: dict[str, float]
+    active_ids_by_frame: dict[str, list[str]]
+    populated_components: int
+
+
+@dataclass(frozen=True)
+class CalibrationOutcome:
+    """What a comparison strategy produces: the per-frame calibration, the stars it drew on, and
+    anything the user should know about how it went."""
+    frame_calibrations: dict[str, FrameCalibration]
+    used_stars: tuple[ComparisonStar, ...]
+    diagnostics: list[str]
+
+
+class ComparisonStrategy(ABC):
+    """
+        How the comparison ensemble is maintained across the series.
+
+        A strategy also states what it needs from the measurement pass, because that decision is
+        its own: an ensemble that must be present on every frame can pre-filter candidates by
+        coverage and abandon one the moment it fails, while an evolving ensemble must keep
+        sparsely-detected stars and re-try a star on every frame it might have re-entered. Those
+        two properties used to be string comparisons against the mode inside the pixel pipeline.
+    """
+
+    # Fraction of frames a candidate must be catalogued on to enter the pool at all, and whether a
+    # candidate that fails to measure on one frame is abandoned for the rest.
+    min_frame_coverage: float
+    drops_failed_candidates: bool
+
+    @abstractmethod
+    def calibrate(self, inputs: CalibrationInputs) -> CalibrationOutcome:
+        """Calibrate every frame, or raise LightCurveError if this strategy cannot."""
+
+
+@dataclass(frozen=True)
+class SharedEnsemble(ComparisonStrategy):
+    """
+        One ensemble present on every frame, calibrated by a per-frame catalog-anchored zero point.
+        The sidereal default, and correct for any field that barely drifts.
+    """
+
+    min_frame_coverage = SHARED_FRAME_COVERAGE_FRACTION
+    drops_failed_candidates = True
+
+    def calibrate(self, inputs: CalibrationInputs) -> CalibrationOutcome:
+        return _calibrate_shared(inputs)
+
+
+@dataclass(frozen=True)
+class EvolvingEnsemble(ComparisonStrategy):
+    """
+        A per-frame ensemble whose zero points are solved jointly over the sparse star x frame
+        matrix and anchored to catalog magnitudes, so a field whose comparison stars turn over
+        completely still yields one coherent light curve.
+    """
+
+    min_frame_coverage = 0.0
+    drops_failed_candidates = False
+
+    def calibrate(self, inputs: CalibrationInputs) -> CalibrationOutcome:
+        return _calibrate_evolving(inputs)
+
+
+@dataclass(frozen=True)
+class SharedThenEvolving(ComparisonStrategy):
+    """
+        Try the shared ensemble, fall back to the evolving one when no ensemble spans the series.
+
+        The fallback reuses the single pixel pass already done, so it costs no re-measurement. It
+        takes the evolving strategy's measurement requirements throughout, because whether the
+        fallback will be needed is not known until after the frames have been measured.
+    """
+
+    min_frame_coverage = 0.0
+    drops_failed_candidates = False
+
+    def calibrate(self, inputs: CalibrationInputs) -> CalibrationOutcome:
+        try:
+            return _calibrate_shared(inputs)
+        except LightCurveError as exc:
+            log.warning(
+                "Aperture Photometry shared comparison ensemble unavailable; "
+                f"falling back to evolving calibration: {exc}"
+            )
+            outcome = _calibrate_evolving(inputs)
+            return replace(
+                outcome,
+                diagnostics=[
+                    f"No comparison ensemble spans every frame ({exc}); used evolving per-frame "
+                    "calibration."
+                ] + list(outcome.diagnostics),
+            )
+
+
 def calibrate(
-    *,
-    comparison_mode: str,
-    frames: Sequence["FrameContext"],
-    candidate_stars: Sequence[ComparisonStar],
-    measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]],
-    target_measurements: Mapping[str, "TargetMeasurement"],
-    min_comparisons: int,
-    max_comparisons: int,
-    error_class: type[Exception] = ValueError,
-) -> tuple[dict[str, FrameCalibration], tuple[ComparisonStar, ...], list[str]]:
+    inputs: CalibrationInputs,
+    strategy: ComparisonStrategy,
+) -> CalibrationOutcome:
     """
-        Calibrates the light curve: dispatches to a comparison-set strategy, then widens each point's
-        uncertainty by an empirical error floor. Returns the per-frame calibration, the comparison
-        stars used across the series, and calibration-level diagnostics.
+        Calibrates the light curve with the given strategy, then widens each point's uncertainty by
+        an empirical error floor, which every strategy earns the same way.
     """
-    frame_calibrations, used_stars, diagnostics = _dispatch_calibration(
-        comparison_mode=comparison_mode,
-        frames=frames,
-        candidate_stars=candidate_stars,
-        measurements_by_candidate=measurements_by_candidate,
-        target_measurements=target_measurements,
-        min_comparisons=min_comparisons,
-        max_comparisons=max_comparisons,
-        error_class=error_class,
-    )
+    outcome = strategy.calibrate(inputs)
+    frame_calibrations, diagnostics = outcome.frame_calibrations, outcome.diagnostics
 
     # The formal per-point uncertainty carries only photon + zero-point-scatter terms and badly
     # underestimates real frame-to-frame reproducibility (flat-field, scintillation, catalog noise).
     # Measure that systematic floor directly from how well the comparison stars' own calibrated
     # magnitudes repeat frame to frame, and add it in quadrature to every point.
-    floor = _empirical_error_floor(frame_calibrations, [frame.fits_path for frame in frames])
+    floor = _empirical_error_floor(frame_calibrations, inputs.frame_paths)
     if floor > 0.0:
         frame_calibrations = {
             fits_path: (
@@ -116,90 +287,10 @@ def calibrate(
             f"Applied a {floor * 1000.0:.1f} mmag empirical error floor (comparison-star "
             "frame-to-frame reproducibility) in quadrature to each point's uncertainty."
         ]
-    return frame_calibrations, used_stars, diagnostics
+    return replace(outcome, frame_calibrations=frame_calibrations, diagnostics=diagnostics)
 
 
-def _dispatch_calibration(
-    *,
-    comparison_mode: str,
-    frames: Sequence["FrameContext"],
-    candidate_stars: Sequence[ComparisonStar],
-    measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]],
-    target_measurements: Mapping[str, "TargetMeasurement"],
-    min_comparisons: int,
-    max_comparisons: int,
-    error_class: type[Exception] = ValueError,
-) -> tuple[dict[str, FrameCalibration], tuple[ComparisonStar, ...], list[str]]:
-    """
-        Dispatches to a comparison-set calibration strategy, returning a per-frame calibration, the
-        comparison stars used across the series, and calibration-level diagnostics.
-
-        "auto" tries the shared ensemble first (identical to the sidereal path) and falls back to the
-        evolving per-frame calibration when no ensemble spans the series -- from the one pixel pass
-        already done, so the fallback costs no re-measurement.
-    """
-    if comparison_mode == COMPARISON_EVOLVING:
-        return _calibrate_evolving(
-            frames=frames,
-            candidate_stars=candidate_stars,
-            measurements_by_candidate=measurements_by_candidate,
-            target_measurements=target_measurements,
-            min_comparisons=min_comparisons,
-            max_comparisons=max_comparisons,
-            error_class=error_class,
-        )
-    if comparison_mode == COMPARISON_SHARED:
-        return _calibrate_shared(
-            frames=frames,
-            candidate_stars=candidate_stars,
-            measurements_by_candidate=measurements_by_candidate,
-            target_measurements=target_measurements,
-            min_comparisons=min_comparisons,
-            max_comparisons=max_comparisons,
-            error_class=error_class,
-        )
-    try:
-        return _calibrate_shared(
-            frames=frames,
-            candidate_stars=candidate_stars,
-            measurements_by_candidate=measurements_by_candidate,
-            target_measurements=target_measurements,
-            min_comparisons=min_comparisons,
-            max_comparisons=max_comparisons,
-            error_class=error_class,
-        )
-    except error_class as exc:
-        log.warning(
-            "Aperture Photometry shared comparison ensemble unavailable; "
-            f"falling back to evolving calibration: {exc}"
-        )
-        calibrations, used_stars, diagnostics = _calibrate_evolving(
-            frames=frames,
-            candidate_stars=candidate_stars,
-            measurements_by_candidate=measurements_by_candidate,
-            target_measurements=target_measurements,
-            min_comparisons=min_comparisons,
-            max_comparisons=max_comparisons,
-            error_class=error_class,
-        )
-        return (
-            calibrations,
-            used_stars,
-            [f"No comparison ensemble spans every frame ({exc}); used evolving per-frame calibration."]
-            + list(diagnostics),
-        )
-
-
-def _calibrate_shared(
-    *,
-    frames: Sequence["FrameContext"],
-    candidate_stars: Sequence[ComparisonStar],
-    measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]],
-    target_measurements: Mapping[str, "TargetMeasurement"],
-    min_comparisons: int,
-    max_comparisons: int,
-    error_class: type[Exception],
-) -> tuple[dict[str, FrameCalibration], tuple[ComparisonStar, ...], list[str]]:
+def _calibrate_shared(inputs: CalibrationInputs) -> CalibrationOutcome:
     """
         Sidereal calibration: one comparison ensemble present on every frame, calibrated by a
         per-frame catalog-anchored zero point. Each frame's zero point is
@@ -207,16 +298,16 @@ def _calibrate_shared(
         calibration self-corrects that frame's airmass/instrument/exposure. Unchanged behavior from
         before the strategy split.
     """
-    target_mag_proxy = _target_magnitude_proxy(target_measurements.values(), error_class=error_class)
+    target_mag_proxy = _target_magnitude_proxy(inputs.target_measurements.values())
     log.info(f"Aperture Photometry target magnitude proxy: {target_mag_proxy:.6f}")
     selection = select_comparison_stars(
-        frames=frames,
-        candidates=candidate_stars,
-        measurements_by_candidate=measurements_by_candidate,
+        frames=inputs.frames,
+        candidates=inputs.candidate_stars,
+        measurements_by_candidate=inputs.measurements_by_candidate,
         target_mag_proxy=target_mag_proxy,
-        min_comparisons=min_comparisons,
-        max_comparisons=max_comparisons,
-        error_class=error_class,
+        min_comparisons=inputs.min_comparisons,
+        max_comparisons=inputs.max_comparisons,
+        error_class=LightCurveError,
     )
     log.info(
         "Aperture Photometry comparison stars selected: "
@@ -231,12 +322,12 @@ def _calibrate_shared(
     )
     ensemble_reference_flux = float(np.sum(10 ** (-0.4 * reference_magnitudes)))
     if ensemble_reference_flux <= 0.0:
-        raise error_class("Comparison-star magnitude calibration produced a non-positive ensemble reference flux.")
+        raise LightCurveError("Comparison-star magnitude calibration produced a non-positive ensemble reference flux.")
     ensemble_reference_mag = -2.5 * math.log10(ensemble_reference_flux)
 
     frame_calibrations: dict[str, FrameCalibration] = {}
-    for frame in frames:
-        target = target_measurements[frame.fits_path]
+    for frame in inputs.frames:
+        target = inputs.target_measurements[frame.fits_path]
         # Reuse the per-frame measurements captured during selection rather than re-measuring the
         # same apertures on the same frames.
         comparison_measurements = tuple(
@@ -254,7 +345,7 @@ def _calibrate_shared(
         ensemble_flux = float(np.sum(comparison_counts))
         ensemble_variance = float(np.sum(np.square(comparison_uncertainties)))
         if not math.isfinite(ensemble_flux) or ensemble_flux <= 0.0:
-            raise error_class(f"Ensemble comparison flux is invalid for frame {frame.fits_path}.")
+            raise LightCurveError(f"Ensemble comparison flux is invalid for frame {frame.fits_path}.")
 
         target_rel_flux, target_rel_flux_sigma = relative_flux(target, ensemble_flux, ensemble_variance)
         calibrated_flux = target_rel_flux * ensemble_reference_flux
@@ -276,137 +367,138 @@ def _calibrate_shared(
             calibrated_mag=calibrated_mag,
             calibrated_mag_sigma=calibrated_mag_sigma,
         )
-    return frame_calibrations, tuple(selection.selected_stars), []
+    return CalibrationOutcome(frame_calibrations, tuple(selection.selected_stars), [])
 
 
-def _calibrate_evolving(
-    *,
-    frames: Sequence["FrameContext"],
-    candidate_stars: Sequence[ComparisonStar],
-    measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]],
-    target_measurements: Mapping[str, "TargetMeasurement"],
-    min_comparisons: int,
-    max_comparisons: int,
-    error_class: type[Exception],
-) -> tuple[dict[str, FrameCalibration], tuple[ComparisonStar, ...], list[str]]:
+def _calibrate_evolving(inputs: CalibrationInputs) -> CalibrationOutcome:
     """
         Evolving calibration for a drifting non-sidereal field, where no single ensemble spans the
-        series. Solves a per-frame catalog-anchored zero point jointly over the sparse (star x frame)
-        matrix: comparison stars link the frames they share, so a star entering the field is tied to
-        the same internal magnitude system the incumbents define, and membership can turn over
-        completely without stepping the light curve. Disconnected groups (a fully turned-over field
-        or a long time gap with no shared stars) are each anchored to catalog magnitudes on their own
-        and flagged, since they cannot be tied steplessly.
+        series. Comparison stars link the frames they share, so a star entering the field is tied to
+        the magnitude system the incumbents already define and membership can turn over completely
+        without stepping the light curve. Disconnected groups (a fully turned-over field, or a time
+        gap with no shared stars) are anchored to catalog magnitudes separately and flagged, since
+        nothing ties them steplessly.
 
-        Every star that links frames contributes to the joint solve, since that linkage is what
-        keeps the series on one magnitude system, but each frame's ensemble is capped at
-        max_comparisons.
+        Every linking star feeds the solve; only each frame's reported ensemble is capped.
     """
-    star_by_id = {candidate.candidate_id: candidate for candidate in candidate_stars}
-    # present[candidate_id][fits_path] = (instrumental_mag, measurement) for positive measurements.
-    present: dict[str, dict[str, tuple[float, ComparisonMeasurement]]] = {}
-    for candidate_id, per_frame in measurements_by_candidate.items():
-        candidate = star_by_id.get(candidate_id)
-        if candidate is None or not math.isfinite(candidate.reference_magnitude):
-            continue
-        rows: dict[str, tuple[float, ComparisonMeasurement]] = {}
-        for fits_path, measurement in per_frame.items():
-            counts = measurement.net_source_counts
-            if math.isfinite(counts) and counts > 0.0:
-                rows[fits_path] = (-2.5 * math.log10(counts), measurement)
-        if rows:
-            present[candidate_id] = rows
-    if not present:
-        raise error_class("Evolving calibration found no usable comparison-star measurements.")
+    matrix = ComparisonMatrix.build(inputs)
+    if not matrix:
+        raise LightCurveError("Evolving calibration found no usable comparison-star measurements.")
 
-    frame_paths = [frame.fits_path for frame in frames]
-    components = _connected_components(present)
-    # The target's own instrumental magnitude per frame, to rank each frame's ensemble by brightness
-    # closeness to the target (see _capped_frame_comparisons).
-    target_instrumental_mag_by_frame = {
-        fits_path: (
-            -2.5 * math.log10(measurement.net_source_counts)
-            if measurement.net_source_counts > 0.0
-            else math.nan
-        )
-        for fits_path, measurement in target_measurements.items()
-    }
-
-    zero_point_by_frame: dict[str, float] = {}
-    zp_sigma_by_frame: dict[str, float] = {}
-    active_ids_by_frame: dict[str, list[str]] = {fits_path: [] for fits_path in frame_paths}
-    used_ids: set[str] = set()
-    for component in components:
-        zero_points, zp_sigmas, active_ids = _solve_component_zero_points(
-            star_ids=component["stars"],
-            frame_paths=component["frames"],
-            present=present,
-            star_by_id=star_by_id,
-            max_comparisons=max_comparisons,
-            target_instrumental_mag_by_frame=target_instrumental_mag_by_frame,
-        )
-        zero_point_by_frame.update(zero_points)
-        zp_sigma_by_frame.update(zp_sigmas)
-        for fits_path, ids in active_ids.items():
-            active_ids_by_frame[fits_path] = ids
-            used_ids.update(ids)
+    solution = _solve_evolving_zero_points(matrix, inputs.frame_paths)
 
     diagnostics: list[str] = []
-    populated_components = [component for component in components if component["frames"]]
-    if len(populated_components) > 1:
+    if solution.populated_components > 1:
         diagnostics.append(
-            f"Evolving calibration: the comparison field splits into {len(populated_components)} "
+            f"Evolving calibration: the comparison field splits into {solution.populated_components} "
             "groups sharing no common stars, each anchored to catalog magnitudes independently; "
             "magnitude steps may exist between them."
         )
 
     frame_calibrations: dict[str, FrameCalibration] = {}
-    for frame in frames:
-        fits_path = frame.fits_path
-        target = target_measurements[fits_path]
-        active_ids = active_ids_by_frame.get(fits_path, [])
-        measurements = tuple(present[candidate_id][fits_path][1] for candidate_id in active_ids)
-        stars = tuple(star_by_id[candidate_id] for candidate_id in active_ids)
-        counts = np.asarray([measurement.net_source_counts for measurement in measurements], dtype=float)
-        uncertainties = np.asarray([measurement.source_uncertainty for measurement in measurements], dtype=float)
-        ensemble_flux = float(np.sum(counts)) if counts.size else 0.0
-        ensemble_variance = float(np.sum(np.square(uncertainties))) if uncertainties.size else 0.0
-        target_rel_flux, target_rel_flux_sigma = relative_flux(target, ensemble_flux, ensemble_variance)
-
-        zero_point = zero_point_by_frame.get(fits_path, math.nan)
-        zp_sigma = zp_sigma_by_frame.get(fits_path, math.nan)
-        if len(active_ids) >= min_comparisons and math.isfinite(zero_point) and target.net_source_counts > 0.0:
-            calibrated_mag = -2.5 * math.log10(target.net_source_counts) + zero_point
-            target_inst_sigma = MAG_PER_DEX * (target.source_uncertainty / target.net_source_counts)
-            calibrated_mag_sigma = math.hypot(target_inst_sigma, zp_sigma if math.isfinite(zp_sigma) else 0.0)
-        else:
-            calibrated_mag = math.nan
-            calibrated_mag_sigma = math.nan
-            if len(active_ids) < min_comparisons:
-                diagnostics.append(
-                    f"Evolving calibration: {os.path.basename(fits_path)} has {len(active_ids)} usable "
-                    f"comparison stars (< {min_comparisons}); light-curve row omitted."
-                )
-        frame_calibrations[fits_path] = FrameCalibration(
-            stars=stars,
-            measurements=measurements,
-            ensemble_flux=ensemble_flux,
-            ensemble_variance=ensemble_variance,
-            target_rel_flux=target_rel_flux,
-            target_rel_flux_sigma=target_rel_flux_sigma,
-            frame_zero_point=zero_point if math.isfinite(zero_point) else 0.0,
-            calibrated_mag=calibrated_mag,
-            calibrated_mag_sigma=calibrated_mag_sigma,
+    for fits_path in inputs.frame_paths:
+        calibration, shortfall = _evolving_frame_calibration(
+            matrix,
+            fits_path=fits_path,
+            target=inputs.target_measurements[fits_path],
+            active_ids=solution.active_ids_by_frame.get(fits_path, []),
+            zero_point=solution.zero_point_by_frame.get(fits_path, math.nan),
+            zp_sigma=solution.zp_sigma_by_frame.get(fits_path, math.nan),
+            min_comparisons=inputs.min_comparisons,
         )
+        frame_calibrations[fits_path] = calibration
+        if shortfall is not None:
+            diagnostics.append(shortfall)
 
-    used_stars = tuple(star_by_id[candidate_id] for candidate_id in sorted(used_ids))
+    used_ids = {candidate_id for ids in solution.active_ids_by_frame.values() for candidate_id in ids}
+    used_stars = tuple(matrix.star_by_id[candidate_id] for candidate_id in sorted(used_ids))
     if not used_stars:
-        raise error_class("Evolving calibration produced no usable comparison stars.")
+        raise LightCurveError("Evolving calibration produced no usable comparison stars.")
     log.info(
         "Aperture Photometry evolving calibration: "
-        f"components={len(populated_components)}, used_comparison_stars={len(used_stars)}"
+        f"components={solution.populated_components}, used_comparison_stars={len(used_stars)}"
     )
-    return frame_calibrations, used_stars, diagnostics
+    return CalibrationOutcome(frame_calibrations, used_stars, diagnostics)
+
+
+def _solve_evolving_zero_points(
+    matrix: ComparisonMatrix,
+    frame_paths: Sequence[str],
+) -> EvolvingSolution:
+    """
+        Solves each connected component of the (star x frame) graph and merges the results.
+
+        Components share no comparison stars, so nothing links their magnitude systems and each is
+        solved on its own against catalog magnitudes.
+    """
+    components = _connected_components(matrix.rows)
+    zero_point_by_frame: dict[str, float] = {}
+    zp_sigma_by_frame: dict[str, float] = {}
+    active_ids_by_frame: dict[str, list[str]] = {fits_path: [] for fits_path in frame_paths}
+    for component in components:
+        zero_points, zp_sigmas, active_ids = _solve_component_zero_points(
+            matrix, star_ids=component["stars"], frame_paths=component["frames"]
+        )
+        zero_point_by_frame.update(zero_points)
+        zp_sigma_by_frame.update(zp_sigmas)
+        active_ids_by_frame.update(active_ids)
+    return EvolvingSolution(
+        zero_point_by_frame=zero_point_by_frame,
+        zp_sigma_by_frame=zp_sigma_by_frame,
+        active_ids_by_frame=active_ids_by_frame,
+        populated_components=sum(1 for component in components if component["frames"]),
+    )
+
+
+def _evolving_frame_calibration(
+    matrix: ComparisonMatrix,
+    *,
+    fits_path: str,
+    target: "TargetMeasurement",
+    active_ids: Sequence[str],
+    zero_point: float,
+    zp_sigma: float,
+    min_comparisons: int,
+) -> tuple[FrameCalibration, str | None]:
+    """
+        One frame's calibration from its solved zero point and ensemble.
+
+        Returns the calibration, plus a diagnostic when the frame has too few comparison stars to
+        calibrate at all (its magnitude is NaN and the light-curve row is omitted downstream).
+    """
+    measurements = tuple(matrix.measurement(candidate_id, fits_path) for candidate_id in active_ids)
+    stars = tuple(matrix.star_by_id[candidate_id] for candidate_id in active_ids)
+    counts = np.asarray([measurement.net_source_counts for measurement in measurements], dtype=float)
+    uncertainties = np.asarray([measurement.source_uncertainty for measurement in measurements], dtype=float)
+    ensemble_flux = float(np.sum(counts)) if counts.size else 0.0
+    ensemble_variance = float(np.sum(np.square(uncertainties))) if uncertainties.size else 0.0
+    target_rel_flux, target_rel_flux_sigma = relative_flux(target, ensemble_flux, ensemble_variance)
+
+    shortfall: str | None = None
+    if len(active_ids) >= min_comparisons and math.isfinite(zero_point) and target.net_source_counts > 0.0:
+        calibrated_mag = -2.5 * math.log10(target.net_source_counts) + zero_point
+        _, target_inst_sigma = flux_to_mag(target.net_source_counts, target.source_uncertainty)
+        calibrated_mag_sigma = math.hypot(target_inst_sigma, zp_sigma if math.isfinite(zp_sigma) else 0.0)
+    else:
+        calibrated_mag = math.nan
+        calibrated_mag_sigma = math.nan
+        if len(active_ids) < min_comparisons:
+            shortfall = (
+                f"Evolving calibration: {os.path.basename(fits_path)} has {len(active_ids)} usable "
+                f"comparison stars (< {min_comparisons}); light-curve row omitted."
+            )
+    calibration = FrameCalibration(
+        stars=stars,
+        measurements=measurements,
+        ensemble_flux=ensemble_flux,
+        ensemble_variance=ensemble_variance,
+        target_rel_flux=target_rel_flux,
+        target_rel_flux_sigma=target_rel_flux_sigma,
+        frame_zero_point=zero_point if math.isfinite(zero_point) else 0.0,
+        calibrated_mag=calibrated_mag,
+        calibrated_mag_sigma=calibrated_mag_sigma,
+    )
+    return calibration, shortfall
 
 
 def relative_flux(target: "TargetMeasurement", ensemble_flux: float, ensemble_variance: float) -> tuple[float, float]:
@@ -463,11 +555,7 @@ def _empirical_error_floor(
     return float(np.median(per_star_rms))
 
 
-def _target_magnitude_proxy(
-    measurements: Iterable["TargetMeasurement"],
-    *,
-    error_class: type[Exception] = ValueError,
-) -> float:
+def _target_magnitude_proxy(measurements: Iterable["TargetMeasurement"]) -> float:
     """
         The target's own measured instrumental magnitude, median over frames. Comparison stars are
         ranked against this (not the target's catalog magnitude) so both sides share a zero point.
@@ -478,23 +566,26 @@ def _target_magnitude_proxy(
         if measurement.net_source_counts > 0
     ]
     if not instrumental_mags:
-        raise error_class("Target photometry never produced positive source counts.")
+        raise LightCurveError("Target photometry never produced positive source counts.")
     return float(np.median(np.asarray(instrumental_mags, dtype=float)))
 
 
 def _connected_components(
-    present: Mapping[str, Mapping[str, Any]],
+    matrix_rows: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, list[str]]]:
     """
         Connected components of the bipartite graph whose nodes are comparison stars and frames, with
         an edge wherever a star was measured on a frame. Each component is a set of frames that a
         common internal magnitude system can tie together; frames in different components share no
         comparison stars.
+
+        Takes the raw rows rather than the ComparisonMatrix: this is graph connectivity, and none of
+        the magnitudes or the ensemble cap bear on it.
     """
     adjacency: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
-    for candidate_id, rows in present.items():
+    for candidate_id, frames_for_star in matrix_rows.items():
         star_node = ("star", candidate_id)
-        for fits_path in rows:
+        for fits_path in frames_for_star:
             frame_node = ("frame", fits_path)
             adjacency[star_node].add(frame_node)
             adjacency[frame_node].add(star_node)
@@ -523,51 +614,41 @@ def _connected_components(
 
 
 def _solve_component_zero_points(
+    matrix: ComparisonMatrix,
     *,
     star_ids: Sequence[str],
     frame_paths: Sequence[str],
-    present: Mapping[str, Mapping[str, tuple[float, Any]]],
-    star_by_id: Mapping[str, ComparisonStar],
-    max_comparisons: int,
-    target_instrumental_mag_by_frame: Mapping[str, float],
 ) -> tuple[dict[str, float], dict[str, float], dict[str, list[str]]]:
     """
-        Robustly solves per-frame zero points ZP_f and internal star magnitudes M_c for one connected
-        component of the (star x frame) graph, from the model m[c,f] + ZP_f = M_c. Alternates robust
-        (median) updates of ZP_f and M_c, re-anchoring the absolute scale to catalog magnitudes each
-        pass so the internal system stays on the catalog scale. After an initial solve it drops
-        variable stars (large residual scatter) and re-solves once.
+        Solves per-frame zero points ZP_f and internal star magnitudes M_c for one connected component
+        of the (star x frame) graph, from the model m[c,f] + ZP_f = M_c, then drops variable stars
+        (large residual scatter) and re-solves once.
 
-        The solve uses every star in the component; only the ensemble each frame calibrates against
-        is capped at max_comparisons. ZP_f is the median over that capped set, so the zero point and
-        its standard error describe the same stars.
-
-        Returns per-frame ZP_f, per-frame ZP standard error, and the active (kept) star ids per frame.
+        ZP_f is the median over the frame's capped ensemble, so the zero point and its standard error
+        describe the same stars. Returns ZP_f, its standard error, and the kept star ids per frame.
     """
-    internal_mag, zero_points = _iterate_component_solve(star_ids, frame_paths, present, star_by_id)
+    internal_mag, zero_points = _iterate_component_solve(matrix, star_ids, frame_paths)
 
     kept_ids = [
         candidate_id
         for candidate_id in star_ids
-        if _residual_scatter(candidate_id, frame_paths, present, internal_mag, zero_points) <= MAX_ACCEPTABLE_VARIABILITY
+        if _residual_scatter(matrix, candidate_id, frame_paths, internal_mag, zero_points) <= MAX_ACCEPTABLE_VARIABILITY
     ]
     if kept_ids and len(kept_ids) < len(star_ids):
         star_ids = kept_ids
-        internal_mag, zero_points = _iterate_component_solve(star_ids, frame_paths, present, star_by_id)
+        internal_mag, zero_points = _iterate_component_solve(matrix, star_ids, frame_paths)
 
     zp_by_frame: dict[str, float] = {}
     zp_sigma_by_frame: dict[str, float] = {}
     active_ids_by_frame: dict[str, list[str]] = {}
     for fits_path in frame_paths:
         active_ids = _capped_frame_comparisons(
-            candidate_ids=[candidate_id for candidate_id in star_ids if fits_path in present[candidate_id]],
+            matrix,
+            candidate_ids=[c for c in star_ids if matrix.measured_on(c, fits_path)],
             fits_path=fits_path,
-            present=present,
-            max_comparisons=max_comparisons,
-            target_instrumental_mag=target_instrumental_mag_by_frame.get(fits_path, math.nan),
         )
         per_star_zero_points = [
-            internal_mag[candidate_id] - present[candidate_id][fits_path][0]
+            internal_mag[candidate_id] - matrix.instrumental_mag(candidate_id, fits_path)
             for candidate_id in active_ids
         ]
         active_ids_by_frame[fits_path] = active_ids
@@ -586,53 +667,64 @@ def _solve_component_zero_points(
 
 
 def _capped_frame_comparisons(
+    matrix: ComparisonMatrix,
     *,
     candidate_ids: Sequence[str],
     fits_path: str,
-    present: Mapping[str, Mapping[str, tuple[float, Any]]],
-    max_comparisons: int,
-    target_instrumental_mag: float,
 ) -> list[str]:
     """
-        Trims one frame's comparison ensemble to the user's maximum, ranked by closeness in measured
-        brightness to the target. That is the criterion _source_catalog_sort_key uses for the shared
-        strategy, and it is valid here for the same reason: both magnitudes are instrumental and
-        measured by this pipeline. Where the target has no positive counts the brightest stars are
-        kept instead. Returned sorted by candidate id, so ensemble order does not depend on the rank.
+        Trims one frame's ensemble to the user's maximum, ranked by closeness in measured brightness
+        to the target: the criterion _source_catalog_sort_key uses, valid here for the same reason
+        that both magnitudes are instrumental and from this pipeline. Where the target has no
+        positive counts the brightest are kept instead. Returned sorted by candidate id.
     """
-    if len(candidate_ids) <= max_comparisons:
+    if len(candidate_ids) <= matrix.max_comparisons:
         return sorted(candidate_ids)
+    target_mag = matrix.target_instrumental_mag(fits_path)
 
     def rank(candidate_id: str) -> tuple[float, str]:
-        instrumental_mag = present[candidate_id][fits_path][0]
-        if math.isfinite(target_instrumental_mag):
-            return abs(instrumental_mag - target_instrumental_mag), candidate_id
+        instrumental_mag = matrix.instrumental_mag(candidate_id, fits_path)
+        if math.isfinite(target_mag):
+            return abs(instrumental_mag - target_mag), candidate_id
         return instrumental_mag, candidate_id
 
-    return sorted(sorted(candidate_ids, key=rank)[:max_comparisons])
+    return sorted(sorted(candidate_ids, key=rank)[:matrix.max_comparisons])
 
 
 def _iterate_component_solve(
+    matrix: ComparisonMatrix,
     star_ids: Sequence[str],
     frame_paths: Sequence[str],
-    present: Mapping[str, Mapping[str, tuple[float, Any]]],
-    star_by_id: Mapping[str, ComparisonStar],
 ) -> tuple[dict[str, float], dict[str, float]]:
     """
         Fixed-point robust solve of the two-way model m[c,f] + ZP_f = M_c over a component, anchored
         to catalog magnitudes. Returns internal star magnitudes M_c and per-frame zero points ZP_f.
     """
-    catalog_mag = {candidate_id: float(star_by_id[candidate_id].reference_magnitude) for candidate_id in star_ids}
+    catalog_mag = {candidate_id: matrix.catalog_mag(candidate_id) for candidate_id in star_ids}
     internal_mag = dict(catalog_mag)
     zero_points = {fits_path: 0.0 for fits_path in frame_paths}
+    # The sparsity pattern is fixed for the life of the solve, so index it once in both directions.
+    # Re-deriving it per iteration walks the full star x frame product, which on a drifted field is
+    # mostly absent entries: 50 iterations x 200 stars x 999 frames of membership tests.
+    frames_of_star = {
+        candidate_id: [
+            (fits_path, matrix.instrumental_mag(candidate_id, fits_path))
+            for fits_path in frame_paths
+            if matrix.measured_on(candidate_id, fits_path)
+        ]
+        for candidate_id in star_ids
+    }
+    stars_on_frame: dict[str, list[tuple[str, float]]] = {fits_path: [] for fits_path in frame_paths}
+    for candidate_id in star_ids:
+        for fits_path, instrumental_mag in frames_of_star[candidate_id]:
+            stars_on_frame[fits_path].append((candidate_id, instrumental_mag))
 
     for _ in range(EVOLVING_SOLVE_ITERATIONS):
         max_delta = 0.0
         for fits_path in frame_paths:
             estimates = [
-                internal_mag[candidate_id] - present[candidate_id][fits_path][0]
-                for candidate_id in star_ids
-                if fits_path in present[candidate_id]
+                internal_mag[candidate_id] - instrumental_mag
+                for candidate_id, instrumental_mag in stars_on_frame[fits_path]
             ]
             if estimates:
                 updated = float(np.median(estimates))
@@ -640,9 +732,8 @@ def _iterate_component_solve(
                 zero_points[fits_path] = updated
         for candidate_id in star_ids:
             estimates = [
-                present[candidate_id][fits_path][0] + zero_points[fits_path]
-                for fits_path in frame_paths
-                if fits_path in present[candidate_id]
+                instrumental_mag + zero_points[fits_path]
+                for fits_path, instrumental_mag in frames_of_star[candidate_id]
             ]
             if estimates:
                 updated = float(np.median(estimates))
@@ -662,9 +753,9 @@ def _iterate_component_solve(
 
 
 def _residual_scatter(
+    matrix: ComparisonMatrix,
     candidate_id: str,
     frame_paths: Sequence[str],
-    present: Mapping[str, Mapping[str, tuple[float, Any]]],
     internal_mag: Mapping[str, float],
     zero_points: Mapping[str, float],
 ) -> float:
@@ -673,9 +764,9 @@ def _residual_scatter(
         how variable it is once the frame zero points are removed. Used to reject variable stars.
     """
     residuals = [
-        (present[candidate_id][fits_path][0] + zero_points[fits_path]) - internal_mag[candidate_id]
+        (matrix.instrumental_mag(candidate_id, fits_path) + zero_points[fits_path]) - internal_mag[candidate_id]
         for fits_path in frame_paths
-        if fits_path in present[candidate_id]
+        if matrix.measured_on(candidate_id, fits_path)
     ]
     if len(residuals) < 2:
         return 0.0

@@ -39,10 +39,8 @@ class PeriodAnalysis:
         Lomb-Scargle period analysis of a light curve.
 
         frequency/power/period/false_alarm_probability reproduce the existing VariableStar result
-        exactly (autopower, the strongest peak, and its analytic FAP). The rest is additive: ranked
-        candidates including the doubled period, and the sampling window function on the same grid so
-        a plot can show which peaks are cadence artifacts rather than signal. Callers that want only
-        the peak pass include_extras=False, and candidates/window_power come back empty.
+        exactly. The rest is additive: ranked candidates including the doubled period, and the
+        sampling window function on the same grid. Both are empty under include_extras=False.
     """
     frequency: np.ndarray = field(repr=False)
     power: np.ndarray = field(repr=False)
@@ -60,12 +58,8 @@ def analyze_period(
     include_extras: bool = True,
 ) -> PeriodAnalysis:
     """
-        Runs a Lomb-Scargle period search over a light curve.
-
-        times are in days (only their differences matter); magnitudes and magnitude_errors are the
-        light curve and its per-point uncertainties. The strongest periodogram peak is taken as the
-        best period; the returned window function shows which peaks are sampling-cadence artifacts
-        rather than signal.
+        Runs a Lomb-Scargle period search over a light curve. times are in days (only differences
+        matter); the strongest periodogram peak is taken as the best period.
 
         include_extras=False skips the doubled-period candidate and the window function, the latter
         a second full periodogram over the same grid, for callers that read only the peak.
@@ -112,12 +106,9 @@ def period_output_from_light_curve_rows(
     """
         Builds the period-analysis output keys for a photometry operation, or None if too sparse.
 
-        Reads the calibrated magnitude and its uncertainty from each light curve row, skipping
-        non-finite points (frames the pipeline could not measure), and returns None when fewer than
-        minimum_points remain so the caller can note it rather than report a meaningless period. The
-        emitted keys match the VariableStar operation (period, false_alarm_probability, frequency,
-        power) so the same frontend rendering drives both, plus the additive candidates and window
-        function.
+        Skips non-finite points (frames the pipeline could not measure) and returns None when fewer
+        than minimum_points remain, so the caller can say so rather than report a meaningless
+        period. Emits the VariableStar keys plus the additive candidates and window function.
     """
     times: list[float] = []
     magnitudes: list[float] = []

@@ -19,6 +19,8 @@ from datalab.datalab_session.data_operations.median import Median
 from datalab.datalab_session.data_operations.stacking import Stack
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 from datalab.datalab_session.utils.format import Format
+from datalab.datalab_session.utils.comparison_calibration import SharedEnsemble
+from datalab.datalab_session.utils.target_location import FixedPosition
 from datalab.datalab_session.utils.aperture_light_curve import LightCurveRow
 
 wizard_description = {
@@ -341,8 +343,8 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         mock_file_cache.return_value.get_fits.assert_called_once_with('fits_1', 'local', None)
         mock_generate_light_curve.assert_called_once_with(
             fits_paths=['/tmp/fits_1.fits'],
-            target_ra_deg=10.0,
-            target_dec_deg=20.0,
+            locator=FixedPosition(ra_deg=10.0, dec_deg=20.0),
+            comparison=SharedEnsemble(),
             aperture_radius=7.64,
             annulus_inner_radius=12.73,
             annulus_outer_radius=19.10,
@@ -438,7 +440,8 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             AperturePhotometry(input_data).operate(None)
 
         _, kwargs = mock_generate_light_curve.call_args
-        self.assertEqual((kwargs['target_ra_deg'], kwargs['target_dec_deg']), (10.0, 20.0))
+        locator = kwargs['locator']
+        self.assertEqual((locator.ra_deg, locator.dec_deg), (10.0, 20.0))
         output = mock_set_output.call_args.args[0]
         self.assertEqual(
             output['output_data'][0]['source'], {'ra': 10.0, 'dec': 20.0, 'name': 'NGC 7331'}

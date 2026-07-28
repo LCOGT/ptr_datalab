@@ -1,7 +1,8 @@
 import logging
 import math
 import os
-from dataclasses import dataclass
+from enum import Enum
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Sequence
 
@@ -11,9 +12,9 @@ from astropy.wcs import WCS
 from dateutil.parser import ParserError, parse as parse_date
 
 from datalab.datalab_session.utils.comparison_calibration import (
-    COMPARISON_AUTO,
-    COMPARISON_EVOLVING,
-    COMPARISON_SHARED,
+    CalibrationInputs,
+    ComparisonStrategy,
+    SharedEnsemble,
     calibrate,
 )
 from datalab.datalab_session.utils.comparison_stars import (
@@ -27,32 +28,21 @@ from datalab.datalab_session.utils.fits_metadata import (
     FrameGeometry,
     arcsec_to_pixels,
     frame_geometry,
-    frame_midpoint_mjd,
     optional_float,
-    target_radec_from_header,
     world_to_pixel,
 )
+from datalab.datalab_session.utils.light_curve_errors import LightCurveError
+from datalab.datalab_session.utils.target_location import TargetLocator
 from datalab.datalab_session.utils.geometry import (
     angular_distance_arcsec,
     distance_pixels,
-    minimum_angular_neighbor_distance_arcsec,
+    minimum_neighbor_distances_arcsec,
 )
 from datalab.datalab_session.utils.photometry_diagnostics import (
     candidate_overlay_jpeg_bytes,
     comparison_star_validation_diagnostics,
 )
-from datalab.datalab_session.utils.moving_target_search import (
-    DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
-    refine_positions_from_catalog,
-)
 from datalab.datalab_session.utils.photometry import measure_aperture
-from datalab.datalab_session.utils.target_track import (
-    LINEAR_TRACK_MAX_SPAN_HOURS,
-    MAX_TRACK_FIT_ORDER,
-    TrackSample,
-    fit_target_track,
-    track_rate_arcsec_per_minute,
-)
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -83,36 +73,34 @@ DEFAULT_ANNULUS_INNER_RADIUS = 12.73
 DEFAULT_ANNULUS_OUTER_RADIUS = 19.10
 DEFAULT_MIN_COMPARISONS = 5
 DEFAULT_MAX_COMPARISONS = 10
-# A comparison candidate is established if its cross-matched cluster is detected in at least this
-# fraction of frames. Catalog detection near the limiting magnitude is noisy, and heterogeneous
-# multi-telescope sets (different sites/FOV/depth) rarely catalog the same star in *every* frame,
-# so requiring presence in all frames discards good stars and collapses the candidate pool. Selected
-# stars are still measured via WCS on all frames, so the ensemble stays consistent frame-to-frame.
-COMPARISON_FRAME_COVERAGE_FRACTION = 0.8
-# Backstop for the evolving/auto strategies, which keep sparsely-detected stars. Cost runs as
-# candidates x frames, so bound that product: long series get a smaller pool, short ones are
-# untouched. Sized to clear an ordinary deep field, since trimming changes the stars on offer.
+# Every candidate is measured on every frame it lands on, so cost runs as candidates x frames.
+# Bound that product rather than the pool: long series get a smaller pool, short ones are untouched.
+# Sized to clear an ordinary deep field, since trimming changes which stars are on offer.
 MAX_CANDIDATE_MEASUREMENTS = 200_000
 MIN_COMPARISON_CANDIDATES = 50
-# Pipeline phases reported to progress_callback, in execution order.
-PROGRESS_PHASES = ("validate", "catalog", "measure", "select", "render")
+class Phase(Enum):
+    """
+        The phases of an aperture photometry run, in execution order.
 
-# Receives (phase, fraction): phase is one of PROGRESS_PHASES and fraction is the completed
-# share of that phase, in [0, 1].
-ProgressCallback = Callable[[str, float], None]
+        The single declaration of this vocabulary, shared with the operations layer, which maps each
+        phase to a progress band. Order is part of the contract: a phase fills the band running from
+        the previous phase's end to its own. DOWNLOADING and SAVE bracket the pipeline and are
+        reported by the operation; the pipeline itself reports the five in between.
 
-# Target-position source. "fixed" is a single series-wide RA/Dec (sidereal). "header" reads a
-# per-frame RA/Dec from each frame's moving-target ephemeris keywords, for frames whose mount tracked
-# the object. "track" interpolates a per-frame RA/Dec from positions the user marked on a handful of
-# frames, for a moving target imaged on a sidereally-tracked field, where nothing in the header says
-# where the object is.
-TARGET_POSITION_FIXED = "fixed"
-TARGET_POSITION_HEADER = "header"
-TARGET_POSITION_TRACK = "track"
+        Deliberately Enum rather than StrEnum: CI runs Python 3.10, where StrEnum does not exist.
+    """
+    DOWNLOADING = "downloading"
+    VALIDATE = "validate"
+    CATALOG = "catalog"
+    MEASURE = "measure"
+    SELECT = "select"
+    RENDER = "render"
+    SAVE = "save"
 
 
-class LightCurveError(ValueError):
-    pass
+# Receives (phase, fraction), fraction being the completed share of that phase, in [0, 1].
+ProgressCallback = Callable[[Phase, float], None]
+
 
 
 @dataclass(frozen=True)
@@ -130,6 +118,92 @@ class FrameContext:
     second_hdu_rows: tuple[Mapping[str, Any], ...]
     width: int
     height: int
+
+    @classmethod
+    def from_fits(cls, fits_path: str) -> "FrameContext":
+        """
+            Reads and validates one frame's metadata.
+
+            Reads only the SCI header and the CAT table, never SCI pixel data, so validation memory
+            and time stay flat regardless of frame count or sensor size. Raises LightCurveError if
+            the frame cannot be used.
+        """
+        with fits.open(fits_path) as hdul:
+            header = dict(hdul["SCI"].header)
+            second_hdu_rows = tuple(_cat_rows(hdul["CAT"].data))
+
+        if int(header.get("NAXIS", 0)) != 2:
+            raise LightCurveError(f"Primary image for {fits_path} is not a 2D array.")
+        width = int(header["NAXIS1"])
+        height = int(header["NAXIS2"])
+
+        date_obs_value = header.get("DATE-OBS")
+        if not isinstance(date_obs_value, str) or not date_obs_value.strip():
+            raise LightCurveError(f"Missing DATE-OBS in {fits_path}.")
+        try:
+            date_obs = parse_date(date_obs_value)
+        except (ParserError, TypeError, ValueError, OverflowError) as exc:
+            raise LightCurveError(f"Malformed DATE-OBS in {fits_path}: {date_obs_value!r}") from exc
+        if date_obs.tzinfo is None:
+            date_obs = date_obs.replace(tzinfo=timezone.utc)
+        if not second_hdu_rows:
+            raise LightCurveError(f"Second HDU is missing or empty for {fits_path}.")
+
+        _validate_wcs(header, fits_path, (height, width))
+        _validate_second_hdu(second_hdu_rows, fits_path)
+        log.info(
+            "Aperture Photometry frame validated: "
+            f"frame={fits_path}, date_obs={date_obs.isoformat()}, "
+            f"image_shape={(height, width)}, catalog_rows={len(second_hdu_rows)}"
+        )
+        return cls(
+            fits_path=fits_path,
+            date_obs=date_obs,
+            header=header,
+            second_hdu_rows=second_hdu_rows,
+            width=width,
+            height=height,
+        )
+
+
+@dataclass
+class CandidateCluster:
+    """
+        One field star, as detected across frames: the cross-matched group of catalog rows that all
+        sit at the same sky position.
+
+        Mutable by design, unlike the frozen records elsewhere: cross-matching grows a cluster row by
+        row as it walks the frames. `ra_deg`/`dec_deg` stay the position of the first detection and
+        are what later rows are matched against; the emitted candidate averages the whole group.
+    """
+    ra_deg: float
+    dec_deg: float
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    frame_paths: set[str] = field(default_factory=set)
+    source_catalog_by_frame: dict[str, dict[str, Any]] = field(default_factory=dict)
+    isolation_arcsec: float = math.inf
+
+    def matches(self, row: Mapping[str, Any]) -> bool:
+        """Whether a row is this same source, seen on another frame."""
+        return (
+            angular_distance_arcsec(row["ra_deg"], row["dec_deg"], self.ra_deg, self.dec_deg)
+            <= DEFAULT_CROSSMATCH_ARCSEC
+        )
+
+    def add(self, row: Mapping[str, Any], fits_path: str) -> None:
+        self.rows.append(row)
+        self.frame_paths.add(fits_path)
+        self.source_catalog_by_frame[fits_path] = {
+            "source_label": row["source_label"],
+            "flux": row["flux"],
+            "mag": row["mag"],
+        }
+
+    @classmethod
+    def started_by(cls, row: Mapping[str, Any], fits_path: str) -> "CandidateCluster":
+        cluster = cls(ra_deg=row["ra_deg"], dec_deg=row["dec_deg"])
+        cluster.add(row, fits_path)
+        return cluster
 
 
 @dataclass(frozen=True)
@@ -183,33 +257,35 @@ class LightCurveResult:
         Complete aperture photometry result returned by the generate_light_curve function, including light curve rows, selected comparison stars, and diagnostics.
 
         pipeline_diagnostics are series-level (target localization, catalog search, calibration
-        strategy); diagnostics_by_fits_basename are the per-frame comparison-star checks; and
-        diagnostics is both concatenated, for in-process callers that want the lot.
+        strategy) and diagnostics_by_fits_basename the per-frame comparison-star checks. The
+        diagnostics property concatenates both, so the two cannot drift out of step.
     """
     frames: list[FrameResult]
     selected_comparison_stars: list[ComparisonStar]
     light_curve_rows: list[LightCurveRow]
-    diagnostics: list[str]
     pipeline_diagnostics: list[str]
     diagnostics_by_fits_basename: dict[str, list[str]]
     diagnostic_image_jpegs_by_fits_basename: dict[str, bytes]
 
+    @property
+    def diagnostics(self) -> list[str]:
+        """Both scopes concatenated, for callers that just want everything that was said."""
+        return list(self.pipeline_diagnostics) + [
+            message for messages in self.diagnostics_by_fits_basename.values() for message in messages
+        ]
+
 
 def generate_light_curve(
     fits_paths: list[str],
-    target_ra_deg: float | None = None,
-    target_dec_deg: float | None = None,
+    *,
+    locator: TargetLocator,
     aperture_radius: float = DEFAULT_APERTURE_RADIUS,
     annulus_inner_radius: float = DEFAULT_ANNULUS_INNER_RADIUS,
     annulus_outer_radius: float = DEFAULT_ANNULUS_OUTER_RADIUS,
     min_comparisons: int = DEFAULT_MIN_COMPARISONS,
     max_comparisons: int = DEFAULT_MAX_COMPARISONS,
     progress_callback: ProgressCallback | None = None,
-    *,
-    target_position_mode: str = TARGET_POSITION_FIXED,
-    comparison_mode: str = COMPARISON_SHARED,
-    target_track_samples: Sequence[TrackSample] | None = None,
-    track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
+    comparison: ComparisonStrategy | None = None,
 ) -> LightCurveResult:
     """
         Generates a calibrated target light curve from local input FITS files, using comparison
@@ -221,15 +297,15 @@ def generate_light_curve(
         with diagnostics for the frontend. At most one frame's full-resolution pixels are in
         memory at any point, so memory does not grow with the number of input frames.
 
-        progress_callback, if given, receives (phase, completed fraction of that phase) with
-        phases from PROGRESS_PHASES; the frame-iterating phases report once per frame.
+        progress_callback, if given, receives (Phase, completed fraction of that phase); the
+        frame-iterating phases report once per frame.
 
-        target_position_mode selects where the target's per-frame RA/Dec comes from: "fixed" uses the
-        single series-wide target_ra_deg/target_dec_deg (sidereal); "header" reads each frame's
-        moving-target keywords (non-sidereal); "track" interpolates target_track_samples, the positions
-        a user marked on two or more frames, to every frame's observation time.
+        locator decides where the target is on each frame and comparison how the comparison
+        ensemble is maintained across the series; see utils/target_location.py and
+        utils/comparison_calibration.py for the kinds of each, and why both choices belong to the
+        caller rather than to a mode flag here.
     """
-    _validate_modes(target_position_mode, comparison_mode)
+    comparison = comparison or SharedEnsemble()
     _validate_inputs(
         fits_paths=fits_paths,
         aperture_radius=aperture_radius,
@@ -246,20 +322,14 @@ def generate_light_curve(
     diagnostics: list[str] = []
     frames = _validated_frame_contexts(
         fits_paths,
-        on_frame=lambda index, total: report_progress("validate", index / total),
+        on_frame=lambda index, total: report_progress(Phase.VALIDATE, index / total),
     )
-    target_radec_by_frame = _resolve_target_positions(
-        frames=frames,
-        target_position_mode=target_position_mode,
-        target_ra_deg=target_ra_deg,
-        target_dec_deg=target_dec_deg,
-        target_track_samples=target_track_samples,
-        track_search_radius_arcsec=track_search_radius_arcsec,
-        diagnostics=diagnostics,
-    )
+    located = locator.locate(frames)
+    target_radec_by_frame = located.by_frame
+    diagnostics.extend(located.diagnostics)
     log.info(
         "Aperture Photometry pipeline starting: "
-        f"fits_count={len(fits_paths)}, target_position_mode={target_position_mode}, "
+        f"fits_count={len(fits_paths)}, locator={type(locator).__name__}, "
         f"aperture_radius={aperture_radius:.3f}, "
         f"annulus_inner_radius={annulus_inner_radius:.3f}, "
         f"annulus_outer_radius={annulus_outer_radius:.3f}, "
@@ -271,21 +341,15 @@ def generate_light_curve(
         for frame in frames
     }
 
-    # "shared" only ever uses stars present on every frame, so pre-filtering to the coverage fraction
-    # keeps its measurement cost down. "evolving"/"auto" must keep sparsely-detected stars (they carry
-    # a drifted field), so they retain every cross-matched candidate and pay to measure them all.
-    min_coverage_fraction = (
-        COMPARISON_FRAME_COVERAGE_FRACTION if comparison_mode == COMPARISON_SHARED else 0.0
-    )
-    catalog = _build_field_star_catalog(
+    catalog, catalog_diagnostics = _build_field_star_catalog(
         frames=frames,
         target_radec_by_frame=target_radec_by_frame,
         aperture_radius=aperture_radius,
         annulus_outer_radius=annulus_outer_radius,
-        min_coverage_fraction=min_coverage_fraction,
-        on_frame=lambda index, total: report_progress("catalog", index / total),
-        diagnostics=diagnostics,
+        min_coverage_fraction=comparison.min_frame_coverage,
+        on_frame=lambda index, total: report_progress(Phase.CATALOG, index / total),
     )
+    diagnostics.extend(catalog_diagnostics)
     log.info(
         "Aperture Photometry comparison catalog built: "
         f"valid_candidates={len(catalog)}"
@@ -296,11 +360,7 @@ def generate_light_curve(
     measurements_by_candidate: dict[str, dict[str, ComparisonMeasurement]] = {
         candidate.candidate_id: {} for candidate in candidate_stars
     }
-    # A shared ensemble needs every star on every frame, so a candidate that fails once cannot
-    # contribute and is dropped from further measurement to save work. An evolving ensemble uses each
-    # frame's own in-field stars, so a star that leaves the frame (fails here) must still be measured
-    # on the frames where it *is* present -- never permanently dropped.
-    drop_failed_candidates = comparison_mode == COMPARISON_SHARED
+    drop_failed_candidates = comparison.drops_failed_candidates
     failed_candidate_ids: set[str] = set()
     for frame_index, frame in enumerate(frames, start=1):
         frame_target_ra, frame_target_dec = target_radec_by_frame[frame.fits_path]
@@ -327,30 +387,32 @@ def generate_light_curve(
             f"net_counts={target.net_source_counts:.6f}, uncertainty={target.source_uncertainty:.6f}, "
             f"background={target.mean_background_per_pixel:.6f}, peak={target.peak_pixel_value:.6f}"
         )
-        report_progress("measure", frame_index / len(frames))
+        report_progress(Phase.MEASURE, frame_index / len(frames))
 
-    frame_calibrations, selected_comparison_stars, calibration_diagnostics = calibrate(
-        comparison_mode=comparison_mode,
-        frames=frames,
-        candidate_stars=candidate_stars,
-        measurements_by_candidate=measurements_by_candidate,
-        target_measurements=target_measurements,
-        min_comparisons=min_comparisons,
-        max_comparisons=max_comparisons,
-        error_class=LightCurveError,
+    outcome = calibrate(
+        CalibrationInputs(
+            frames=frames,
+            candidate_stars=candidate_stars,
+            measurements_by_candidate=measurements_by_candidate,
+            target_measurements=target_measurements,
+            min_comparisons=min_comparisons,
+            max_comparisons=max_comparisons,
+        ),
+        strategy=comparison,
     )
+    frame_calibrations = outcome.frame_calibrations
+    selected_comparison_stars = outcome.used_stars
+    calibration_diagnostics = outcome.diagnostics
     log.info(
         "Aperture Photometry comparison stars selected: "
         f"selected_count={len(selected_comparison_stars)}, "
         f"candidate_ids={[star.candidate_id for star in selected_comparison_stars]}, "
         f"calibration_diagnostics={len(calibration_diagnostics)}"
     )
-    report_progress("select", 1.0)
+    report_progress(Phase.SELECT, 1.0)
 
     diagnostics.extend(calibration_diagnostics)
-    # Everything accumulated so far describes the series as a whole; snapshot it before the
-    # per-frame checks below are appended.
-    pipeline_diagnostics = list(diagnostics)
+    pipeline_diagnostics = diagnostics
 
     frame_results: list[FrameResult] = []
     light_curve_rows: list[LightCurveRow] = []
@@ -371,7 +433,6 @@ def generate_light_curve(
             measurements=calibration.measurements,
             frame_zero_point=calibration.frame_zero_point,
         )
-        diagnostics.extend(frame_diagnostics)
         diagnostics_by_fits_basename[os.path.basename(frame.fits_path)].extend(frame_diagnostics)
         diagnostic_image_jpegs_by_fits_basename[os.path.basename(frame.fits_path)] = _render_frame_overlay(
             frame=frame,
@@ -405,7 +466,7 @@ def generate_light_curve(
                 target_calibrated_apparent_magnitude_uncertainty=calibration.calibrated_mag_sigma,
             )
         )
-        report_progress("render", frame_index / len(frames))
+        report_progress(Phase.RENDER, frame_index / len(frames))
 
     log.info(
         "Aperture Photometry pipeline completed: "
@@ -416,7 +477,6 @@ def generate_light_curve(
         frames=frame_results,
         selected_comparison_stars=list(selected_comparison_stars),
         light_curve_rows=light_curve_rows,
-        diagnostics=diagnostics,
         pipeline_diagnostics=pipeline_diagnostics,
         diagnostics_by_fits_basename=diagnostics_by_fits_basename,
         diagnostic_image_jpegs_by_fits_basename=diagnostic_image_jpegs_by_fits_basename,
@@ -444,205 +504,22 @@ def _validate_inputs(
         raise LightCurveError("min_comparisons and max_comparisons must be positive and min_comparisons <= max_comparisons.")
 
 
-def _validate_modes(target_position_mode: str, comparison_mode: str) -> None:
-    if target_position_mode not in (TARGET_POSITION_FIXED, TARGET_POSITION_HEADER, TARGET_POSITION_TRACK):
-        raise LightCurveError(
-            f"target_position_mode must be one of {TARGET_POSITION_FIXED!r}, "
-            f"{TARGET_POSITION_HEADER!r}, {TARGET_POSITION_TRACK!r}."
-        )
-    if comparison_mode not in (COMPARISON_SHARED, COMPARISON_EVOLVING, COMPARISON_AUTO):
-        raise LightCurveError(
-            f"comparison_mode must be one of {COMPARISON_SHARED!r}, {COMPARISON_EVOLVING!r}, {COMPARISON_AUTO!r}."
-        )
-
-
-def _resolve_target_positions(
-    *,
-    frames: Sequence[FrameContext],
-    target_position_mode: str,
-    target_ra_deg: float | None,
-    target_dec_deg: float | None,
-    target_track_samples: Sequence[TrackSample] | None = None,
-    track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
-    diagnostics: list[str] | None = None,
-) -> dict[str, tuple[float, float]]:
-    """
-        Resolves the target RA/Dec (degrees) used on each frame.
-
-        In "fixed" mode every frame shares the one series-wide target position. In "header" mode the
-        moving target's position is read from each frame's ephemeris keywords, so the pixel it lands
-        on changes frame to frame; a frame whose keywords are absent/unparseable raises, since the
-        target cannot be located without them. In "track" mode a polynomial is fitted through the
-        user's sample positions and evaluated at each frame's exposure midpoint.
-    """
-    if target_position_mode == TARGET_POSITION_FIXED:
-        if target_ra_deg is None or target_dec_deg is None:
-            raise LightCurveError("Fixed target position requires target_ra_deg and target_dec_deg.")
-        fixed = (float(target_ra_deg), float(target_dec_deg))
-        return {frame.fits_path: fixed for frame in frames}
-
-    if target_position_mode == TARGET_POSITION_TRACK:
-        return _track_target_positions(
-            frames=frames,
-            target_track_samples=target_track_samples,
-            track_search_radius_arcsec=track_search_radius_arcsec,
-            diagnostics=diagnostics if diagnostics is not None else [],
-        )
-
-    positions: dict[str, tuple[float, float]] = {}
-    for frame in frames:
-        try:
-            positions[frame.fits_path] = target_radec_from_header(frame.header)
-        except ValueError as exc:
-            raise LightCurveError(f"Cannot read moving-target position for {frame.fits_path}: {exc}") from exc
-        log.info(
-            "Aperture Photometry moving-target position: "
-            f"frame={frame.fits_path}, ra={positions[frame.fits_path][0]:.8f}, "
-            f"dec={positions[frame.fits_path][1]:.8f}"
-        )
-    return positions
-
-
-def _track_target_positions(
-    *,
-    frames: Sequence[FrameContext],
-    target_track_samples: Sequence[TrackSample] | None,
-    track_search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
-    diagnostics: list[str],
-) -> dict[str, tuple[float, float]]:
-    """
-        Locates the moving target on every frame, starting from the user's sample positions.
-
-        The samples are interpolated to each frame's exposure midpoint -- not its start, because that
-        is the position the target's trail is centred on -- to predict where the target should be.
-        That prediction is then used as a search position: the frame's own source catalog is checked
-        for a detection near it that is not a field star, and the track is refitted through the
-        detections that move consistently. Where that succeeds the target is measured at a real
-        detected position rather than an interpolated guess; where it does not, the interpolated
-        position stands, so a faint or uncatalogued target still yields a measurement.
-
-        Frames outside the sample time span are extrapolated rather than dropped -- the fit is still
-        the best information available -- but both extrapolation and a long arc carried by only two
-        samples are surfaced as diagnostics, since those are the two ways a predicted position quietly
-        drifts off the object.
-    """
-    if not target_track_samples:
-        raise LightCurveError(
-            f"Target position mode {TARGET_POSITION_TRACK!r} requires target_track_samples: "
-            "the positions the target was identified at on two or more frames."
-        )
-    try:
-        track = fit_target_track(target_track_samples)
-    except ValueError as exc:
-        raise LightCurveError(f"Cannot fit a target track from the supplied samples: {exc}") from exc
-
-    rate_arcsec_per_minute = track_rate_arcsec_per_minute(track)
-    diagnostics.append(
-        f"Fitted a degree-{track.order} target track from {len(track.samples)} sample(s) over a "
-        f"{track.sample_span_hours:.2f} h arc, mean rate {rate_arcsec_per_minute:.3f} arcsec/min."
-    )
-
-    frame_times: list[tuple[str, float]] = []
-    extrapolated: list[str] = []
-    for frame in frames:
-        try:
-            midpoint_mjd = frame_midpoint_mjd(frame.header, fallback_start=frame.date_obs)
-        except ValueError as exc:
-            raise LightCurveError(f"Cannot determine an observation time for {frame.fits_path}: {exc}") from exc
-        frame_times.append((frame.fits_path, midpoint_mjd))
-        if not track.covers(midpoint_mjd):
-            extrapolated.append(os.path.basename(frame.fits_path))
-
-    refinement = refine_positions_from_catalog(
-        frame_times=frame_times,
-        catalog_rows_by_frame={frame.fits_path: frame.second_hdu_rows for frame in frames},
-        track=track,
-        samples=track.samples,
-        search_radius_arcsec=track_search_radius_arcsec,
-    )
-    positions = refinement.positions
-    diagnostics.extend(refinement.diagnostics)
-    for fits_path, midpoint_mjd in frame_times:
-        log.info(
-            "Aperture Photometry tracked-target position: "
-            f"frame={fits_path}, midpoint_mjd={midpoint_mjd:.8f}, "
-            f"ra={positions[fits_path][0]:.8f}, dec={positions[fits_path][1]:.8f}"
-        )
-
-    if extrapolated:
-        diagnostics.append(
-            f"Extrapolated {len(extrapolated)} frame(s) outside the sample time span: "
-            f"{', '.join(extrapolated)}."
-        )
-    if track.order < MAX_TRACK_FIT_ORDER and track.sample_span_hours > LINEAR_TRACK_MAX_SPAN_HOURS:
-        diagnostics.append(
-            f"Track is a straight line from {len(track.samples)} samples over a "
-            f"{track.sample_span_hours:.1f} h arc. Tracks curve beyond about "
-            f"{LINEAR_TRACK_MAX_SPAN_HOURS:.0f} h -- identify the target on a third, mid-series frame "
-            "to fit a curve."
-        )
-    return positions
-
-
 def _validated_frame_contexts(
     fits_paths: Sequence[str],
     on_frame: Callable[[int, int], None] | None = None,
 ) -> list[FrameContext]:
     """
-        Builds validated frame metadata for each input FITS path.
+        Reads every input path into a validated FrameContext, in observation order.
 
-        Reads only the SCI header and the CAT table -- never SCI pixel data -- so validation memory
-        and time stay flat regardless of frame count or sensor size. Frames that fail validation
-        are ignored with a warning. on_frame, if given, is called as on_frame(index, total) after
-        each input path is processed, including rejected ones.
+        Frames that fail validation are ignored with a warning rather than aborting the run: one bad
+        file out of a submitted series should cost that file, not the light curve. on_frame, if
+        given, is called as on_frame(index, total) after each path, including rejected ones.
     """
     frames: list[FrameContext] = []
     for path_index, fits_path in enumerate(fits_paths, start=1):
         log.info(f"Aperture Photometry validating FITS frame: {fits_path}")
         try:
-            with fits.open(fits_path) as hdul:
-                header = dict(hdul["SCI"].header)
-                second_hdu_rows = tuple(_cat_rows(hdul["CAT"].data))
-
-            if int(header.get("NAXIS", 0)) != 2:
-                raise LightCurveError(f"Primary image for {fits_path} is not a 2D array.")
-            width = int(header["NAXIS1"])
-            height = int(header["NAXIS2"])
-
-            date_obs_value = header.get("DATE-OBS")
-            if not isinstance(date_obs_value, str) or not date_obs_value.strip():
-                raise LightCurveError(f"Missing DATE-OBS in {fits_path}.")
-            try:
-                date_obs = parse_date(date_obs_value)
-            except (ParserError, TypeError, ValueError, OverflowError) as exc:
-                raise LightCurveError(f"Malformed DATE-OBS in {fits_path}: {date_obs_value!r}") from exc
-            if date_obs.tzinfo is None:
-                date_obs = date_obs.replace(tzinfo=timezone.utc)
-            if not second_hdu_rows:
-                raise LightCurveError(f"Second HDU is missing or empty for {fits_path}.")
-
-            _validate_wcs(header, fits_path, (height, width))
-            _validate_second_hdu(second_hdu_rows, fits_path)
-            log.info(
-                "Aperture Photometry frame validated: "
-                f"frame={fits_path}, date_obs={date_obs.isoformat()}, "
-                f"image_shape={(height, width)}, catalog_rows={len(second_hdu_rows)}"
-            )
-            frames.append(
-                FrameContext(
-                    fits_path=fits_path,
-                    date_obs=date_obs,
-                    header=header,
-                    second_hdu_rows=second_hdu_rows,
-                    width=width,
-                    height=height,
-                )
-            )
-        except LightCurveError as exc:
-            log.warning(
-                "Aperture Photometry ignoring input frame after validation error: "
-                f"frame={fits_path}, error={exc}"
-            )
+            frames.append(FrameContext.from_fits(fits_path))
         except Exception as exc:
             log.warning(
                 "Aperture Photometry ignoring input frame after validation error: "
@@ -750,12 +627,30 @@ def _candidates_in_field(
     ra_values = np.asarray([candidate.ra_deg for candidate in candidate_stars], dtype=float)
     dec_values = np.asarray([candidate.dec_deg for candidate in candidate_stars], dtype=float)
     x_values, y_values = geometry.wcs.world_to_pixel_values(ra_values, dec_values)
-    margin = geometry.annulus_outer_radius_px
+    return _within_frame_bounds(
+        x_values, y_values, geometry.annulus_outer_radius_px, frame.width, frame.height
+    )
+
+
+def _within_frame_bounds(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    margin: float,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """
+        Which positions sit on the frame with room for margin on every side.
+
+        The one definition of the frame-edge rule: the catalog builder rejects by its negation, and
+        the measurement pass skips by it directly. Positions that do not project are NaN, which
+        fails every comparison.
+    """
     return (
         (x_values - margin >= EDGE_MARGIN_PX)
         & (y_values - margin >= EDGE_MARGIN_PX)
-        & (x_values + margin < frame.width - EDGE_MARGIN_PX)
-        & (y_values + margin < frame.height - EDGE_MARGIN_PX)
+        & (x_values + margin < width - EDGE_MARGIN_PX)
+        & (y_values + margin < height - EDGE_MARGIN_PX)
     )
 
 
@@ -932,10 +827,9 @@ def _build_field_star_catalog(
     target_radec_by_frame: Mapping[str, tuple[float, float]],
     aperture_radius: float,
     annulus_outer_radius: float,
-    min_coverage_fraction: float = COMPARISON_FRAME_COVERAGE_FRACTION,
+    min_coverage_fraction: float,
     on_frame: Callable[[int, int], None] | None = None,
-    diagnostics: list[str] | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
     """
         Builds comp star candidates from the source catalogs across valid frames.
 
@@ -945,7 +839,7 @@ def _build_field_star_catalog(
         lets its own catalog entry become a comparison star. on_frame, if given, is called as
         on_frame(index, total) after each frame's rows are cross-matched.
     """
-    clusters: list[dict[str, Any]] = []
+    clusters: list[CandidateCluster] = []
     target_pixels = {
         frame.fits_path: world_to_pixel(frame.header, *target_radec_by_frame[frame.fits_path])
         for frame in frames
@@ -986,11 +880,8 @@ def _build_field_star_catalog(
         target_x, target_y = target_pixels[frame.fits_path]
         target_limit_px = max(TARGET_PROXIMITY_FACTOR * frame_aperture_radius_px, frame_annulus_outer_radius_px)
         too_close_to_target_mask = np.hypot(x_values - target_x, y_values - target_y) <= target_limit_px
-        too_close_to_edge_mask = (
-            (x_values - frame_annulus_outer_radius_px < EDGE_MARGIN_PX)
-            | (y_values - frame_annulus_outer_radius_px < EDGE_MARGIN_PX)
-            | (x_values + frame_annulus_outer_radius_px >= frame.width - EDGE_MARGIN_PX)
-            | (y_values + frame_annulus_outer_radius_px >= frame.height - EDGE_MARGIN_PX)
+        too_close_to_edge_mask = ~_within_frame_bounds(
+            x_values, y_values, frame_annulus_outer_radius_px, frame.width, frame.height
         )
 
         rejected_for_target = int(np.count_nonzero(too_close_to_target_mask))
@@ -999,43 +890,16 @@ def _build_field_star_catalog(
         for row, target_rejected, edge_rejected in zip(rows, too_close_to_target_mask, too_close_to_edge_mask):
             if target_rejected or edge_rejected:
                 continue
-            x = row["pixel_x"]
-            y = row["pixel_y"]
-
             matched = False
             for cluster in clusters:
-                if frame.fits_path in cluster["frame_paths"]:
+                if frame.fits_path in cluster.frame_paths:
                     continue
-                if angular_distance_arcsec(row["ra_deg"], row["dec_deg"], cluster["ra_deg"], cluster["dec_deg"]) <= DEFAULT_CROSSMATCH_ARCSEC:
-                    cluster["rows"].append(row)
-                    cluster["frame_paths"].add(frame.fits_path)
-                    cluster["mags"].append(row["mag"])
-                    cluster["source_catalog_by_frame"][frame.fits_path] = {
-                        "source_label": row["source_label"],
-                        "flux": row["flux"],
-                        "mag": row["mag"],
-                    }
-                    cluster["xys"].append((x, y))
+                if cluster.matches(row):
+                    cluster.add(row, frame.fits_path)
                     matched = True
                     break
             if not matched:
-                clusters.append(
-                    {
-                        "ra_deg": row["ra_deg"],
-                        "dec_deg": row["dec_deg"],
-                        "rows": [row],
-                        "frame_paths": {frame.fits_path},
-                        "mags": [row["mag"]],
-                        "source_catalog_by_frame": {
-                            frame.fits_path: {
-                                "source_label": row["source_label"],
-                                "flux": row["flux"],
-                                "mag": row["mag"],
-                            }
-                        },
-                        "xys": [(x, y)],
-                    }
-                )
+                clusters.append(CandidateCluster.started_by(row, frame.fits_path))
         log.info(
             "Aperture Photometry comparison candidates processed: "
             f"frame={frame.fits_path}, extracted_rows={len(rows)}, "
@@ -1045,54 +909,88 @@ def _build_field_star_catalog(
         if on_frame is not None:
             on_frame(frame_index, len(frames))
 
+    return _catalog_from_clusters(
+        clusters=clusters,
+        target_pixels=target_pixels,
+        frame_count=len(frames),
+        min_coverage_fraction=min_coverage_fraction,
+    )
+
+
+def _catalog_from_clusters(
+    *,
+    clusters: Sequence[CandidateCluster],
+    target_pixels: Mapping[str, tuple[float, float]],
+    frame_count: int,
+    min_coverage_fraction: float,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """
+        Turns cross-matched clusters into comparison candidates, dropping those seen on too few
+        frames and capping the pool at what the measurement budget affords.
+
+        Returns the candidates and its own diagnostics, rather than appending to a list the caller
+        owns.
+    """
+    # Nearest-neighbour separation for every cluster in one pass, before the coverage filter, so the
+    # loop below can just read it rather than re-scanning every other cluster from inside.
+    for cluster, isolation in zip(
+        clusters,
+        minimum_neighbor_distances_arcsec(
+            [cluster.ra_deg for cluster in clusters], [cluster.dec_deg for cluster in clusters]
+        ),
+    ):
+        cluster.isolation_arcsec = float(isolation)
+
     catalog: list[dict[str, Any]] = []
     rejected_for_coverage = 0
-    required_coverage = max(1, math.ceil(min_coverage_fraction * len(frames)))
+    required_coverage = max(1, math.ceil(min_coverage_fraction * frame_count))
     for idx, cluster in enumerate(
-        sorted(clusters, key=lambda item: (round(item["ra_deg"], 8), round(item["dec_deg"], 8)))
+        sorted(clusters, key=lambda item: (round(item.ra_deg, 8), round(item.dec_deg, 8)))
     ):
-        if len(cluster["frame_paths"]) < required_coverage:
+        if len(cluster.frame_paths) < required_coverage:
             rejected_for_coverage += 1
             continue
-        isolation = minimum_angular_neighbor_distance_arcsec(cluster, clusters)
-        target_sep = min(
-            distance_pixels(row["pixel_x"], row["pixel_y"], *target_pixels[row["frame_path"]])
-            for row in cluster["rows"]
-        )
         catalog.append(
             {
                 "candidate_id": f"cand-{idx + 1:03d}",
-                "ra_deg": float(np.mean([row["ra_deg"] for row in cluster["rows"]])),
-                "dec_deg": float(np.mean([row["dec_deg"] for row in cluster["rows"]])),
-                "second_hdu_magnitude": float(np.median(np.asarray(cluster["mags"], dtype=float))),
-                "source_catalog_by_frame": dict(cluster["source_catalog_by_frame"]),
-                "frame_coverage": len(cluster["frame_paths"]),
-                "isolation_arcsec": isolation,
-                "target_separation_px": target_sep,
+                "ra_deg": float(np.mean([row["ra_deg"] for row in cluster.rows])),
+                "dec_deg": float(np.mean([row["dec_deg"] for row in cluster.rows])),
+                "second_hdu_magnitude": float(
+                    np.median(np.asarray([row["mag"] for row in cluster.rows], dtype=float))
+                ),
+                "source_catalog_by_frame": dict(cluster.source_catalog_by_frame),
+                "frame_coverage": len(cluster.frame_paths),
+                "isolation_arcsec": cluster.isolation_arcsec,
+                "target_separation_px": min(
+                    distance_pixels(row["pixel_x"], row["pixel_y"], *target_pixels[row["frame_path"]])
+                    for row in cluster.rows
+                ),
             }
         )
-    # With no coverage filter the pool is every cross-matched cluster on the field, down to
-    # single-frame detections, so cap it at the best covered and most isolated.
+
+    # Without a coverage filter the pool is every cross-matched cluster on the field, down to
+    # single-frame detections, so cap it at the best covered and most isolated. Applied whatever the
+    # coverage fraction: the bound is on measurement cost, which no strategy is exempt from.
+    diagnostics: list[str] = []
     capped_out = 0
-    pool_limit = _candidate_pool_limit(len(frames))
-    if min_coverage_fraction <= 0.0 and len(catalog) > pool_limit:
+    pool_limit = _candidate_pool_limit(frame_count)
+    if len(catalog) > pool_limit:
         capped_out = len(catalog) - pool_limit
         ranked = sorted(catalog, key=_candidate_pool_rank)[:pool_limit]
         catalog = sorted(ranked, key=lambda candidate: candidate["candidate_id"])
-        if diagnostics is not None:
-            diagnostics.append(
-                f"Kept the {pool_limit} best-covered comparison candidates of "
-                f"{pool_limit + capped_out} found on this field, to bound measurement over "
-                f"{len(frames)} frames."
-            )
+        diagnostics.append(
+            f"Kept the {pool_limit} best-covered comparison candidates of "
+            f"{pool_limit + capped_out} found on this field, to bound measurement over "
+            f"{frame_count} frames."
+        )
     log.info(
         "Aperture Photometry comparison catalog summary: "
-        f"clusters={len(clusters)}, required_coverage={required_coverage}/{len(frames)} frames, "
+        f"clusters={len(clusters)}, required_coverage={required_coverage}/{frame_count} frames, "
         f"rejected_insufficient_coverage={rejected_for_coverage}, "
         f"rejected_over_candidate_cap={capped_out}, "
         f"valid_catalog_candidates={len(catalog)}"
     )
-    return catalog
+    return catalog, diagnostics
 
 
 def _candidate_pool_limit(frame_count: int) -> int:

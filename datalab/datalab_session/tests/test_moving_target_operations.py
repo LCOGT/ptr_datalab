@@ -19,10 +19,10 @@ class TestMovingTargetOperations(unittest.TestCase):
         self.assertNotIn(None, operations)
 
     def test_wizard_descriptions_declare_the_expected_inputs(self) -> None:
-        from datalab.datalab_session.data_operations.moving_target_photometry import (
+        from datalab.datalab_session.data_operations.aperture_photometry import (
             MovingTargetAperturePhotometry,
         )
-        from datalab.datalab_session.data_operations.moving_target_photometry import (
+        from datalab.datalab_session.data_operations.aperture_photometry import (
             NonSiderealAperturePhotometry,
         )
         shared = {"input_files", "aperture_radius", "annulus_inner_radius", "annulus_outer_radius"}
@@ -42,11 +42,11 @@ class TestMovingTargetOperations(unittest.TestCase):
         """Guards the failure the rebase introduced: an operation naming a renamed result field."""
         import dataclasses
         import inspect
-        from datalab.datalab_session.data_operations import moving_target_photometry
+        from datalab.datalab_session.data_operations import aperture_photometry
         from datalab.datalab_session.utils.aperture_light_curve import LightCurveResult
 
         available = {f.name for f in dataclasses.fields(LightCurveResult)}
-        source = inspect.getsource(moving_target_photometry)
+        source = inspect.getsource(aperture_photometry)
         referenced = set(re.findall(r"\bresult\.([a-zA-Z_][a-zA-Z0-9_]*)", source))
         self.assertTrue(referenced, "expected the shared runner to read fields off the result")
         self.assertEqual(referenced - available, set())
@@ -58,7 +58,7 @@ class TestMovingTargetOperations(unittest.TestCase):
         """
         from types import SimpleNamespace
         from unittest import mock
-        from datalab.datalab_session.data_operations.moving_target_photometry import (
+        from datalab.datalab_session.data_operations.aperture_photometry import (
             NonSiderealAperturePhotometry,
         )
 
@@ -69,11 +69,11 @@ class TestMovingTargetOperations(unittest.TestCase):
             "annulus_outer_radius": 12.0,
         })
         with mock.patch(
-            "datalab.datalab_session.data_operations.moving_target_photometry.generate_light_curve"
+            "datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve"
         ) as mock_generate, mock.patch(
-            "datalab.datalab_session.data_operations.moving_target_photometry.FileCache"
+            "datalab.datalab_session.data_operations.aperture_photometry.FileCache"
         ) as mock_file_cache, mock.patch(
-            "datalab.datalab_session.data_operations.moving_target_photometry.save_diagnostic_images_to_s3",
+            "datalab.datalab_session.data_operations.aperture_photometry.save_diagnostic_images_to_s3",
             return_value={},
         ), mock.patch.object(
             NonSiderealAperturePhotometry, "set_output"
@@ -96,7 +96,7 @@ class TestMovingTargetOperations(unittest.TestCase):
         self.assertEqual(output["diagnostics"], {"frame_1.fits": ["frame_1.fits: 2 usable stars"]})
 
     def test_track_operation_rejects_missing_samples(self) -> None:
-        from datalab.datalab_session.data_operations.moving_target_photometry import (
+        from datalab.datalab_session.data_operations.aperture_photometry import (
             MovingTargetAperturePhotometry,
         )
         from datalab.datalab_session.exceptions import ClientAlertException
@@ -105,7 +105,7 @@ class TestMovingTargetOperations(unittest.TestCase):
             operation.operate(submitter=None)
 
     def test_track_operation_rejects_malformed_samples(self) -> None:
-        from datalab.datalab_session.data_operations.moving_target_photometry import (
+        from datalab.datalab_session.data_operations.aperture_photometry import (
             MovingTargetAperturePhotometry,
         )
         from datalab.datalab_session.exceptions import ClientAlertException

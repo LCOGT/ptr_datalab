@@ -15,11 +15,10 @@ from datalab.datalab_session.tests.test_aperture_photometry import gaussian_star
 from datalab.datalab_session.utils.aperture_light_curve import (
     FrameContext,
     LightCurveError,
-    TARGET_POSITION_TRACK,
-    _track_target_positions,
     generate_light_curve,
 )
-from datalab.datalab_session.utils.comparison_calibration import COMPARISON_AUTO
+from datalab.datalab_session.utils.target_location import FittedTrack
+from datalab.datalab_session.utils.comparison_calibration import SharedThenEvolving
 from datalab.datalab_session.utils.fits_metadata import frame_midpoint_mjd
 from datalab.datalab_session.utils.moving_target_search import (
     MIN_ACCEPTED_PICKS,
@@ -333,7 +332,7 @@ class TestExposureMidpoint(unittest.TestCase):
             width=100,
             height=100,
         )
-        positions = _track_target_positions(frames=[frame], target_track_samples=samples, diagnostics=[])
+        positions = FittedTrack(samples=tuple(samples)).locate([frame]).by_frame
         predicted = positions["frame.fits"]
         start_position = (BASE_RA, BASE_DEC)
         # Half of a 1200 s exposure at 1 arcsec/s is 600 arcsec of motion past the start position.
@@ -594,9 +593,8 @@ class TestMovingTargetLightCurve(unittest.TestCase):
             annulus_outer_radius=12.0,
             min_comparisons=3,
             max_comparisons=10,
-            target_position_mode=TARGET_POSITION_TRACK,
-            comparison_mode=COMPARISON_AUTO,
-            target_track_samples=samples,
+                        comparison=SharedThenEvolving(),
+            locator=FittedTrack(samples=tuple(samples)),
             **kwargs,
         )
 

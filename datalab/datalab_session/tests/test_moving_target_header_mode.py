@@ -18,14 +18,14 @@ from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
     MAX_CANDIDATE_MEASUREMENTS,
     MIN_COMPARISON_CANDIDATES,
-    TARGET_POSITION_HEADER,
     _candidate_pool_limit,
     generate_light_curve,
 )
+from datalab.datalab_session.utils.target_location import EphemerisHeaders
 from datalab.datalab_session.utils.comparison_calibration import (
-    COMPARISON_AUTO,
-    COMPARISON_EVOLVING,
-    COMPARISON_SHARED,
+    EvolvingEnsemble,
+    SharedEnsemble,
+    SharedThenEvolving,
     FrameCalibration,
     _empirical_error_floor,
 )
@@ -219,7 +219,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         with self.assertRaises(LightCurveError):
             generate_light_curve(
                 fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-                target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_AUTO,
+                locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
             )
 
     # ------------------------------------------------------------ target locating
@@ -229,7 +229,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         result = generate_light_curve(
             fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_AUTO,
+            locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
         )
         self.assertEqual(len(result.light_curve_rows), 6)
         # Target tracked at frame center (60, 60) on every frame regardless of the moving ephemeris.
@@ -246,17 +246,17 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         common = dict(
             aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER,
+            locator=EphemerisHeaders(),
         )
         with self.assertRaises(LightCurveError):
-            generate_light_curve(fits_paths, comparison_mode=COMPARISON_SHARED, **common)
+            generate_light_curve(fits_paths, comparison=SharedEnsemble(), **common)
 
-        auto = generate_light_curve(fits_paths, comparison_mode=COMPARISON_AUTO, **common)
+        auto = generate_light_curve(fits_paths, comparison=SharedThenEvolving(), **common)
         self.assertEqual(len(self._finite_rows(auto)), 12)
         # The fallback is announced in diagnostics.
         self.assertTrue(any("evolving per-frame calibration" in d for d in auto.diagnostics))
 
-        evolving = generate_light_curve(fits_paths, comparison_mode=COMPARISON_EVOLVING, **common)
+        evolving = generate_light_curve(fits_paths, comparison=EvolvingEnsemble(), **common)
         self.assertEqual(len(self._finite_rows(evolving)), 12)
 
     def test_evolving_is_stepless_for_constant_target(self) -> None:
@@ -270,7 +270,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         result = generate_light_curve(
             fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_EVOLVING,
+            locator=EphemerisHeaders(), comparison=EvolvingEnsemble(),
         )
         mags = np.asarray([row.target_calibrated_apparent_magnitude for row in self._finite_rows(result)])
         self.assertEqual(mags.size, 12)
@@ -288,7 +288,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         result = generate_light_curve(
             fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_EVOLVING,
+            locator=EphemerisHeaders(), comparison=EvolvingEnsemble(),
         )
         rows = self._finite_rows(result)
         self.assertEqual(len(rows), 12)
@@ -308,7 +308,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         result = generate_light_curve(
             fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_EVOLVING,
+            locator=EphemerisHeaders(), comparison=EvolvingEnsemble(),
         )
         self.assertTrue(any("sharing no common stars" in d.lower() for d in result.diagnostics))
         # Still produces a light curve from each block despite the break.
@@ -350,7 +350,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         result = generate_light_curve(
             fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_AUTO,
+            locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
         )
         for row in result.light_curve_rows:
             if math.isfinite(row.target_calibrated_apparent_magnitude):
@@ -367,7 +367,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         common = dict(
             aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_EVOLVING,
+            locator=EphemerisHeaders(), comparison=EvolvingEnsemble(),
             min_comparisons=2,
         )
         capped = generate_light_curve(fits_paths, max_comparisons=3, **common)
@@ -402,7 +402,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         result = generate_light_curve(
             fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_EVOLVING,
+            locator=EphemerisHeaders(), comparison=EvolvingEnsemble(),
             min_comparisons=2, max_comparisons=50,
         )
         # Every reported measurement landed inside its own frame, well clear of the edge.
@@ -420,7 +420,7 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
         result = generate_light_curve(
             fits_paths, aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_AUTO,
+            locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
         )
         for star in result.selected_comparison_stars:
             labels = {
@@ -443,7 +443,7 @@ class TestNonSiderealRealData(unittest.TestCase):
         result = generate_light_curve(
             fits_paths, aperture_radius=5.0, annulus_inner_radius=8.0, annulus_outer_radius=12.0,
             min_comparisons=5, max_comparisons=15,
-            target_position_mode=TARGET_POSITION_HEADER, comparison_mode=COMPARISON_AUTO,
+            locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
         )
         finite = [r for r in result.light_curve_rows if math.isfinite(r.target_calibrated_apparent_magnitude)]
         self.assertEqual(len(finite), len(fits_paths))

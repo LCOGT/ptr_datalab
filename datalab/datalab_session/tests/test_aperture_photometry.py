@@ -19,6 +19,7 @@ from datalab.datalab_session.utils.comparison_stars import (
     _reject_zero_point_outliers,
     _source_catalog_sort_key,
 )
+from datalab.datalab_session.utils.target_location import FixedPosition
 from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
     _extract_candidate_row,
@@ -228,8 +229,7 @@ class TestAperturePhotometry(unittest.TestCase):
 
         result = generate_light_curve(
             fits_paths,
-            target_ra_deg=target_ra,
-            target_dec_deg=target_dec,
+            locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec),
             aperture_radius=4.0,
             annulus_inner_radius=6.0,
             annulus_outer_radius=9.0,
@@ -242,7 +242,7 @@ class TestAperturePhotometry(unittest.TestCase):
         del frames["frame_1.fits"]["header"]["DATE-OBS"]
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(self.row_names(result), ["frame_3.fits", "frame_2.fits"])
 
@@ -251,7 +251,7 @@ class TestAperturePhotometry(unittest.TestCase):
         frames["frame_1.fits"]["header"]["DATE-OBS"] = "not-a-date"
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(self.row_names(result), ["frame_3.fits", "frame_2.fits"])
 
@@ -261,7 +261,7 @@ class TestAperturePhotometry(unittest.TestCase):
             del frames["frame_1.fits"]["header"][key]
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(self.row_names(result), ["frame_3.fits", "frame_2.fits"])
 
@@ -270,7 +270,7 @@ class TestAperturePhotometry(unittest.TestCase):
         frames["frame_1.fits"]["second_hdu"] = []
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(self.row_names(result), ["frame_3.fits", "frame_2.fits"])
 
@@ -279,7 +279,7 @@ class TestAperturePhotometry(unittest.TestCase):
         del frames["frame_1.fits"]["second_hdu"][0]["ra"]
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(self.row_names(result), ["frame_3.fits", "frame_2.fits"])
 
@@ -289,13 +289,13 @@ class TestAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
 
         with self.assertRaisesRegex(LightCurveError, "requires at least 1 valid input file"):
-            generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+            generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
     def test_target_photometry_succeeds_when_target_absent_from_second_hdu(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set(include_target_in_second_hdu=False)
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(len(result.light_curve_rows), 3)
         self.assertTrue(all(row.target_net_source_counts > 0.0 for row in result.light_curve_rows))
@@ -304,7 +304,7 @@ class TestAperturePhotometry(unittest.TestCase):
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         first = result.light_curve_rows[0]
         self.assertAlmostEqual(first.target_centroid_x, 30.3, delta=0.2)
@@ -339,18 +339,17 @@ class TestAperturePhotometry(unittest.TestCase):
     def test_aperture_uses_frame_plate_scale(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
-        one_per_pixel_result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        one_per_pixel_result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         scaled_frames, (scaled_target_ra, scaled_target_dec) = build_frame_set(
             deg_per_pixel=TEST_DEG_PER_PIXEL / 2.0,
         )
         half_per_pixel_result = generate_light_curve(
             self.write_frames(scaled_frames),
-            scaled_target_ra,
-            scaled_target_dec,
-            2.0,
-            3.0,
-            4.5,
+            locator=FixedPosition(ra_deg=scaled_target_ra, dec_deg=scaled_target_dec),
+            aperture_radius=2.0,
+            annulus_inner_radius=3.0,
+            annulus_outer_radius=4.5,
         )
 
         self.assertEqual(
@@ -376,7 +375,7 @@ class TestAperturePhotometry(unittest.TestCase):
         frames["frame_1.fits"]["image"][18:40, 20:42] = 0.0   # aperture + background annulus -> 0
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(len(result.light_curve_rows), 3)
         zeroed = next(row for row in result.light_curve_rows if row.fits_path.endswith("frame_1.fits"))
@@ -392,20 +391,14 @@ class TestAperturePhotometry(unittest.TestCase):
                 row["dec"] -= 1.0e-8
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
         self.assertGreaterEqual(len(result.selected_comparison_stars), 5)
 
     def test_variability_score_reflects_variable_candidate(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set(variable_candidate_index=3)
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(
-            fits_paths,
-            target_ra,
-            target_dec,
-            4.0,
-            6.0,
-            9.0,
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
             min_comparisons=5,
             max_comparisons=12,
         )
@@ -419,7 +412,7 @@ class TestAperturePhotometry(unittest.TestCase):
         frames, (target_ra, target_dec) = build_frame_set(include_target_in_second_hdu=True)
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertTrue(all(star.target_separation_px > 9.0 for star in result.selected_comparison_stars))
         self.assertFalse(any("too close to target" in diagnostic for diagnostic in result.diagnostics))
@@ -431,13 +424,7 @@ class TestAperturePhotometry(unittest.TestCase):
             frame["second_hdu"][0]["mag"] = 30.0
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(
-            fits_paths,
-            target_ra,
-            target_dec,
-            4.0,
-            6.0,
-            9.0,
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
             min_comparisons=5,
             max_comparisons=5,
         )
@@ -451,26 +438,26 @@ class TestAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
 
         with self.assertRaisesRegex(LightCurveError, "minimum comparison ensemble"):
-            generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+            generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
     def test_invalid_radius_and_comparison_limits_fail_fast(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
         with self.assertRaisesRegex(LightCurveError, "aperture_radius must be > 0"):
-            generate_light_curve(fits_paths, target_ra, target_dec, 0.0, 6.0, 9.0)
+            generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=0.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
         with self.assertRaisesRegex(LightCurveError, "annulus_inner_radius"):
-            generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 4.0, 9.0)
+            generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=4.0, annulus_outer_radius=9.0)
         with self.assertRaisesRegex(LightCurveError, "annulus_outer_radius"):
-            generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 6.0)
+            generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=6.0)
         with self.assertRaisesRegex(LightCurveError, "min_comparisons and max_comparisons"):
-            generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0, min_comparisons=6, max_comparisons=5)
+            generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0, min_comparisons=6, max_comparisons=5)
 
     def test_aperture_photometry_and_calibration_outputs_are_finite(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
         first = result.light_curve_rows[0]
 
         self.assertGreater(first.target_net_source_counts, 0.0)
@@ -494,7 +481,7 @@ class TestAperturePhotometry(unittest.TestCase):
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
         row = result.light_curve_rows[0]
 
         recomputed_rel_flux = row.target_net_source_counts / row.comparison_ensemble_total_counts
@@ -505,7 +492,7 @@ class TestAperturePhotometry(unittest.TestCase):
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertIn("comparison star identifier | RA | Dec | calculated flux", result.diagnostics[0])
         first_star = result.selected_comparison_stars[0]
@@ -571,7 +558,7 @@ class TestAperturePhotometry(unittest.TestCase):
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(
             set(result.diagnostic_image_jpegs_by_fits_basename),
@@ -606,23 +593,27 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertGreater(float(np.mean(orange_rows)), rgb.shape[0] * 0.5)
 
     def test_progress_callback_reports_monotonic_per_frame_progress(self) -> None:
-        from datalab.datalab_session.utils.aperture_light_curve import PROGRESS_PHASES
+        from datalab.datalab_session.utils.aperture_light_curve import Phase
 
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
         reported: list[tuple[str, float]] = []
 
-        generate_light_curve(
-            fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0,
+        generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0,
             progress_callback=lambda phase, fraction: reported.append((phase, fraction)),
         )
 
         phases = [phase for phase, _ in reported]
-        # Phases arrive in pipeline order and every phase reports.
-        self.assertEqual(sorted(set(phases), key=PROGRESS_PHASES.index), list(PROGRESS_PHASES))
-        self.assertEqual(phases, sorted(phases, key=PROGRESS_PHASES.index))
+        # Phases arrive in Phase order, and the pipeline reports every phase it owns (all but the
+        # DOWNLOADING/SAVE bookends, which the operation reports around it).
+        order = list(Phase)
+        self.assertEqual(phases, sorted(phases, key=order.index))
+        self.assertEqual(
+            sorted(set(phases), key=order.index),
+            [Phase.VALIDATE, Phase.CATALOG, Phase.MEASURE, Phase.SELECT, Phase.RENDER],
+        )
         # The frame-iterating phases report an increasing fraction once per frame, ending at 1.0.
-        for phase in ("validate", "catalog", "measure", "render"):
+        for phase in (Phase.VALIDATE, Phase.CATALOG, Phase.MEASURE, Phase.RENDER):
             fractions = [fraction for reported_phase, fraction in reported if reported_phase == phase]
             self.assertEqual(len(fractions), len(fits_paths))
             self.assertEqual(fractions, sorted(fractions))
@@ -631,8 +622,8 @@ class TestAperturePhotometry(unittest.TestCase):
     def test_determinism(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
-        result1 = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
-        result2 = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result1 = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
+        result2 = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertEqual(
             [star.candidate_id for star in result1.selected_comparison_stars],
@@ -672,7 +663,7 @@ class TestAperturePhotometry(unittest.TestCase):
             return image
 
         with mock.patch.object(light_curve_module, "_load_frame_image", new=tracking_load):
-            result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+            result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         gc.collect()
         self.assertEqual(len(result.light_curve_rows), 3)
@@ -763,8 +754,7 @@ class TestAperturePhotometry(unittest.TestCase):
         try:
             result = generate_light_curve(
                 [path],
-                target_ra_deg=target_ra,
-                target_dec_deg=target_dec,
+                locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec),
                 aperture_radius=4.0,
                 annulus_inner_radius=6.0,
                 annulus_outer_radius=9.0,
@@ -783,7 +773,7 @@ class TestAperturePhotometry(unittest.TestCase):
         fits_paths = self.write_frames(frames)
 
         with self.assertRaisesRegex(LightCurveError, "requires at least 1 valid input file"):
-            generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+            generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
     def test_second_hdu_requires_finite_flux_for_candidate_comparisons(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
@@ -791,7 +781,7 @@ class TestAperturePhotometry(unittest.TestCase):
             frame["second_hdu"][0]["flux"] = math.nan
         fits_paths = self.write_frames(frames)
 
-        result = generate_light_curve(fits_paths, target_ra, target_dec, 4.0, 6.0, 9.0)
+        result = generate_light_curve(fits_paths, locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec), aperture_radius=4.0, annulus_inner_radius=6.0, annulus_outer_radius=9.0)
 
         self.assertNotIn("comp-01", self.star_by_source_label(result))
         self.assertFalse(any("magnitude/flux values" in diagnostic for diagnostic in result.diagnostics))
@@ -811,8 +801,7 @@ class TestAperturePhotometry(unittest.TestCase):
 
         result = generate_light_curve(
             fits_paths,
-            target_ra_deg=target_ra_deg,
-            target_dec_deg=target_dec_deg,
+            locator=FixedPosition(ra_deg=target_ra_deg, dec_deg=target_dec_deg),
             aperture_radius=7.64,
             annulus_inner_radius=12.73,
             annulus_outer_radius=19.10,
@@ -852,7 +841,7 @@ class TestAperturePhotometry(unittest.TestCase):
         ]).writeto(path, overwrite=True)
         try:
             with self.assertRaisesRegex(LightCurveError, "requires at least 1 valid input file"):
-                generate_light_curve([path], 100.0, 20.0, 2.0, 3.0, 5.0)
+                generate_light_curve([path], locator=FixedPosition(ra_deg=100.0, dec_deg=20.0), aperture_radius=2.0, annulus_inner_radius=3.0, annulus_outer_radius=5.0)
         finally:
             os.remove(path)
 

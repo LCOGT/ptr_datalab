@@ -5,6 +5,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from datalab.datalab_session.utils.geometry import angular_distance_arcsec, unit_vectors
+
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -52,11 +54,10 @@ class TargetTrack:
     """
         A polynomial track through user-supplied sample positions, evaluated per frame.
 
-        The fit is done in a gnomonic tangent plane about the mean sample direction rather than
-        directly in RA/Dec, which removes the RA wrap at 0h, the cos(dec) compression of RA, and the
-        degeneracy at the poles in one step. Over the hours-to-days arcs this mode targets the
-        tangent plane is very nearly flat, so a low-order polynomial in the projected coordinates
-        tracks the real apparent motion closely.
+        Fitted in a gnomonic tangent plane about the mean sample direction rather than directly in
+        RA/Dec, which removes the RA wrap at 0h, the cos(dec) compression of RA and the pole
+        degeneracy in one step. Over the hours-to-days arcs this targets the plane is nearly flat,
+        so a low-order polynomial in the projected coordinates tracks the real motion closely.
     """
     samples: tuple[TrackSample, ...]
     order: int
@@ -101,12 +102,8 @@ def track_samples_from_input(raw_samples: Any) -> tuple[TrackSample, ...]:
         Parses the user-supplied track samples into TrackSample records, sorted by time.
 
         Each sample is a mapping with "mjd", "ra" and "dec": decimal degrees, and MJD (UTC) of the
-        exposure midpoint. Deliberately carries no frame identity: samples are just positions on the
-        sky, so they need not come from the submitted frames at all. Raises ValueError on anything
-        malformed; callers wrap it in their own error type.
-
-        This is only for a target that moves. A fixed target is one position with no time, and stays
-        the plain {ra, dec} source input rather than being forced through here.
+        exposure midpoint. Deliberately carries no frame identity, so samples need not come from the
+        submitted frames at all. Raises ValueError; callers wrap it in their own error type.
     """
     if not isinstance(raw_samples, Sequence) or isinstance(raw_samples, (str, bytes)):
         raise ValueError("Track samples must be a list of {mjd, ra, dec} entries.")
@@ -158,7 +155,7 @@ def fit_target_track(samples: Sequence[TrackSample]) -> TargetTrack:
         raise ValueError("Track samples must be at two or more distinct times.")
     order = min(distinct_times - 1, MAX_TRACK_FIT_ORDER)
 
-    directions = np.array([_unit_vector(sample.ra_deg, sample.dec_deg) for sample in ordered])
+    directions = unit_vectors([sample.ra_deg for sample in ordered], [sample.dec_deg for sample in ordered])
     radial_axis, east_axis, north_axis = _tangent_basis(directions.mean(axis=0))
 
     # Project each sample into the tangent plane. The denominator is the cosine of the angle from the
@@ -205,13 +202,7 @@ def track_rate_arcsec_per_minute(track: TargetTrack) -> float:
     start = track.position_at(first)
     end = track.position_at(last)
     minutes = (last - first) * 24.0 * 60.0
-    return _angular_separation_arcsec(start, end) / minutes
-
-
-def _unit_vector(ra_deg: float, dec_deg: float) -> np.ndarray:
-    ra = math.radians(ra_deg)
-    dec = math.radians(dec_deg)
-    return np.array([math.cos(dec) * math.cos(ra), math.cos(dec) * math.sin(ra), math.sin(dec)])
+    return angular_distance_arcsec(*start, *end) / minutes
 
 
 def _tangent_basis(mean_direction: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -248,9 +239,3 @@ def _deproject(
     ra_deg = math.degrees(math.atan2(float(direction[1]), float(direction[0]))) % 360.0
     dec_deg = math.degrees(math.asin(float(np.clip(direction[2], -1.0, 1.0))))
     return ra_deg, dec_deg
-
-
-def _angular_separation_arcsec(first: tuple[float, float], second: tuple[float, float]) -> float:
-    a = _unit_vector(*first)
-    b = _unit_vector(*second)
-    return math.degrees(math.atan2(float(np.linalg.norm(np.cross(a, b))), float(np.dot(a, b)))) * 3600.0

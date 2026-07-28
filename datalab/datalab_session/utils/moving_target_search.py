@@ -6,7 +6,11 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from datalab.datalab_session.utils.fits_metadata import optional_float
-from datalab.datalab_session.utils.geometry import angular_distance_arcsec
+from datalab.datalab_session.utils.geometry import (
+    angular_distance_arcsec,
+    angular_distances_arcsec,
+    unit_vectors,
+)
 from datalab.datalab_session.utils.target_track import (
     TargetTrack,
     TrackSample,
@@ -32,7 +36,7 @@ STATIC_SOURCE_MATCH_ARCSEC = 1.5
 # field star, not the target. Two frames is too weak (a slow mover can sit inside the match radius
 # across a pair of frames taken minutes apart); three separates them reliably. On a series with too
 # few discriminating frames to reach it the threshold drops to what those frames can supply, so the
-# test still fires rather than silently passing every field star (see _static_source_min_frames).
+# test still fires rather than silently passing every field star.
 STATIC_SOURCE_MIN_FRAMES = 3
 # Below this many frames there are not enough independent looks to call anything stationary at all,
 # so the refinement is abandoned rather than run with a test that cannot fail.
@@ -68,6 +72,73 @@ class TargetPick:
     offset_from_prediction_arcsec: float
 
 
+@dataclass(frozen=True)
+class _SearchContext:
+    """
+        Everything the per-frame search reads: where the target is predicted to be, what each frame
+        catalogued, how far to look, and which pairs of frames the target is predicted to have moved
+        between (see _discriminating_frames).
+
+        One object because the whole set is fixed for the search and every helper needs most of it.
+        `discriminating` is held as the boolean matrix rather than per-frame path lists: at 999
+        frames the lists are ~9 MB of duplicated strings for something only ever counted and
+        iterated.
+    """
+    frame_times: Sequence[tuple[str, float]]
+    predictions: Mapping[str, tuple[float, float]]
+    catalog_arrays: Mapping[str, Mapping[str, np.ndarray]]
+    search_radius_arcsec: float
+    discriminating: np.ndarray
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        frame_times: Sequence[tuple[str, float]],
+        catalog_rows_by_frame: Mapping[str, Sequence[Mapping[str, Any]]],
+        track: TargetTrack,
+        search_radius_arcsec: float,
+    ) -> "_SearchContext":
+        predictions = {path: track.position_at(mjd) for path, mjd in frame_times}
+        return cls(
+            frame_times=frame_times,
+            predictions=predictions,
+            catalog_arrays=_catalog_arrays(catalog_rows_by_frame),
+            search_radius_arcsec=search_radius_arcsec,
+            discriminating=_discriminating_frames(frame_times, predictions),
+        )
+
+    @property
+    def frame_paths(self) -> list[str]:
+        return [path for path, _ in self.frame_times]
+
+    @property
+    def frame_count(self) -> int:
+        return len(self.frame_times)
+
+    def predicted(self, fits_path: str) -> tuple[float, float]:
+        return self.predictions[fits_path]
+
+    def catalog(self, fits_path: str) -> Mapping[str, np.ndarray] | None:
+        return self.catalog_arrays.get(fits_path)
+
+    def discriminating_paths(self, frame_index: int) -> list[str]:
+        """The frames the target is predicted to have moved away from by, for one frame."""
+        return [
+            path
+            for path, has_moved in zip(self.frame_paths, self.discriminating[frame_index])
+            if has_moved
+        ]
+
+    def inconclusive_frames(self) -> list[str]:
+        """Frames with too few discriminating partners for the field-star test to mean anything."""
+        return [
+            path
+            for path, row in zip(self.frame_paths, self.discriminating)
+            if int(row.sum()) < MIN_DISCRIMINATING_FRAMES
+        ]
+
+
 @dataclass
 class TrackRefinement:
     """
@@ -98,55 +169,49 @@ def refine_positions_from_catalog(
     """
         Finds the moving target near its predicted position on each frame and refines the track.
 
-        Works entirely from the frames' source catalogs, which the pipeline has already read, so it
-        costs no extra image I/O and runs before any pixel is touched. On each frame the catalog
-        sources within search_radius_arcsec of the prediction are collected, any that appear at the
-        same sky position on several frames are discarded as field stars, and the nearest survivor is
-        taken as the target. Those picks are then fitted against a track and sigma-clipped, so a
-        single frame where a star slipped through does not drag the whole series.
+        Works from the source catalogs the pipeline has already read, so it costs no extra image I/O.
+        Per frame: collect catalog sources within search_radius_arcsec of the prediction, discard
+        those that appear at the same sky position on several frames as field stars, take the nearest
+        survivor. The picks are then fitted to a track and sigma-clipped, so one frame where a star
+        slipped through does not drag the series.
 
-        frame_times pairs each frame path with the MJD its position should be evaluated at.
+        frame_times pairs each frame path with the MJD its position is evaluated at.
     """
     predictions = {path: track.position_at(mjd) for path, mjd in frame_times}
-    refinement = TrackRefinement(positions=dict(predictions))
-
     if len(frame_times) < MIN_FRAMES_FOR_STATIONARITY_TEST:
-        refinement.diagnostics.append(
-            f"Skipped the catalog search: {len(frame_times)} frame(s) is too few to identify a "
-            "moving target. Measured at the interpolated positions."
+        return TrackRefinement(
+            positions=dict(predictions),
+            diagnostics=[
+                f"Skipped the catalog search: {len(frame_times)} frame(s) is too few to identify a "
+                "moving target. Measured at the interpolated positions."
+            ],
         )
-        return refinement
 
-    discriminating_frames = _discriminating_frames(frame_times, predictions)
-    inconclusive = [
-        path for path, others in discriminating_frames.items() if len(others) < MIN_DISCRIMINATING_FRAMES
-    ]
+    context = _SearchContext.build(
+        frame_times=frame_times,
+        catalog_rows_by_frame=catalog_rows_by_frame,
+        track=track,
+        search_radius_arcsec=search_radius_arcsec,
+    )
+    diagnostics: list[str] = []
+    inconclusive = context.inconclusive_frames()
     if inconclusive:
-        refinement.diagnostics.append(
+        diagnostics.append(
             f"Predicted motion is under {STATIC_SOURCE_MATCH_ARCSEC:.1f} arcsec between "
-            f"{len(inconclusive)} of {len(frame_times)} frame(s) and the rest of the series, so a "
+            f"{len(inconclusive)} of {context.frame_count} frame(s) and the rest of the series, so a "
             "field star cannot be told apart from the target there; the nearest catalogued source "
             "to the predicted position was used."
         )
 
-    picks = _collect_picks(
-        frame_times=frame_times,
-        predictions=predictions,
-        catalog_arrays=_catalog_arrays(catalog_rows_by_frame),
-        search_radius_arcsec=search_radius_arcsec,
-        discriminating_frames=discriminating_frames,
-        frames_without_pick=refinement.frames_without_pick,
-    )
-    accepted, rejected, rejection = _trustworthy_picks(
-        picks,
-        frame_count=len(frame_times),
-        search_radius_arcsec=search_radius_arcsec,
-        predictions=predictions,
-    )
-    refinement.rejected_picks = rejected
+    picks, frames_without_pick = _collect_picks(context)
+    accepted, rejected, rejection = _trustworthy_picks(picks, context)
     if rejection is not None:
-        refinement.diagnostics.append(rejection)
-        return refinement
+        return TrackRefinement(
+            positions=dict(predictions),
+            rejected_picks=rejected,
+            frames_without_pick=frames_without_pick,
+            diagnostics=diagnostics + [rejection],
+        )
 
     # Refit against the accepted picks together with the user's own samples: the picks are precise
     # but automatic, the samples are coarse but human-verified, and keeping both means a run where the
@@ -159,91 +224,83 @@ def refine_positions_from_catalog(
     except ValueError as exc:
         # Same graceful fallback as every other failure here: the interpolated positions still stand,
         # so the run continues on the user's own samples rather than aborting the whole operation.
-        refinement.diagnostics.append(
-            f"Could not refit a track through the {len(accepted)} located candidate(s) and the "
-            f"supplied samples ({exc}). Measured at the interpolated positions."
+        return TrackRefinement(
+            positions=dict(predictions),
+            rejected_picks=rejected,
+            frames_without_pick=frames_without_pick,
+            diagnostics=diagnostics + [
+                f"Could not refit a track through the {len(accepted)} located candidate(s) and the "
+                f"supplied samples ({exc}). Measured at the interpolated positions."
+            ],
         )
-        return refinement
-    refinement.refined_track = refined_track
-    refinement.picks = accepted
-    refinement.residual_rms_arcsec = _residual_rms_arcsec(accepted, refined_track)
 
-    for fits_path, mjd in frame_times:
-        refinement.positions[fits_path] = refined_track.position_at(mjd)
-
+    positions = {fits_path: refined_track.position_at(mjd) for fits_path, mjd in frame_times}
+    residual_rms_arcsec = _residual_rms_arcsec(accepted, refined_track)
     moved_arcsec = [
-        angular_distance_arcsec(*predictions[path], *refinement.positions[path])
-        for path, _ in frame_times
+        angular_distance_arcsec(*predictions[path], *positions[path]) for path, _ in frame_times
     ]
-    refinement.diagnostics.append(
-        f"Located the target in the catalog of {len(accepted)} of {len(frame_times)} frames and "
-        f"refined the track (residual RMS {refinement.residual_rms_arcsec:.2f} arcsec, positions moved "
+    diagnostics.append(
+        f"Located the target in the catalog of {len(accepted)} of {context.frame_count} frames and "
+        f"refined the track (residual RMS {residual_rms_arcsec:.2f} arcsec, positions moved "
         f"a median {float(np.median(moved_arcsec)):.2f} arcsec)."
     )
     if rejected:
-        refinement.diagnostics.append(
+        diagnostics.append(
             f"Rejected {len(rejected)} inconsistently-moving candidate(s): "
             f"{', '.join(pick.source_id for pick in rejected)}."
         )
-    if refinement.frames_without_pick:
-        refinement.diagnostics.append(
-            f"No catalogued source near the predicted track on {len(refinement.frames_without_pick)} "
+    if frames_without_pick:
+        diagnostics.append(
+            f"No catalogued source near the predicted track on {len(frames_without_pick)} "
             "frame(s); measured at the predicted position."
         )
-    return refinement
+    return TrackRefinement(
+        positions=positions,
+        picks=accepted,
+        rejected_picks=rejected,
+        frames_without_pick=frames_without_pick,
+        refined_track=refined_track,
+        residual_rms_arcsec=residual_rms_arcsec,
+        diagnostics=diagnostics,
+    )
 
 
-def _collect_picks(
-    *,
-    frame_times: Sequence[tuple[str, float]],
-    predictions: Mapping[str, tuple[float, float]],
-    catalog_arrays: Mapping[str, Mapping[str, np.ndarray]],
-    search_radius_arcsec: float,
-    discriminating_frames: Mapping[str, Sequence[str]],
-    frames_without_pick: list[str],
-) -> list[TargetPick]:
-    """Selects the target on each frame, recording the frames where nothing was found."""
+def _collect_picks(context: _SearchContext) -> tuple[list[TargetPick], list[str]]:
+    """Selects the target on each frame; returns the picks and the frames where nothing was found."""
     picks: list[TargetPick] = []
-    for fits_path, mjd in frame_times:
-        predicted_ra, predicted_dec = predictions[fits_path]
+    frames_without_pick: list[str] = []
+    for frame_index, (fits_path, mjd) in enumerate(context.frame_times):
         pick = _select_target_on_frame(
+            context,
             fits_path=fits_path,
             mjd=mjd,
-            predicted_ra_deg=predicted_ra,
-            predicted_dec_deg=predicted_dec,
-            catalog_arrays=catalog_arrays,
-            search_radius_arcsec=search_radius_arcsec,
-            discriminating_frames=discriminating_frames,
+            discriminating_paths=context.discriminating_paths(frame_index),
         )
         if pick is None:
             frames_without_pick.append(fits_path)
         else:
             picks.append(pick)
-    return picks
+    return picks, frames_without_pick
 
 
 def _trustworthy_picks(
     picks: Sequence[TargetPick],
-    *,
-    frame_count: int,
-    search_radius_arcsec: float,
-    predictions: Mapping[str, tuple[float, float]],
+    context: _SearchContext,
 ) -> tuple[list[TargetPick], list[TargetPick], str | None]:
     """
         Decides whether the picks can be trusted as the moving target.
 
-        Returns the accepted picks, those clipped as inconsistent, and a diagnostic explaining why
-        the set was refused -- None when it is sound. Three ways to fail: too few candidates to
-        cross-check at all, too few surviving the motion-consistency clip, or a set that barely moves
-        while the track says it should have (a field star, which no residual test would ever catch).
-        A set that barely moves because the *target* barely moves is not a failure, so the observed
-        spread is judged against the spread the track predicts over the same frames rather than
-        against a fixed distance.
+        Returns the accepted picks, those clipped as inconsistent, and a diagnostic explaining a
+        refusal (None when sound). Three ways to fail: too few candidates to cross-check, too few
+        surviving the motion-consistency clip, or a set that barely moves while the track says it
+        should have. That last is a field star no residual test would catch, so the observed spread
+        is judged against the spread the track predicts rather than a fixed distance: a set that
+        barely moves because the target barely moves is not a failure.
     """
     if len(picks) < MIN_ACCEPTED_PICKS:
         return [], [], (
-            f"Found candidates on only {len(picks)} of {frame_count} frames within "
-            f"{search_radius_arcsec:.1f} arcsec of the predicted track, below the {MIN_ACCEPTED_PICKS} "
+            f"Found candidates on only {len(picks)} of {context.frame_count} frames within "
+            f"{context.search_radius_arcsec:.1f} arcsec of the predicted track, below the {MIN_ACCEPTED_PICKS} "
             "needed to cross-check them. Measured at the interpolated positions."
         )
 
@@ -255,7 +312,7 @@ def _trustworthy_picks(
         )
 
     spread = _maximum_separation_arcsec([(pick.ra_deg, pick.dec_deg) for pick in accepted])
-    predicted_spread = _maximum_separation_arcsec([predictions[pick.fits_path] for pick in accepted])
+    predicted_spread = _maximum_separation_arcsec([context.predicted(pick.fits_path) for pick in accepted])
     if spread < STATIONARY_PICK_SPREAD_ARCSEC <= predicted_spread:
         return [], rejected, (
             f"Discarded {len(accepted)} candidates spanning only {spread:.2f} arcsec across the "
@@ -286,40 +343,37 @@ def _catalog_arrays(
 
 
 def _select_target_on_frame(
+    context: _SearchContext,
     *,
     fits_path: str,
     mjd: float,
-    predicted_ra_deg: float,
-    predicted_dec_deg: float,
-    catalog_arrays: Mapping[str, Mapping[str, np.ndarray]],
-    search_radius_arcsec: float,
-    discriminating_frames: Mapping[str, Sequence[str]],
+    discriminating_paths: Sequence[str],
 ) -> TargetPick | None:
     """
         Picks the most likely moving-target detection on one frame.
 
         Sources within the search radius are ranked by distance from the prediction, and the first
-        one that is *not* also present on several other frames at the same sky position is taken.
-        Stationarity is the discriminating feature: at the search radii involved a field star is far
-        more likely to fall near the predicted track than the target is to be missing, so proximity
-        alone would confidently return the wrong source. Where the target is predicted to move too
-        little for that test to mean anything, it is skipped and the nearest source is taken.
+        that is not also present at the same sky position on several other frames is taken. At these
+        search radii a field star is far likelier to fall near the track than the target is to be
+        missing, so proximity alone would confidently return the wrong source. Where the target
+        moves too little for that test to mean anything it is skipped and the nearest source taken.
     """
-    frame_catalog = catalog_arrays.get(fits_path)
+    frame_catalog = context.catalog(fits_path)
     if frame_catalog is None or frame_catalog["ra"].size == 0:
         return None
 
-    separations = _angular_distances_arcsec(
+    predicted_ra_deg, predicted_dec_deg = context.predicted(fits_path)
+    separations = angular_distances_arcsec(
         predicted_ra_deg, predicted_dec_deg, frame_catalog["ra"], frame_catalog["dec"]
     )
-    within = np.flatnonzero(separations <= search_radius_arcsec)
+    within = np.flatnonzero(separations <= context.search_radius_arcsec)
     if within.size == 0:
         return None
 
     for index in within[np.argsort(separations[within])]:
         candidate_ra = float(frame_catalog["ra"][index])
         candidate_dec = float(frame_catalog["dec"][index])
-        if _is_stationary(candidate_ra, candidate_dec, fits_path, catalog_arrays, discriminating_frames):
+        if _is_stationary(context, candidate_ra, candidate_dec, discriminating_paths):
             continue
         return TargetPick(
             fits_path=fits_path,
@@ -346,36 +400,29 @@ def _static_source_min_frames(discriminating_count: int) -> int:
 def _discriminating_frames(
     frame_times: Sequence[tuple[str, float]],
     predictions: Mapping[str, tuple[float, float]],
-) -> dict[str, list[str]]:
+) -> np.ndarray:
     """
-        For each frame, the other frames the target is predicted to have moved far enough away from
-        for a same-position match to mean anything.
+        Boolean matrix: [i, j] is True where the target is predicted to have moved far enough
+        between frames i and j for a same-position match between them to mean anything.
 
-        The field-star test asks whether a source reappears at the same sky position on other frames.
-        That is evidence of a field star only where the target itself would have moved off that
-        position by then. Near a stationary point, or at any apparent rate slow compared with the
-        match radius, the target's own detection matches itself on every frame, so an unconditional
-        test rejects the very thing it is looking for.
+        A source reappearing at one sky position is evidence of a field star only where the target
+        would have moved off that position by then. Near a stationary point the target matches its
+        own detections everywhere, so an unconditional test rejects what it is looking for.
     """
     paths = [path for path, _ in frame_times]
-    ra = np.radians([predictions[path][0] for path in paths])
-    dec = np.radians([predictions[path][1] for path in paths])
-    directions = np.column_stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])
+    directions = unit_vectors(
+        [predictions[path][0] for path in paths], [predictions[path][1] for path in paths]
+    )
     separations = np.degrees(np.arccos(np.clip(directions @ directions.T, -1.0, 1.0))) * 3600.0
     # The diagonal is zero, so a frame is never discriminating against itself.
-    moved = separations > STATIC_SOURCE_MATCH_ARCSEC
-    return {
-        path: [other for other, has_moved in zip(paths, moved[index]) if has_moved]
-        for index, path in enumerate(paths)
-    }
+    return separations > STATIC_SOURCE_MATCH_ARCSEC
 
 
 def _is_stationary(
+    context: _SearchContext,
     ra_deg: float,
     dec_deg: float,
-    own_fits_path: str,
-    catalog_arrays: Mapping[str, Mapping[str, np.ndarray]],
-    discriminating_frames: Mapping[str, Sequence[str]],
+    discriminating_paths: Sequence[str],
 ) -> bool:
     """
         Whether a source appears at this same sky position on enough other frames to be a field star.
@@ -384,13 +431,13 @@ def _is_stationary(
         MIN_DISCRIMINATING_FRAMES of them the question cannot be answered and the source is not
         rejected, since a slow target is far likelier than a series where every source is static.
     """
-    frames_to_check = discriminating_frames.get(own_fits_path, ())
-    if len(frames_to_check) < MIN_DISCRIMINATING_FRAMES:
+    if len(discriminating_paths) < MIN_DISCRIMINATING_FRAMES:
         return False
-    required_matches = _static_source_min_frames(len(frames_to_check))
+    # Never more than the constant, and never more than the discriminating frames can supply.
+    required_matches = min(STATIC_SOURCE_MIN_FRAMES, len(discriminating_paths))
     matches = 0
-    for fits_path in frames_to_check:
-        frame_catalog = catalog_arrays.get(fits_path)
+    for fits_path in discriminating_paths:
+        frame_catalog = context.catalog(fits_path)
         if frame_catalog is None or frame_catalog["ra"].size == 0:
             continue
         # Declination alone bounds the angular separation, so this rejects almost every row without
@@ -398,7 +445,7 @@ def _is_stationary(
         nearby = np.flatnonzero(np.abs(frame_catalog["dec"] - dec_deg) <= STATIC_SOURCE_MATCH_ARCSEC / 3600.0)
         if nearby.size == 0:
             continue
-        separations = _angular_distances_arcsec(
+        separations = angular_distances_arcsec(
             ra_deg, dec_deg, frame_catalog["ra"][nearby], frame_catalog["dec"][nearby]
         )
         if np.any(separations <= STATIC_SOURCE_MATCH_ARCSEC):
@@ -461,23 +508,6 @@ def _maximum_separation_arcsec(positions: Sequence[tuple[float, float]]) -> floa
     """
     if len(positions) < 2:
         return 0.0
-    ra = np.radians([ra_deg for ra_deg, _ in positions])
-    dec = np.radians([dec_deg for _, dec_deg in positions])
-    directions = np.column_stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])
+    directions = unit_vectors([ra for ra, _ in positions], [dec for _, dec in positions])
     smallest_cosine = float(np.min(np.clip(directions @ directions.T, -1.0, 1.0)))
     return math.degrees(math.acos(smallest_cosine)) * 3600.0
-
-
-def _angular_distances_arcsec(
-    ra_deg: float,
-    dec_deg: float,
-    other_ra_deg: np.ndarray,
-    other_dec_deg: np.ndarray,
-) -> np.ndarray:
-    """Angular distance from one position to an array of positions, in arcseconds."""
-    ra = math.radians(ra_deg)
-    dec = math.radians(dec_deg)
-    other_ra = np.radians(other_ra_deg)
-    other_dec = np.radians(other_dec_deg)
-    cos_angle = np.sin(dec) * np.sin(other_dec) + math.cos(dec) * np.cos(other_dec) * np.cos(ra - other_ra)
-    return np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))) * 3600.0
