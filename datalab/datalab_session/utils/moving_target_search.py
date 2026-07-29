@@ -386,17 +386,6 @@ def _select_target_on_frame(
     return None
 
 
-def _static_source_min_frames(discriminating_count: int) -> int:
-    """
-        How many discriminating frames a source must appear on to count as stationary.
-
-        The constant assumes there are always at least three frames the target has moved away from
-        by. Where fewer exist that threshold can never be reached, which would quietly turn the
-        field-star test into a no-op, so it falls back to every discriminating frame there is.
-    """
-    return min(STATIC_SOURCE_MIN_FRAMES, max(discriminating_count, 1))
-
-
 def _discriminating_frames(
     frame_times: Sequence[tuple[str, float]],
     predictions: Mapping[str, tuple[float, float]],

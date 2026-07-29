@@ -91,7 +91,10 @@ def frame_midpoint_mjd(header: Mapping[str, Any], *, fallback_start: datetime | 
         raise ValueError("Cannot determine an observation time: no MJD-OBS and no fallback start time.")
     if not math.isfinite(start_mjd):
         raise ValueError(f"Non-finite observation time: MJD-OBS={header.get('MJD-OBS')!r}.")
-    exposure_seconds = header_float(header, ("EXPTIME",), 0.0)
+    # optional_float rather than header_float: a malformed EXPTIME (a string, say) should land on the
+    # same path as an absent or non-finite one, which is to skip the midpoint correction. Failing the
+    # frame instead would abort the whole light curve over a keyword worth half an exposure of motion.
+    exposure_seconds = optional_float(header.get("EXPTIME", 0.0))
     if not math.isfinite(exposure_seconds) or exposure_seconds < 0.0:
         exposure_seconds = 0.0
     return start_mjd + exposure_seconds / 2.0 / 86400.0

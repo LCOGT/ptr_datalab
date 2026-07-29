@@ -311,6 +311,18 @@ class TestExposureMidpoint(unittest.TestCase):
         with self.assertRaises(ValueError):
             frame_midpoint_mjd({"EXPTIME": 10.0})
 
+    def test_an_unusable_exposure_time_skips_the_correction_rather_than_failing(self) -> None:
+        """
+            An absent, non-finite, negative or non-numeric EXPTIME all mean the same thing here:
+            no midpoint correction is possible. Only the start time is needed to place the frame,
+            so none of them should cost the whole light curve.
+        """
+        start = _to_mjd(datetime(2025, 3, 1, tzinfo=timezone.utc))
+        for exposure in (None, float("nan"), -5.0, "UNKNOWN"):
+            header = {"MJD-OBS": start} if exposure is None else {"MJD-OBS": start, "EXPTIME": exposure}
+            with self.subTest(exposure=exposure):
+                self.assertEqual(frame_midpoint_mjd(header), start)
+
     def test_track_is_evaluated_at_the_midpoint_not_the_start(self) -> None:
         """A long exposure on a fast mover: using the start time would bias the position visibly."""
         start_moment = datetime(2025, 3, 1, tzinfo=timezone.utc)
