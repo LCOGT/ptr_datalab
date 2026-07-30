@@ -58,13 +58,13 @@ def candidate_overlay_jpeg_bytes(
 
     # The target's circles are the operation's real apertures in this frame's pixels; the
     # candidates' shared circle keeps a floor so it stays visible on wide-pixel-scale frames.
-    aperture_radius_full = arcsec_to_pixels(frame.header, aperture_radius)
-    annulus_inner_radius_full = arcsec_to_pixels(frame.header, annulus_inner_radius)
-    annulus_outer_radius_full = arcsec_to_pixels(frame.header, annulus_outer_radius)
-    radius_full = max(aperture_radius_full, 14.0)
+    aperture_radius_pixel = arcsec_to_pixels(frame.header, aperture_radius)
+    annulus_inner_radius_pixel = arcsec_to_pixels(frame.header, annulus_inner_radius)
+    annulus_outer_radius_pixel = arcsec_to_pixels(frame.header, annulus_outer_radius)
+    radius_pixel = max(aperture_radius_pixel, 14.0)
     # Pad past the largest circle drawn around any position so no annulus is cropped away.
-    pad_full = max(2.0 * radius_full, 1.2 * annulus_outer_radius_full)
-    x0, y0, x1, y1 = _crop_bounds(positions, pad=pad_full, width=width, height=height)
+    pad = max(2.0 * radius_pixel, 1.2 * annulus_outer_radius_pixel)
+    x0, y0, x1, y1 = _crop_bounds(positions, pad=pad, width=width, height=height)
     crop = image[y0:y1, x0:x1]
     crop_height, crop_width = crop.shape
 
@@ -83,7 +83,7 @@ def candidate_overlay_jpeg_bytes(
     scale_x = out_width / crop_width
     scale_y = out_height / crop_height
     min_dimension = min(out_width, out_height)
-    radius = max(radius_full * scale, min_dimension * 0.035, 24.0)
+    radius = max(radius_pixel * scale, min_dimension * 0.035, 24.0)
     line_width = max(3, int(round(min_dimension * 0.004)))
 
     # The image is y-flipped for display, and pixel centers map through a resize as
@@ -96,11 +96,11 @@ def candidate_overlay_jpeg_bytes(
     if target_position is not None:
         cx = (target_position[0] - x0 + 0.5) * scale_x - 0.5
         cy = ((crop_height - 1) - (target_position[1] - y0) + 0.5) * scale_y - 0.5
-        aperture = aperture_radius_full * scale
+        aperture = aperture_radius_pixel * scale
         draw.ellipse((cx - aperture, cy - aperture, cx + aperture, cy + aperture), outline=TARGET_COLOR, width=line_width)
         # The annulus circles are rendered at 0.5 or less line width than the aperture radius.
         annulus_line_width = max(1, line_width // 2)
-        for annulus_radius_full in (annulus_inner_radius_full, annulus_outer_radius_full):
+        for annulus_radius_full in (annulus_inner_radius_pixel, annulus_outer_radius_pixel):
             annulus = annulus_radius_full * scale
             draw.ellipse(
                 (cx - annulus, cy - annulus, cx + annulus, cy + annulus),
