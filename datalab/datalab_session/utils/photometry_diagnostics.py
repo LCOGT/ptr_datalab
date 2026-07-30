@@ -12,9 +12,9 @@ from datalab.datalab_session.utils.fits_metadata import arcsec_to_pixels, option
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
 COMPARISON_STAR_COLOR = (0, 173, 239)
-TARGET_COLOR = (243, 131, 33)
+TARGET_COLOR = (255, 149, 0)
 # Diagnostic overlays are resampled so their long side is this many pixels.
-OVERLAY_MAX_DIMENSION = 1000
+OVERLAY_MAX_DIMENSION = 1500
 
 
 def candidate_overlay_jpeg_bytes(
@@ -25,13 +25,19 @@ def candidate_overlay_jpeg_bytes(
     measurements: Sequence[Any],
     target_measurement: Any,
     aperture_radius: float,
+    annulus_inner_radius: float,
+    annulus_outer_radius: float,
 ) -> bytes:
     """
         Renders the candidate-star overlay for one frame from its full-resolution pixels.
 
+        The target is drawn as the three circles the operation actually measured with — the
+        aperture, and the inner and outer bounds of the background annulus in a thinner line.
+        Candidates get a single circle at a legible fixed size, since their job is only to mark
+        which stars entered the ensemble.
+
         The image is cropped at full resolution to the region containing every drawn circle plus
-        a one-radius margin, then resampled so its long side is OVERLAY_MAX_DIMENSION, so tight
-        star fields keep native detail instead of inheriting a whole-frame downsample.
+        a margin, then resampled so its long side is OVERLAY_MAX_DIMENSION.
     """
     height, width = image.shape
     stars_by_id = {star.candidate_id: star for star in stars}
@@ -50,8 +56,15 @@ def candidate_overlay_jpeg_bytes(
     target_position = (target_x, target_y) if math.isfinite(target_x) and math.isfinite(target_y) else None
     positions = comparison_positions + ([target_position] if target_position else [])
 
-    radius_full = max(arcsec_to_pixels(frame.header, aperture_radius), 14.0)
-    x0, y0, x1, y1 = _crop_bounds(positions, pad=2.0 * radius_full, width=width, height=height)
+    # The target's circles are the operation's real apertures in this frame's pixels; the
+    # candidates' shared circle keeps a floor so it stays visible on wide-pixel-scale frames.
+    aperture_radius_pixel = arcsec_to_pixels(frame.header, aperture_radius)
+    annulus_inner_radius_pixel = arcsec_to_pixels(frame.header, annulus_inner_radius)
+    annulus_outer_radius_pixel = arcsec_to_pixels(frame.header, annulus_outer_radius)
+    radius_pixel = max(aperture_radius_pixel, 14.0)
+    # Pad past the largest circle drawn around any position so no annulus is cropped away.
+    pad = max(2.0 * radius_pixel, 1.2 * annulus_outer_radius_pixel)
+    x0, y0, x1, y1 = _crop_bounds(positions, pad=pad, width=width, height=height)
     crop = image[y0:y1, x0:x1]
     crop_height, crop_width = crop.shape
 
@@ -70,7 +83,7 @@ def candidate_overlay_jpeg_bytes(
     scale_x = out_width / crop_width
     scale_y = out_height / crop_height
     min_dimension = min(out_width, out_height)
-    radius = max(radius_full * scale, min_dimension * 0.035, 24.0)
+    radius = max(radius_pixel * scale, min_dimension * 0.035, 24.0)
     line_width = max(3, int(round(min_dimension * 0.004)))
 
     # The image is y-flipped for display, and pixel centers map through a resize as
@@ -83,7 +96,17 @@ def candidate_overlay_jpeg_bytes(
     if target_position is not None:
         cx = (target_position[0] - x0 + 0.5) * scale_x - 0.5
         cy = ((crop_height - 1) - (target_position[1] - y0) + 0.5) * scale_y - 0.5
-        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline=TARGET_COLOR, width=line_width)
+        aperture = aperture_radius_pixel * scale
+        draw.ellipse((cx - aperture, cy - aperture, cx + aperture, cy + aperture), outline=TARGET_COLOR, width=line_width)
+        # The annulus circles are rendered at 0.5 or less line width than the aperture radius.
+        annulus_line_width = max(1, line_width // 2)
+        for annulus_radius_full in (annulus_inner_radius_pixel, annulus_outer_radius_pixel):
+            annulus = annulus_radius_full * scale
+            draw.ellipse(
+                (cx - annulus, cy - annulus, cx + annulus, cy + annulus),
+                outline=TARGET_COLOR,
+                width=annulus_line_width,
+            )
 
     buffer = BytesIO()
     overlay.save(buffer, format="JPEG", quality=90)
