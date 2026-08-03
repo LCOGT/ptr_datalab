@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections import namedtuple
 import hashlib
 import json
 import os
@@ -16,6 +17,10 @@ CACHE_DURATION = 60 * 60 * 24 * 30  # cache for 30 days
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
+
+# ProgressStep will be used to tie a human readable message to the amount of time the step takes for a step
+ProgressStep = namedtuple('ProgressStep', ['message', 'progress'])
+
 
 class BaseDataOperation(ABC):
 

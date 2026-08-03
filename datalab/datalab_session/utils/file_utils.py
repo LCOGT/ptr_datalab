@@ -20,14 +20,27 @@ def get_hdu(path: str, extension: str = 'SCI', use_fsspec: bool = False) -> list
   """
   Returns a HDU for the fits in the given path
   Warning: this function returns an opened file that must be closed after use
+  Warning: the HDU copy eagerly loads the extension's data - decompressing the full image for
+  compressed extensions. If you only need the header, use get_fits_header instead.
   """
   with fits.open(path, use_fsspec=use_fsspec) as hdu:
     try:
       extension_copy = hdu[extension].copy()
     except KeyError:
       raise ClientAlertException(f"{extension} Header not found in fits file at {path.split('/')[-1]}")
-    
+
     return extension_copy
+
+def get_fits_header(path: str, extension: str = 'SCI') -> fits.Header:
+  """
+  Returns the header for an extension without touching its data, so large (compressed) images
+  are never decompressed into memory.
+  """
+  with fits.open(path) as hdu:
+    try:
+      return hdu[extension].header.copy()
+    except KeyError:
+      raise ClientAlertException(f"{extension} Header not found in fits file at {path.split('/')[-1]}")
 
 def get_fits_dimensions(fits_file, extension: str = 'SCI') -> tuple:
   with fits.open(fits_file) as hdu:
