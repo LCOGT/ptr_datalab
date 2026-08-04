@@ -19,10 +19,24 @@ from datalab.datalab_session.utils.comparison_stars import (
     _reject_zero_point_outliers,
     _source_catalog_sort_key,
 )
+import gc
+import weakref
+from unittest import mock
+
 from datalab.datalab_session.utils.target_location import FixedPosition
+from datalab.datalab_session.utils import aperture_light_curve as light_curve_module
+from datalab.datalab_session.utils.fits_metadata import frame_geometry, world_to_pixel
+from datalab.datalab_session.utils.photometry_diagnostics import (
+    OVERLAY_MAX_DIMENSION,
+    candidate_overlay_jpeg_bytes,
+    comparison_star_validation_diagnostics,
+)
 from datalab.datalab_session.utils.aperture_light_curve import (
     LightCurveError,
+    Phase,
     _extract_candidate_row,
+    _load_frame_image,
+    _measure_target,
     _validated_frame_contexts,
     generate_light_curve,
 )
@@ -314,8 +328,6 @@ class TestAperturePhotometry(unittest.TestCase):
         # Point the target at an empty patch of sky (~16px from any source) so centroiding cannot
         # lock on. _measure_target must never raise or drift onto a neighbour: it measures at the
         # authoritative WCS position instead of the real source at (30.3, 28.8).
-        from datalab.datalab_session.utils.aperture_light_curve import _load_frame_image, _measure_target
-        from datalab.datalab_session.utils.fits_metadata import frame_geometry, world_to_pixel
 
         frames, _ = build_frame_set()
         header = frames["frame_1.fits"]["header"]
@@ -564,7 +576,6 @@ class TestAperturePhotometry(unittest.TestCase):
             set(result.diagnostic_image_jpegs_by_fits_basename),
             {"frame_1.fits", "frame_2.fits", "frame_3.fits"},
         )
-        from datalab.datalab_session.utils.photometry_diagnostics import OVERLAY_MAX_DIMENSION
 
         image_data = result.diagnostic_image_jpegs_by_fits_basename["frame_1.fits"]
         image = Image.open(BytesIO(image_data))
@@ -593,7 +604,6 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertGreater(float(np.mean(orange_rows)), rgb.shape[0] * 0.5)
 
     def test_progress_callback_reports_monotonic_per_frame_progress(self) -> None:
-        from datalab.datalab_session.utils.aperture_light_curve import Phase
 
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
@@ -639,11 +649,7 @@ class TestAperturePhotometry(unittest.TestCase):
         # loaded once for measurement and once for overlay rendering, at most one frame's pixels
         # may be alive at any moment, and nothing in the result may retain pixel arrays after
         # the run.
-        import gc
-        import weakref
-        from unittest import mock
 
-        from datalab.datalab_session.utils import aperture_light_curve as light_curve_module
 
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)
@@ -672,10 +678,6 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertTrue(all(ref() is None for ref in loaded_refs))
 
     def test_overlay_crops_full_resolution_before_resampling(self) -> None:
-        from datalab.datalab_session.utils.photometry_diagnostics import (
-            OVERLAY_MAX_DIMENSION,
-            candidate_overlay_jpeg_bytes,
-        )
 
         height, width = 2400, 3200
         header = {

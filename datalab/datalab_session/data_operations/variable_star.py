@@ -6,7 +6,7 @@ from datalab.datalab_session.data_operations.data_operation import BaseDataOpera
 from datalab.datalab_session.data_operations.light_curve import light_curve
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.format import Format
-from datalab.datalab_session.utils.period_analysis import analyze_period
+from datalab.datalab_session.utils.period_analysis import PeriodAnalysis
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -116,11 +116,9 @@ def calculate_period(light_curve):
   """
   Use the astropy lomb scargle to perform the periodogram analysis on the light curve.
 
-  Delegates to the shared analyze_period so the aperture photometry operations reuse the same
-  period search, reproducing the original result exactly. This operation returns only the peak, so
-  it skips the extras (doubled-period candidate, window function) the photometry operations emit.
+  Returns only the peak, so it skips the doubled-period candidate and window function.
   """
-  analysis = analyze_period(
+  analysis = PeriodAnalysis.from_light_curve(
     [lc['julian_date'] for lc in light_curve],
     [lc['mag'] for lc in light_curve],
     [lc['magerr'] for lc in light_curve],

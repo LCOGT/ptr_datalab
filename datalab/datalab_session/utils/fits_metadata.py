@@ -16,88 +16,47 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 # silence the category process-wide.
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
+MJD_EPOCH = datetime(1858, 11, 17, tzinfo=timezone.utc)
+
 
 def world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:
     x, y = WCS(dict(header)).world_to_pixel_values(float(ra_deg), float(dec_deg))
     return float(x), float(y)
 
 
-# The FITS header keywords carrying the moving target's per-frame ephemeris position, written by
-# the scheduler from the object's orbital elements. On LCO MINORPLANET frames the mount tracks the
-# object, so these track the WCS field center (CRVAL1/2) frame to frame. RA is sexagesimal hours,
-# Dec sexagesimal degrees. Kept as constants so a future keyword change is a one-line edit.
-TARGET_RA_HEADER_KEYS = ("CAT-RA",)
-TARGET_DEC_HEADER_KEYS = ("CAT-DEC",)
-
-
-def _first_present_header_value(header: Mapping[str, Any], keys: tuple[str, ...]) -> Any:
-    for key in keys:
-        if key in header:
-            value = header[key]
-            if value is not None and str(value).strip():
-                return value
-    return None
-
-
-def target_radec_from_header(
-    header: Mapping[str, Any],
-    *,
-    ra_keys: tuple[str, ...] = TARGET_RA_HEADER_KEYS,
-    dec_keys: tuple[str, ...] = TARGET_DEC_HEADER_KEYS,
-) -> tuple[float, float]:
+def target_radec_from_header(header: Mapping[str, Any]) -> tuple[float, float]:
     """
-        Reads a moving target's per-frame RA/Dec (degrees) from a frame header.
-
-        RA is parsed as sexagesimal hours and Dec as sexagesimal degrees (the LCO CAT-RA/CAT-DEC
-        convention). Raises ValueError if the keywords are absent or unparseable; callers wrap this
-        in their own error type.
+        A moving target's per-frame RA/Dec in degrees, from the LCO ephemeris keywords CAT-RA
+        (sexagesimal hours) and CAT-DEC (sexagesimal degrees).
     """
-    ra_raw = _first_present_header_value(header, ra_keys)
-    dec_raw = _first_present_header_value(header, dec_keys)
-    if ra_raw is None or dec_raw is None:
-        raise ValueError(
-            f"Missing moving-target coordinate keywords (looked for RA in {ra_keys}, Dec in {dec_keys})."
-        )
+    ra_raw, dec_raw = header.get("CAT-RA"), header.get("CAT-DEC")
+    if not str(ra_raw or "").strip() or not str(dec_raw or "").strip():
+        raise ValueError("Missing CAT-RA/CAT-DEC moving-target coordinates.")
     try:
         ra_deg = Angle(str(ra_raw), unit=u.hourangle).to(u.deg).value
         dec_deg = Angle(str(dec_raw), unit=u.deg).to(u.deg).value
     except Exception as exc:
         raise ValueError(f"Unparseable moving-target coordinates: RA={ra_raw!r}, Dec={dec_raw!r}.") from exc
-    if not math.isfinite(ra_deg) or not math.isfinite(dec_deg):
-        raise ValueError(f"Non-finite moving-target coordinates: RA={ra_raw!r}, Dec={dec_raw!r}.")
     return float(ra_deg), float(dec_deg)
-
-
-# MJD of 1858-11-17T00:00:00Z, for deriving an MJD from a parsed DATE-OBS when MJD-OBS is absent.
-_MJD_EPOCH = datetime(1858, 11, 17, tzinfo=timezone.utc)
 
 
 def frame_midpoint_mjd(header: Mapping[str, Any], *, fallback_start: datetime | None = None) -> float:
     """
         MJD (UTC) of a frame's exposure midpoint.
 
-        MJD-OBS and DATE-OBS on LCO frames are the exposure *start* (UTSTART matches DATE-OBS and
-        UTSTOP is start + EXPTIME), but a moving target's measured position is where it sat on
-        average over the exposure. Interpolating a track at the start time therefore biases every
-        predicted position by half an exposure of the object's motion, which is negligible for short
-        exposures on a slow mover and arcseconds for long exposures on a fast one.
+        MJD-OBS and DATE-OBS are the exposure start, but a moving target's measured position is where
+        it sat on average over the exposure, so interpolating a track at the start biases every
+        prediction by half an exposure of the object's motion.
     """
     if "MJD-OBS" in header:
         start_mjd = float(header["MJD-OBS"])
     elif fallback_start is not None:
         start = fallback_start if fallback_start.tzinfo is not None else fallback_start.replace(tzinfo=timezone.utc)
-        start_mjd = (start - _MJD_EPOCH).total_seconds() / 86400.0
+        start_mjd = (start - MJD_EPOCH).total_seconds() / 86400.0
     else:
         raise ValueError("Cannot determine an observation time: no MJD-OBS and no fallback start time.")
-    if not math.isfinite(start_mjd):
-        raise ValueError(f"Non-finite observation time: MJD-OBS={header.get('MJD-OBS')!r}.")
-    # optional_float rather than header_float: a malformed EXPTIME (a string, say) should land on the
-    # same path as an absent or non-finite one, which is to skip the midpoint correction. Failing the
-    # frame instead would abort the whole light curve over a keyword worth half an exposure of motion.
-    exposure_seconds = optional_float(header.get("EXPTIME", 0.0))
-    if not math.isfinite(exposure_seconds) or exposure_seconds < 0.0:
-        exposure_seconds = 0.0
-    return start_mjd + exposure_seconds / 2.0 / 86400.0
+    # An unusable EXPTIME means no midpoint correction, not a failed frame.
+    return start_mjd + max(0.0, optional_float(header.get("EXPTIME"), default=0.0)) / 2.0 / 86400.0
 
 
 def header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: float) -> float:
@@ -107,13 +66,13 @@ def header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: floa
     return default
 
 
-def optional_float(value: Any) -> float:
-    """Coerce a (possibly missing/malformed) catalog or header value to float, NaN on failure."""
+def optional_float(value: Any, default: float = math.nan) -> float:
+    """Coerce a possibly missing or malformed value to float, returning default on failure."""
     try:
         result = float(value)
     except (TypeError, ValueError):
-        return math.nan
-    return result if math.isfinite(result) else math.nan
+        return default
+    return result if math.isfinite(result) else default
 
 
 DEFAULT_GAIN = 1.0

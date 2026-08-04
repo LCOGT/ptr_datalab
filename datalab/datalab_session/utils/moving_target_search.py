@@ -18,46 +18,33 @@ from datalab.datalab_session.utils.target_track import (
 )
 
 
-log = logging.getLogger()
-log.setLevel(logging.INFO)
+log = logging.getLogger(__name__)
 
 
-# How far from the predicted position to look for the target. An interpolated track is only as good
-# as the samples and the arc it spans, so the search has to be wider than the aperture -- but every
-# extra arcsecond admits more field stars to be confused with, so this is a deliberate compromise
-# rather than a generous default. Exposed as a parameter for fast movers and long arcs.
+# Wider than the aperture, since the track is interpolated, but every extra arcsecond admits more
+# field stars to confuse the target with.
 DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC = 10.0
 
-# Two catalog detections within this angular distance, on different frames, are the same source.
-# Comfortably larger than the astrometric scatter between frames and much smaller than the motion a
-# moving target accumulates between them.
+# Two detections this close, on different frames, are the same source: larger than the astrometric
+# scatter, smaller than a moving target's motion between frames.
 STATIC_SOURCE_MATCH_ARCSEC = 1.5
-# A source found at the same sky position on at least this many *other* frames is stationary -- a
-# field star, not the target. Two frames is too weak (a slow mover can sit inside the match radius
-# across a pair of frames taken minutes apart); three separates them reliably. On a series with too
-# few discriminating frames to reach it the threshold drops to what those frames can supply, so the
-# test still fires rather than silently passing every field star.
+# Appearing at one position on this many other frames makes a source a field star. Two is too weak;
+# a slow mover can sit inside the match radius across a pair of frames minutes apart.
 STATIC_SOURCE_MIN_FRAMES = 3
-# Below this many frames there are not enough independent looks to call anything stationary at all,
-# so the refinement is abandoned rather than run with a test that cannot fail.
+# Below this the stationarity test cannot fail, so the refinement is abandoned instead.
 MIN_FRAMES_FOR_STATIONARITY_TEST = 3
-# A frame only tells you something about a candidate's stationarity if the target is predicted to
-# have moved away from that candidate's position by then. Below this many such frames the test has
-# too little to go on and is skipped for that frame rather than run on one comparison.
+# A frame only discriminates if the target is predicted to have moved away from it by then.
 MIN_DISCRIMINATING_FRAMES = 2
 
-# Motion-consistency clipping. Picks are fitted against a track and those lying more than this many
-# sigma off are rejected as mis-identifications.
+# Picks lying more than this many sigma off the fitted track are mis-identifications.
 TRACK_RESIDUAL_CLIP_SIGMA = 3.0
-# Floor on the clipping scale, so a run whose picks happen to fit tightly does not start rejecting
-# perfectly good picks over sub-arcsecond residuals.
+# Floor on the clipping scale, so a tightly-fitting run does not reject good picks over sub-arcsecond
+# residuals.
 MIN_TRACK_RESIDUAL_ARCSEC = 1.0
 TRACK_CLIP_ITERATIONS = 3
-# Below this many surviving picks there is nothing to cross-check, so the refinement is abandoned in
-# favour of the user's own samples rather than trusted on the strength of one or two detections.
+# Below this there is nothing to cross-check against, so the user's own samples are used instead.
 MIN_ACCEPTED_PICKS = 3
-# If every pick sits within this distance of every other, the "track" is a stationary source: the
-# search locked onto one field star on every frame. Refuse it however well it fits.
+# Picks spanning less than this never moved: the search locked onto one field star.
 STATIONARY_PICK_SPREAD_ARCSEC = 2.0
 
 
@@ -75,14 +62,9 @@ class TargetPick:
 @dataclass(frozen=True)
 class _SearchContext:
     """
-        Everything the per-frame search reads: where the target is predicted to be, what each frame
-        catalogued, how far to look, and which pairs of frames the target is predicted to have moved
-        between (see _discriminating_frames).
-
-        One object because the whole set is fixed for the search and every helper needs most of it.
-        `discriminating` is held as the boolean matrix rather than per-frame path lists: at 999
-        frames the lists are ~9 MB of duplicated strings for something only ever counted and
-        iterated.
+        What the per-frame search reads: predicted positions, each frame's catalog, the search radius,
+        and which frame pairs the target has moved between. Held as a boolean matrix rather than
+        per-frame path lists, which are ~9 MB of duplicated strings at 999 frames.
     """
     frame_times: Sequence[tuple[str, float]]
     predictions: Mapping[str, tuple[float, float]]
@@ -142,12 +124,9 @@ class _SearchContext:
 @dataclass
 class TrackRefinement:
     """
-        Outcome of searching for the target near the predicted track and cross-checking the picks.
-
-        positions is what the pipeline measures at: the refined track where the refinement held, and
-        the sample track everywhere it did not. Frames with no pick still get a position -- a predicted
-        one -- because the target is presumed present and simply undetected, which is a routine
-        outcome for a faint object rather than a reason to drop the frame.
+        Outcome of the catalog search. positions is what the pipeline measures at: the refined track
+        where refinement held, the sample track everywhere it did not. A frame with no pick still
+        gets its predicted position, since a faint target is presumed present but undetected.
     """
     positions: dict[str, tuple[float, float]]
     picks: list[TargetPick] = field(default_factory=list)

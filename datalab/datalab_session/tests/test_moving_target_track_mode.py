@@ -24,13 +24,12 @@ from datalab.datalab_session.utils.moving_target_search import (
     MIN_ACCEPTED_PICKS,
     refine_positions_from_catalog,
 )
-from datalab.datalab_session.utils.period_analysis import period_output_from_light_curve_rows
+from datalab.datalab_session.utils.period_analysis import PeriodAnalysis
 from datalab.datalab_session.utils.target_track import (
     LINEAR_TRACK_MAX_SPAN_HOURS,
     TrackSample,
     fit_target_track,
     track_rate_arcsec_per_minute,
-    track_samples_from_input,
 )
 
 
@@ -254,7 +253,7 @@ class TestTargetTrackFitting(unittest.TestCase):
 
 class TestTrackSampleParsing(unittest.TestCase):
     def test_parses_and_sorts_valid_samples(self) -> None:
-        samples = track_samples_from_input(
+        samples = TrackSample.from_input(
             [
                 {"mjd": 60002.0, "ra": 100.2, "dec": 20.0},
                 {"mjd": 60000.0, "ra": 100.0, "dec": 20.0},
@@ -266,34 +265,34 @@ class TestTrackSampleParsing(unittest.TestCase):
 
     def test_rejects_fewer_than_two_samples(self) -> None:
         with self.assertRaises(ValueError):
-            track_samples_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}])
+            TrackSample.from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}])
 
     def test_rejects_a_sample_with_no_time(self) -> None:
         """Every sample needs an mjd: a track is positions *and* the times they were seen at."""
         with self.assertRaises(ValueError):
-            track_samples_from_input([{"ra": 100.0, "dec": 20.0}, {"ra": 100.1, "dec": 20.0}])
+            TrackSample.from_input([{"ra": 100.0, "dec": 20.0}, {"ra": 100.1, "dec": 20.0}])
 
     def test_rejects_missing_key(self) -> None:
         with self.assertRaises(ValueError):
-            track_samples_from_input([{"mjd": 60000.0, "ra": 100.0}, {"mjd": 60001.0, "ra": 100.1, "dec": 20.0}])
+            TrackSample.from_input([{"mjd": 60000.0, "ra": 100.0}, {"mjd": 60001.0, "ra": 100.1, "dec": 20.0}])
 
     def test_rejects_non_numeric_and_non_finite(self) -> None:
         with self.assertRaises(ValueError):
-            track_samples_from_input([{"mjd": 60000.0, "ra": "abc", "dec": 20.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
+            TrackSample.from_input([{"mjd": 60000.0, "ra": "abc", "dec": 20.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
         with self.assertRaises(ValueError):
-            track_samples_from_input([{"mjd": 60000.0, "ra": float("nan"), "dec": 20.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
+            TrackSample.from_input([{"mjd": 60000.0, "ra": float("nan"), "dec": 20.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
 
     def test_rejects_out_of_range_declination(self) -> None:
         with self.assertRaises(ValueError):
-            track_samples_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 120.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
+            TrackSample.from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 120.0}, {"mjd": 60001.0, "ra": 1.0, "dec": 2.0}])
 
     def test_rejects_samples_all_at_the_same_time(self) -> None:
         with self.assertRaises(ValueError):
-            track_samples_from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}, {"mjd": 60000.0, "ra": 100.1, "dec": 20.0}])
+            TrackSample.from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}, {"mjd": 60000.0, "ra": 100.1, "dec": 20.0}])
 
     def test_rejects_non_list_input(self) -> None:
         with self.assertRaises(ValueError):
-            track_samples_from_input("60000,100,20")
+            TrackSample.from_input("60000,100,20")
 
 
 class TestExposureMidpoint(unittest.TestCase):
@@ -756,13 +755,10 @@ class TestMovingTargetLightCurve(unittest.TestCase):
         paths = self.write_frames(frames)
         result = self._run(paths, _samples_from_truth(truth, (0, frame_count - 1)))
 
-        period_output = period_output_from_light_curve_rows(result.light_curve_rows)
-        self.assertIsNotNone(period_output)
-        # Same keys VariableStar emits, plus the doubled-period candidate.
-        self.assertLessEqual({"period", "fap", "frequency", "power"}, set(period_output))
-        self.assertEqual(
-            {c["kind"] for c in period_output["period_candidates"]}, {"peak", "double"}
-        )
+        analysis = PeriodAnalysis.from_light_curve_rows(result.light_curve_rows)
+        self.assertIsNotNone(analysis)
+        self.assertGreater(analysis.period, 0.0)
+        self.assertEqual({c.kind for c in analysis.candidates}, {"peak", "double"})
 
 
 if __name__ == "__main__":

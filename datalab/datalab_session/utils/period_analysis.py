@@ -7,24 +7,19 @@ import numpy as np
 from astropy.timeseries import LombScargle
 
 
-log = logging.getLogger()
-log.setLevel(logging.INFO)
+log = logging.getLogger(__name__)
 
 
-# A light curve needs at least this many points before a period is worth reporting. Matches the
-# VariableStar operation's own minimum, below which Lomb-Scargle on sparse data is noise.
+# Below this, Lomb-Scargle on sparse data is noise. Matches VariableStar's own minimum.
 MINIMUM_PERIOD_POINTS = 8
 
 
 @dataclass(frozen=True)
 class PeriodCandidate:
     """
-        One period worth offering the user to fold on.
-
-        A single-sinusoid Lomb-Scargle locks onto the strongest Fourier component, which for a
-        double-peaked source (an elongated, tumbling asteroid) is *half* the rotation period. So the
-        strongest peak and its double are both offered: "peak" is what the periodogram maximises,
-        "double" is the physical rotation period when the light curve has two maxima per cycle.
+        A period worth offering the user to fold on. Lomb-Scargle locks onto the strongest Fourier
+        component, which for a double-peaked source (a tumbling asteroid) is half the rotation
+        period, so both the peak and its double are offered.
     """
     period: float
     power: float
@@ -36,11 +31,8 @@ class PeriodCandidate:
 @dataclass(frozen=True)
 class PeriodAnalysis:
     """
-        Lomb-Scargle period analysis of a light curve.
-
-        frequency/power/period/false_alarm_probability reproduce the existing VariableStar result
-        exactly. The rest is additive: ranked candidates including the doubled period, and the
-        sampling window function on the same grid. Both are empty under include_extras=False.
+        Lomb-Scargle period analysis. candidates and window_power are empty under
+        include_extras=False; the rest reproduces the VariableStar result exactly.
     """
     frequency: np.ndarray = field(repr=False)
     power: np.ndarray = field(repr=False)
@@ -49,93 +41,79 @@ class PeriodAnalysis:
     candidates: list[PeriodCandidate]
     window_power: np.ndarray = field(repr=False)
 
+    @classmethod
+    def from_light_curve(
+        cls,
+        times: Sequence[float],
+        magnitudes: Sequence[float],
+        magnitude_errors: Sequence[float],
+        *,
+        include_extras: bool = True,
+    ) -> "PeriodAnalysis":
+        """
+            Lomb-Scargle search over a light curve. times are in days, only differences matter.
 
-def analyze_period(
-    times: Sequence[float],
-    magnitudes: Sequence[float],
-    magnitude_errors: Sequence[float],
-    *,
-    include_extras: bool = True,
-) -> PeriodAnalysis:
-    """
-        Runs a Lomb-Scargle period search over a light curve. times are in days (only differences
-        matter); the strongest periodogram peak is taken as the best period.
+            include_extras=False skips the doubled period and the window function, the latter a
+            second full periodogram over the same grid.
+        """
+        times_arr = np.asarray(times, dtype=float)
+        lomb_scargle = LombScargle(times_arr, np.asarray(magnitudes, dtype=float),
+                                   np.asarray(magnitude_errors, dtype=float))
+        frequency, power = lomb_scargle.autopower()
 
-        include_extras=False skips the doubled-period candidate and the window function, the latter
-        a second full periodogram over the same grid, for callers that read only the peak.
-    """
-    times_arr = np.asarray(times, dtype=float)
-    magnitudes_arr = np.asarray(magnitudes, dtype=float)
-    errors_arr = np.asarray(magnitude_errors, dtype=float)
+        best_index = int(np.argmax(power))
+        best_frequency = float(frequency[best_index])
+        best_power = float(power[best_index])
+        false_alarm_probability = float(lomb_scargle.false_alarm_probability(best_power))
 
-    lomb_scargle = LombScargle(times_arr, magnitudes_arr, errors_arr)
-    frequency, power = lomb_scargle.autopower()
+        if include_extras:
+            candidates = _candidates(lomb_scargle, best_frequency, best_power, false_alarm_probability)
+            window_power = LombScargle(
+                times_arr, np.ones_like(times_arr), fit_mean=False, center_data=False
+            ).power(frequency)
+        else:
+            candidates = []
+            window_power = np.empty(0)
 
-    best_index = int(np.argmax(power))
-    best_frequency = float(frequency[best_index])
-    best_power = float(power[best_index])
-    period = 1.0 / best_frequency
-    false_alarm_probability = float(lomb_scargle.false_alarm_probability(best_power))
+        log.info(
+            "Period analysis: best period %.6f d (FAP %.3g) from %d points; %d candidate period(s)",
+            1.0 / best_frequency, false_alarm_probability, len(times_arr), len(candidates),
+        )
+        return cls(
+            frequency=frequency,
+            power=power,
+            period=1.0 / best_frequency,
+            false_alarm_probability=false_alarm_probability,
+            candidates=candidates,
+            window_power=window_power,
+        )
 
-    if include_extras:
-        candidates = _candidates(lomb_scargle, best_frequency, best_power, false_alarm_probability)
-        window_power = _window_function(times_arr, frequency)
-    else:
-        candidates = []
-        window_power = np.empty(0)
+    @classmethod
+    def from_light_curve_rows(
+        cls,
+        light_curve_rows: Sequence[Any],
+        *,
+        minimum_points: int = MINIMUM_PERIOD_POINTS,
+    ) -> "PeriodAnalysis | None":
+        """
+            None when fewer than minimum_points frames were measurable, so the caller can say so
+            rather than report a meaningless period.
+        """
+        times: list[float] = []
+        magnitudes: list[float] = []
+        magnitude_errors: list[float] = []
+        for row in light_curve_rows:
+            magnitude = row.target_calibrated_apparent_magnitude
+            magnitude_error = row.target_calibrated_apparent_magnitude_uncertainty
+            if not (math.isfinite(magnitude) and math.isfinite(magnitude_error) and magnitude_error > 0.0):
+                continue
+            times.append(row.date_obs.timestamp() / 86400.0)
+            magnitudes.append(magnitude)
+            magnitude_errors.append(magnitude_error)
 
-    log.info(
-        "Period analysis: best period %.6f d (FAP %.3g) from %d points; %d candidate period(s)",
-        period, false_alarm_probability, len(times_arr), len(candidates),
-    )
-    return PeriodAnalysis(
-        frequency=frequency,
-        power=power,
-        period=period,
-        false_alarm_probability=false_alarm_probability,
-        candidates=candidates,
-        window_power=window_power,
-    )
-
-
-def period_output_from_light_curve_rows(
-    light_curve_rows: Sequence[Any],
-    *,
-    minimum_points: int = MINIMUM_PERIOD_POINTS,
-) -> dict[str, Any] | None:
-    """
-        Builds the period-analysis output keys for a photometry operation, or None if too sparse.
-
-        Skips non-finite points (frames the pipeline could not measure) and returns None when fewer
-        than minimum_points remain, so the caller can say so rather than report a meaningless
-        period. Emits the VariableStar keys plus the additive candidates and window function.
-    """
-    times: list[float] = []
-    magnitudes: list[float] = []
-    magnitude_errors: list[float] = []
-    for row in light_curve_rows:
-        magnitude = row.target_calibrated_apparent_magnitude
-        magnitude_error = row.target_calibrated_apparent_magnitude_uncertainty
-        if not (math.isfinite(magnitude) and math.isfinite(magnitude_error) and magnitude_error > 0.0):
-            continue
-        times.append(row.date_obs.timestamp() / 86400.0)
-        magnitudes.append(magnitude)
-        magnitude_errors.append(magnitude_error)
-
-    if len(times) < minimum_points:
-        return None
-
-    analysis = analyze_period(times, magnitudes, magnitude_errors)
-    # 'period'/'fap'/'frequency'/'power' match the VariableStar operation's existing output keys, so
-    # one frontend periodogram-and-fold renderer drives both operations.
-    return {
-        'period': analysis.period,
-        'fap': analysis.false_alarm_probability,
-        'frequency': analysis.frequency,
-        'power': analysis.power,
-        'period_candidates': [asdict(candidate) for candidate in analysis.candidates],
-        'window_power': analysis.window_power,
-    }
+        if len(times) < minimum_points:
+            return None
+        return cls.from_light_curve(times, magnitudes, magnitude_errors)
 
 
 def _candidates(
@@ -144,7 +122,7 @@ def _candidates(
     best_power: float,
     best_false_alarm_probability: float,
 ) -> list[PeriodCandidate]:
-    """The strongest peak and its double, the latter being the rotation period of a two-maxima source."""
+    """The strongest peak and its double."""
     candidates = [
         PeriodCandidate(
             period=1.0 / best_frequency,
@@ -166,14 +144,3 @@ def _candidates(
         )
     )
     return candidates
-
-
-def _window_function(times: np.ndarray, frequency: np.ndarray) -> np.ndarray:
-    """
-        The observing window's own Lomb-Scargle power on the same frequency grid.
-
-        Computed from a constant signal at the real observation times, so its peaks are purely the
-        sampling cadence. Overlaid on the data periodogram it shows the user which peaks come from the
-        schedule rather than the sky.
-    """
-    return LombScargle(times, np.ones_like(times), fit_mean=False, center_data=False).power(frequency)

@@ -291,7 +291,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             'annulus_outer_radius': 19.10,
         }
 
-    @mock.patch('datalab.datalab_session.utils.diagnostic_images.save_files_to_s3')
+    @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.save_files_to_s3')
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve')
     @mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache')
     @mock.patch.object(AperturePhotometry, 'set_status')
@@ -423,7 +423,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         """A fixed target is one position with no time, so it stays the plain source input that
         light_curve and variable_star also take. Any name the wizard resolved is echoed back."""
         input_data = self.valid_input_data()
-        input_data['source'] = {'ra': 10.0, 'dec': 20.0, 'name': 'NGC 7331'}
+        input_data['target_positions'] = [{'ra': 10.0, 'dec': 20.0, 'name': 'NGC 7331'}]
 
         with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
                 mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
@@ -471,20 +471,19 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         self.assertEqual(output['pipeline_diagnostics'], ['applied a 4.0 mmag error floor'])
         self.assertEqual(output['diagnostics'], {'fits_1.fits': ['fits_1.fits: 6 stars checked']})
 
-    def test_operate_requires_a_source(self):
+    def test_operate_requires_a_target_position(self):
         input_data = self.valid_input_data()
-        del input_data['source']
+        input_data.pop('source', None)
 
-        with self.assertRaisesRegex(ClientAlertException, 'requires a source'):
+        with self.assertRaises(ClientAlertException):
             AperturePhotometry(input_data).operate(None)
 
-    def test_wizard_advertises_a_plain_source_not_a_track(self):
-        """A fixed target does not move, so it must not be asked for as a track."""
+    def test_wizard_asks_for_one_untimed_target_position(self):
+        """All three operations take the same input type; a fixed target just needs one, with no time."""
         inputs = AperturePhotometry.wizard_description()['inputs']
-        self.assertIn('source', inputs)
-        self.assertNotIn('target_track', inputs)
-        self.assertEqual(inputs['source']['type'], Format.SOURCE)
-        self.assertTrue(inputs['source'].get('name_lookup'))
+        self.assertEqual(inputs['target_positions']['type'], Format.TARGET_POSITIONS)
+        self.assertEqual(inputs['target_positions']['minimum'], 1)
+        self.assertTrue(inputs['target_positions'].get('name_lookup'))
 
     def test_operate_emits_period_analysis_for_a_measured_light_curve(self):
         """A light curve with enough points gets Lomb-Scargle period keys in the output."""
@@ -505,7 +504,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
 
         with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
                 mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
-                mock.patch('datalab.datalab_session.utils.diagnostic_images.save_files_to_s3') as mock_save, \
+                mock.patch('datalab.datalab_session.data_operations.aperture_photometry.save_files_to_s3') as mock_save, \
                 mock.patch.object(AperturePhotometry, 'set_output') as mock_set_output, \
                 mock.patch.object(AperturePhotometry, 'set_operation_progress'), \
                 mock.patch.object(AperturePhotometry, 'set_message'), \

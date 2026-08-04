@@ -1,11 +1,4 @@
-"""
-Comparison-set calibration strategies for the aperture photometry light curve.
-
-Both place every frame on the catalog magnitude system via a per-frame, catalog-anchored zero point,
-the calibration that already lets the sidereal pipeline combine frames across sites, instruments and
-telescope classes. They differ only in the identity of the comparison ensemble: "shared" uses one
-ensemble present on every frame, "evolving" a per-frame ensemble tied together by a joint solve.
-"""
+"""Comparison-set calibration strategies for the aperture photometry light curve."""
 from __future__ import annotations
 
 import logging
@@ -25,19 +18,15 @@ from datalab.datalab_session.utils.comparison_stars import (
     select_comparison_stars,
 )
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
-from datalab.datalab_session.utils.light_curve_errors import LightCurveError
+from datalab.datalab_session.exceptions import LightCurveError
 
 if TYPE_CHECKING:  # avoid a runtime import cycle with aperture_light_curve
     from datalab.datalab_session.utils.aperture_light_curve import FrameContext, TargetMeasurement
 
-log = logging.getLogger()
-log.setLevel(logging.INFO)
+log = logging.getLogger(__name__)
 
-# A comparison candidate is established if its cross-matched cluster is detected in at least this
-# fraction of frames. Catalog detection near the limiting magnitude is noisy, and heterogeneous
-# multi-telescope sets rarely catalog the same star in *every* frame, so requiring presence in all
-# frames discards good stars and collapses the candidate pool. Only the shared ensemble can afford
-# it: an evolving one must keep sparsely-detected stars, since they are what carry a drifted field.
+# Requiring presence on every frame collapses the pool: catalog detection near the limiting
+# magnitude is noisy and multi-telescope sets rarely catalog the same star throughout.
 SHARED_FRAME_COVERAGE_FRACTION = 0.8
 # Evolving self-calibration solve controls.
 EVOLVING_SOLVE_ITERATIONS = 50
@@ -64,14 +53,7 @@ class FrameCalibration:
 
 @dataclass(frozen=True)
 class CalibrationInputs:
-    """
-        Everything a calibration strategy works from: the validated frames, the comparison-star
-        candidates and their per-frame measurements, the target's measurements, and the ensemble
-        size limits the user set.
-
-        One object because every strategy needs all of it, and the whole set is threaded unchanged
-        from the pipeline down to each strategy.
-    """
+    """What a calibration strategy works from, threaded unchanged from the pipeline."""
     frames: Sequence["FrameContext"]
     candidate_stars: Sequence[ComparisonStar]
     measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]]
@@ -87,13 +69,9 @@ class CalibrationInputs:
 @dataclass(frozen=True)
 class ComparisonMatrix:
     """
-        The sparse (star x frame) instrumental-magnitude matrix the evolving solve runs on, together
-        with what it needs to anchor and trim: each star's catalog magnitude, the target's own
-        brightness per frame, and the user's ensemble cap.
-
-        Sparse because a drifting field puts most stars outside most frames. An entry exists only
-        where a star was measured with positive counts, so `measured_on` is the membership test the
-        whole solve is written against.
+        The sparse (star x frame) instrumental-magnitude matrix the evolving solve runs on, with the
+        catalog magnitudes that anchor it and the target brightness that trims it. An entry exists
+        only where a star was measured with positive counts.
     """
     rows: Mapping[str, Mapping[str, tuple[float, ComparisonMeasurement]]]
     star_by_id: Mapping[str, ComparisonStar]
@@ -179,13 +157,8 @@ class CalibrationOutcome:
 
 class ComparisonStrategy(ABC):
     """
-        How the comparison ensemble is maintained across the series.
-
-        A strategy also states what it needs from the measurement pass, because that decision is
-        its own: an ensemble that must be present on every frame can pre-filter candidates by
-        coverage and abandon one the moment it fails, while an evolving ensemble must keep
-        sparsely-detected stars and re-try a star on every frame it might have re-entered. Those
-        two properties used to be string comparisons against the mode inside the pixel pipeline.
+        How the comparison ensemble is maintained across the series. A strategy also states what it
+        needs from the measurement pass, since that follows from how it uses the candidates.
     """
 
     # Fraction of frames a candidate must be catalogued on to enter the pool at all, and whether a
@@ -200,10 +173,7 @@ class ComparisonStrategy(ABC):
 
 @dataclass(frozen=True)
 class SharedEnsemble(ComparisonStrategy):
-    """
-        One ensemble present on every frame, calibrated by a per-frame catalog-anchored zero point.
-        The sidereal default, and correct for any field that barely drifts.
-    """
+    """One ensemble present on every frame: the sidereal default."""
 
     min_frame_coverage = SHARED_FRAME_COVERAGE_FRACTION
     drops_failed_candidates = True
@@ -215,9 +185,8 @@ class SharedEnsemble(ComparisonStrategy):
 @dataclass(frozen=True)
 class EvolvingEnsemble(ComparisonStrategy):
     """
-        A per-frame ensemble whose zero points are solved jointly over the sparse star x frame
-        matrix and anchored to catalog magnitudes, so a field whose comparison stars turn over
-        completely still yields one coherent light curve.
+        A per-frame ensemble whose zero points are solved jointly over the sparse star x frame matrix
+        and anchored to catalog magnitudes, so a turned-over field still yields one light curve.
     """
 
     min_frame_coverage = 0.0
@@ -230,11 +199,9 @@ class EvolvingEnsemble(ComparisonStrategy):
 @dataclass(frozen=True)
 class SharedThenEvolving(ComparisonStrategy):
     """
-        Try the shared ensemble, fall back to the evolving one when no ensemble spans the series.
-
-        The fallback reuses the single pixel pass already done, so it costs no re-measurement. It
-        takes the evolving strategy's measurement requirements throughout, because whether the
-        fallback will be needed is not known until after the frames have been measured.
+        Try the shared ensemble, fall back to the evolving one when none spans the series. Takes the
+        evolving measurement requirements throughout, since the need is not known until after
+        measurement.
     """
 
     min_frame_coverage = 0.0

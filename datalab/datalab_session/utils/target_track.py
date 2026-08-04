@@ -8,42 +8,65 @@ import numpy as np
 from datalab.datalab_session.utils.geometry import angular_distance_arcsec, unit_vectors
 
 
-log = logging.getLogger()
-log.setLevel(logging.INFO)
+log = logging.getLogger(__name__)
 
 
 MINIMUM_TRACK_SAMPLES = 2
-# A user-supplied track is fitted with a polynomial of degree min(distinct_sample_times - 1, this). Two
-# samples give a straight line, three or more a quadratic. Higher degrees are deliberately not offered:
-# extra samples sharpen the quadratic by least squares instead of raising the degree, which would let
-# the fit oscillate between samples and wander off the object in the gaps.
+# Two samples give a line, three or more a quadratic. Higher degrees would oscillate between samples.
 MAX_TRACK_FIT_ORDER = 2
-# Apparent tracks curve, so a straight line drifts off the object as the arc lengthens. Measured
-# against the JPL Horizons ephemeris for a main-belt asteroid (216 Kleopatra, 0.55 arcsec/min), the
-# worst-case deviation of a two-sample line is 0.4" over 12 h, 1.1" at 24 h and 4.4" at 48 h -- by two
-# days comparable to the whole aperture radius. A three-sample quadratic holds to ~0.5" out to four
-# days. Past this span with only two samples we emit a diagnostic recommending a third. Faster movers
-# (near-Earth objects) curve harder and go bad sooner, so this is guidance, not a guarantee.
+# Beyond this arc a two-sample line drifts off the object: measured against JPL Horizons for 216
+# Kleopatra, 0.4" at 12 h, 1.1" at 24 h, 4.4" at 48 h. Faster movers curve sooner.
 LINEAR_TRACK_MAX_SPAN_HOURS = 12.0
-
-SAMPLE_MJD_KEY = "mjd"
-SAMPLE_RA_KEY = "ra"
-SAMPLE_DEC_KEY = "dec"
-
 
 @dataclass(frozen=True)
 class TrackSample:
-    """
-        One user-supplied sample of the moving target: where it was, and when.
-
-        mjd is the MJD (UTC) of the *exposure midpoint* of the frame the user marked it on, which is
-        the position the object's trail is centred on. Callers sending exposure start times instead
-        bias every predicted position by (exposure_time / 2) x apparent_rate -- sub-arcsecond for
-        short exposures on a slow mover, but several arcseconds for long exposures on a fast one.
-    """
+    """One position of the target, at the MJD (UTC) of the exposure midpoint it was marked on."""
     mjd: float
     ra_deg: float
     dec_deg: float
+
+    @classmethod
+    def from_input(
+        cls,
+        raw_samples: Any,
+        *,
+        minimum: int = MINIMUM_TRACK_SAMPLES,
+        require_mjd: bool = True,
+    ) -> tuple["TrackSample", ...]:
+        """
+            Parses submitted {mjd, ra, dec} positions into samples, sorted by time. require_mjd=False
+            accepts an untimed position, for a fixed target, and records NaN.
+        """
+        if not isinstance(raw_samples, Sequence) or isinstance(raw_samples, (str, bytes)):
+            raise ValueError("Target positions must be a list of {ra, dec} entries.")
+        if len(raw_samples) < minimum:
+            raise ValueError(
+                f"A target needs at least {minimum} position(s), got {len(raw_samples)}."
+            )
+
+        samples: list[TrackSample] = []
+        for index, raw_sample in enumerate(raw_samples):
+            if not isinstance(raw_sample, Mapping):
+                raise ValueError(f"Target position {index} must be a mapping with ra/dec.")
+            try:
+                mjd = float(raw_sample["mjd"]) if require_mjd or "mjd" in raw_sample else math.nan
+                ra_deg = float(raw_sample["ra"])
+                dec_deg = float(raw_sample["dec"])
+            except KeyError as exc:
+                raise ValueError(f"Target position {index} is missing {exc.args[0]!r}.") from exc
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Target position {index} has a non-numeric mjd/ra/dec.") from exc
+            if (require_mjd and not math.isfinite(mjd)) or not (math.isfinite(ra_deg) and math.isfinite(dec_deg)):
+                raise ValueError(f"Target position {index} has non-finite values.")
+            if not -90.0 <= dec_deg <= 90.0:
+                raise ValueError(f"Target position {index} has dec {dec_deg} outside [-90, 90].")
+            samples.append(cls(mjd=mjd, ra_deg=ra_deg, dec_deg=dec_deg))
+
+        # Untimed samples sort last, keeping submitted order: comparing NaN would leave it undefined.
+        samples.sort(key=lambda sample: (math.isnan(sample.mjd), 0.0 if math.isnan(sample.mjd) else sample.mjd))
+        if require_mjd and len({sample.mjd for sample in samples}) < len(samples):
+            raise ValueError("Each target position must be at a distinct time.")
+        return tuple(samples)
 
 
 # eq=False because the coefficient and basis fields are numpy arrays: the generated __eq__ would
@@ -52,12 +75,9 @@ class TrackSample:
 @dataclass(frozen=True, eq=False)
 class TargetTrack:
     """
-        A polynomial track through user-supplied sample positions, evaluated per frame.
-
-        Fitted in a gnomonic tangent plane about the mean sample direction rather than directly in
-        RA/Dec, which removes the RA wrap at 0h, the cos(dec) compression of RA and the pole
-        degeneracy in one step. Over the hours-to-days arcs this targets the plane is nearly flat,
-        so a low-order polynomial in the projected coordinates tracks the real motion closely.
+        A polynomial track through the sample positions, fitted in a gnomonic tangent plane about
+        their mean direction: that removes the RA wrap at 0h, the cos(dec) compression and the pole
+        degeneracy in one step.
     """
     samples: tuple[TrackSample, ...]
     order: int
@@ -72,7 +92,7 @@ class TargetTrack:
 
     @property
     def sample_mjd_span(self) -> tuple[float, float]:
-        """Earliest and latest sample time; frames outside this range are extrapolated, not interpolated."""
+        """Earliest and latest sample time."""
         times = [sample.mjd for sample in self.samples]
         return min(times), max(times)
 
@@ -82,68 +102,22 @@ class TargetTrack:
         return (last - first) * 24.0
 
     def position_at(self, mjd: float) -> tuple[float, float]:
-        """
-            Target RA/Dec (degrees) at an arbitrary time, by evaluating the fitted polynomial in the
-            tangent plane and projecting back onto the sky.
-        """
+        """Target RA/Dec (degrees) at an arbitrary time."""
         elapsed = float(mjd) - self.reference_mjd
         xi = float(np.polyval(self.xi_coefficients, elapsed))
         eta = float(np.polyval(self.eta_coefficients, elapsed))
         return _deproject(self.radial_axis, self.east_axis, self.north_axis, xi, eta)
 
     def covers(self, mjd: float) -> bool:
-        """Whether a time falls inside the sample span (an interpolation rather than an extrapolation)."""
+        """Whether a time is inside the sample span, so interpolated rather than extrapolated."""
         first, last = self.sample_mjd_span
         return first <= float(mjd) <= last
 
 
-def track_samples_from_input(raw_samples: Any) -> tuple[TrackSample, ...]:
-    """
-        Parses the user-supplied track samples into TrackSample records, sorted by time.
-
-        Each sample is a mapping with "mjd", "ra" and "dec": decimal degrees, and MJD (UTC) of the
-        exposure midpoint. Deliberately carries no frame identity, so samples need not come from the
-        submitted frames at all. Raises ValueError; callers wrap it in their own error type.
-    """
-    if not isinstance(raw_samples, Sequence) or isinstance(raw_samples, (str, bytes)):
-        raise ValueError("Track samples must be a list of {mjd, ra, dec} entries.")
-    if len(raw_samples) < MINIMUM_TRACK_SAMPLES:
-        raise ValueError(
-            f"A target track needs at least {MINIMUM_TRACK_SAMPLES} sample positions, got {len(raw_samples)}."
-        )
-
-    samples: list[TrackSample] = []
-    for index, raw_sample in enumerate(raw_samples):
-        if not isinstance(raw_sample, Mapping):
-            raise ValueError(f"Track sample {index} must be a mapping with {SAMPLE_MJD_KEY}/{SAMPLE_RA_KEY}/{SAMPLE_DEC_KEY}.")
-        try:
-            mjd = float(raw_sample[SAMPLE_MJD_KEY])
-            ra_deg = float(raw_sample[SAMPLE_RA_KEY])
-            dec_deg = float(raw_sample[SAMPLE_DEC_KEY])
-        except KeyError as exc:
-            raise ValueError(f"Track sample {index} is missing {exc.args[0]!r}.") from exc
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Track sample {index} has a non-numeric {SAMPLE_MJD_KEY}/{SAMPLE_RA_KEY}/{SAMPLE_DEC_KEY}.") from exc
-        if not (math.isfinite(mjd) and math.isfinite(ra_deg) and math.isfinite(dec_deg)):
-            raise ValueError(f"Track sample {index} has non-finite values.")
-        if not -90.0 <= dec_deg <= 90.0:
-            raise ValueError(f"Track sample {index} has dec {dec_deg} outside [-90, 90].")
-        samples.append(TrackSample(mjd=mjd, ra_deg=ra_deg, dec_deg=dec_deg))
-
-    samples.sort(key=lambda sample: sample.mjd)
-    if len({sample.mjd for sample in samples}) < MINIMUM_TRACK_SAMPLES:
-        raise ValueError("Track samples must be at two or more distinct times.")
-    return tuple(samples)
-
-
 def fit_target_track(samples: Sequence[TrackSample]) -> TargetTrack:
     """
-        Fits a track through the sample positions, for predicting where the target is on each frame.
-
-        The polynomial degree follows the number of *distinct* sample times: two give a line, three or
-        more a quadratic, capped at MAX_TRACK_FIT_ORDER. Over-determined fits are solved by least
-        squares, so extra samples reduce the influence of an imprecise click rather than forcing the
-        curve through every one of them.
+        Fits a track through the sample positions. Degree follows the number of distinct sample
+        times, capped at MAX_TRACK_FIT_ORDER; over-determined fits are solved by least squares.
     """
     if len(samples) < MINIMUM_TRACK_SAMPLES:
         raise ValueError(
@@ -158,9 +132,8 @@ def fit_target_track(samples: Sequence[TrackSample]) -> TargetTrack:
     directions = unit_vectors([sample.ra_deg for sample in ordered], [sample.dec_deg for sample in ordered])
     radial_axis, east_axis, north_axis = _tangent_basis(directions.mean(axis=0))
 
-    # Project each sample into the tangent plane. The denominator is the cosine of the angle from the
-    # plane's centre; samples more than 90 degrees away would project behind the observer, which for a
-    # short-arc track means the samples are not of the same object.
+    # Samples more than 90 degrees from the plane's centre project behind the observer, so they
+    # cannot be one short arc of the same object.
     along_radial = directions @ radial_axis
     if np.any(along_radial <= 0.0):
         raise ValueError("Track samples span more than 90 degrees on the sky; they cannot be one short arc.")
@@ -191,11 +164,7 @@ def fit_target_track(samples: Sequence[TrackSample]) -> TargetTrack:
 
 
 def track_rate_arcsec_per_minute(track: TargetTrack) -> float:
-    """
-        Mean apparent rate of motion along the fitted track, for diagnostics and trail-length
-        guidance (a target moving fast enough to streak within one exposure loses flux from a
-        circular aperture).
-    """
+    """Mean apparent rate of motion along the fitted track."""
     first, last = track.sample_mjd_span
     if last <= first:
         return 0.0
@@ -207,12 +176,9 @@ def track_rate_arcsec_per_minute(track: TargetTrack) -> float:
 
 def _tangent_basis(mean_direction: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-        Right-handed (radial, east, north) orthonormal basis at a direction on the sky.
-
-        East is the direction of increasing RA, taken perpendicular to both the pole and the line of
-        sight. Exactly at a celestial pole that construction is degenerate and any perpendicular pair
-        will do, so an arbitrary one is chosen -- the track is still fitted correctly, only the
-        labelling of the two in-plane axes is arbitrary there.
+        Right-handed (radial, east, north) orthonormal basis at a direction on the sky. At a pole the
+        construction is degenerate, so an arbitrary perpendicular pair is chosen; the fit is
+        unaffected, only the labelling of the in-plane axes.
     """
     radial_axis = mean_direction / np.linalg.norm(mean_direction)
     pole = np.array([0.0, 0.0, 1.0])

@@ -40,12 +40,9 @@ def too_close_to_edges(
 
 def minimum_neighbor_distances_arcsec(ra_deg: Sequence[float], dec_deg: Sequence[float]) -> np.ndarray:
     """
-        For each position, the angular distance to its nearest other position, in arcseconds.
-
-        One vectorised sweep per position rather than a Python loop over every pair. The problem is
-        quadratic either way, but the inner comparison against every other position becomes a single
-        numpy call. Deliberately not one N x N matrix: at the thousands of candidates a dense field
-        yields, that is hundreds of megabytes for a result of length N.
+        For each position, the angular distance to its nearest other position, in arcseconds. One
+        vectorised sweep per position; an N x N matrix would be hundreds of MB at a dense field's
+        candidate count.
     """
     ra = np.asarray(ra_deg, dtype=float)
     dec = np.asarray(dec_deg, dtype=float)
@@ -85,12 +82,7 @@ def angular_distances_arcsec(
 
 
 def unit_vectors(ra_deg: Any, dec_deg: Any) -> np.ndarray:
-    """
-        Cartesian unit vectors for one or many RA/Dec positions, shaped (..., 3).
-
-        Sky geometry is easiest as dot and cross products of these, so the track fit, the pairwise
-        separation matrix and the stationarity test all start here.
-    """
+    """Cartesian unit vectors for one or many RA/Dec positions, shaped (..., 3)."""
     ra = np.radians(ra_deg)
     dec = np.radians(dec_deg)
     return np.stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)], axis=-1)

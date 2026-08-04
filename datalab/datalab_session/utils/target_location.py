@@ -1,18 +1,4 @@
-"""
-Where the target is on each frame.
-
-Aperture photometry needs one RA/Dec per frame before it touches a pixel, and there are three ways
-to know it, decided by how the observation was taken rather than by anything the pipeline can infer:
-
-- the target does not move, so one position serves the whole series (sidereal);
-- the mount tracked the target, so each frame's header records where it was pointed;
-- the mount tracked the stars while the target moved through the field, so nothing recorded its
-  position and it has to be interpolated from positions a user marked, then looked for in the
-  frame's own source catalog.
-
-Each is a TargetLocator. The pipeline holds one and asks it for positions, so adding a fourth way
-(an ephemeris service, say) is a new class here rather than another branch in the pipeline.
-"""
+"""Where the target is on each frame: one TargetLocator per way of knowing."""
 from __future__ import annotations
 
 import logging
@@ -22,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
 from datalab.datalab_session.utils.fits_metadata import frame_midpoint_mjd, target_radec_from_header
-from datalab.datalab_session.utils.light_curve_errors import LightCurveError
+from datalab.datalab_session.exceptions import LightCurveError
 from datalab.datalab_session.utils.moving_target_search import (
     DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC,
     refine_positions_from_catalog,
@@ -38,32 +24,22 @@ from datalab.datalab_session.utils.target_track import (
 if TYPE_CHECKING:  # avoid a runtime import cycle with aperture_light_curve
     from datalab.datalab_session.utils.aperture_light_curve import FrameContext
 
-log = logging.getLogger()
-log.setLevel(logging.INFO)
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class TargetPositions:
-    """
-        The target's RA/Dec (degrees) on every frame, and what is worth saying about how they were
-        arrived at: which frames were extrapolated, whether a catalog search confirmed them, and so
-        on. A locator that simply knows the answer returns no diagnostics.
-    """
+    """The target's RA/Dec (degrees) per frame, with anything worth saying about how they were found."""
     by_frame: dict[str, tuple[float, float]]
     diagnostics: list[str] = field(default_factory=list)
 
 
 class TargetLocator(ABC):
-    """Knows where the target is on each frame. See the module docstring for the three kinds."""
-
     @abstractmethod
     def locate(self, frames: Sequence["FrameContext"]) -> TargetPositions:
         """
-            RA/Dec per frame, keyed by fits_path, for every frame given.
-
-            Raises LightCurveError when the target cannot be located at all, which is fatal: there is
-            nothing to measure. A locator that is merely unsure returns its best positions and says
-            so in diagnostics, because a faint target that was not detected is still presumed present.
+            RA/Dec per frame, keyed by fits_path. Raises LightCurveError only when the target cannot
+            be located at all; a locator that is merely unsure returns its best positions and says so.
         """
 
 
@@ -82,11 +58,8 @@ class FixedPosition(TargetLocator):
 @dataclass(frozen=True)
 class EphemerisHeaders(TargetLocator):
     """
-        A moving target whose frames were tracked non-sidereally, so the mount was following it and
-        each frame's ephemeris keywords (CAT-RA/CAT-DEC) record where it was.
-
-        A frame missing those keywords is fatal rather than skippable: without them there is no way
-        to know where the object was, and guessing from neighbouring frames would invent an ephemeris.
+        A target whose mount tracked it, so each frame's CAT-RA/CAT-DEC record where it was. A frame
+        missing them is fatal: interpolating from neighbours would invent an ephemeris.
     """
 
     def locate(self, frames: Sequence["FrameContext"]) -> TargetPositions:
@@ -98,12 +71,18 @@ class EphemerisHeaders(TargetLocator):
                 raise LightCurveError(
                     f"Cannot read moving-target position for {frame.fits_path}: {exc}"
                 ) from exc
-            log.info(
-                "Aperture Photometry moving-target position: "
-                f"frame={frame.fits_path}, ra={positions[frame.fits_path][0]:.8f}, "
-                f"dec={positions[frame.fits_path][1]:.8f}"
+
+        diagnostics: list[str] = []
+        # CAT-RA/CAT-DEC carry the requested target position on every frame, not just non-sidereal
+        # ones, and stay fixed when the mount tracked the stars. Measuring at a fixed position is
+        # then silently wrong for anything that moves, so say so rather than produce a light curve.
+        if len(positions) > 1 and len(set(positions.values())) == 1:
+            diagnostics.append(
+                f"CAT-RA/CAT-DEC are identical on all {len(positions)} frames, so the mount was not "
+                "tracking a moving target. Measured at that one position; if the object moves, use "
+                "Moving Target Aperture Photometry and mark it on two or more frames instead."
             )
-        return TargetPositions(by_frame=positions)
+        return TargetPositions(by_frame=positions, diagnostics=diagnostics)
 
 
 @dataclass(frozen=True)
@@ -111,28 +90,16 @@ class FittedTrack(TargetLocator):
     """
         A moving target on sidereally-tracked frames, where nothing recorded its position.
 
-        A polynomial is fitted through the positions a user marked and evaluated at each frame's
-        exposure midpoint, not its start, because the midpoint is what the target's trail is centred
-        on. That prediction is then used as a search position: the frame's own source catalog is
-        checked for a detection near it that is not a field star, and the track refitted through the
-        detections that move consistently. Where that succeeds the aperture lands on a real
-        detection; where it does not the interpolated position stands, so a faint or uncatalogued
-        target still yields a measurement.
-
-        Frames outside the sample span are extrapolated rather than dropped, since the fit remains
-        the best information available, but extrapolation and a long arc carried by only two samples
-        are both surfaced: they are the two ways a predicted position quietly drifts off the object.
+        A track fitted through the positions a user marked predicts each frame's, and the frame's own
+        catalog is then searched near that prediction. Where the search fails the prediction stands,
+        so a faint or uncatalogued target still yields a measurement. Extrapolated frames and a long
+        arc carried by two samples are surfaced as diagnostics.
     """
 
     samples: tuple[TrackSample, ...]
     search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC
 
     def locate(self, frames: Sequence["FrameContext"]) -> TargetPositions:
-        if not self.samples:
-            raise LightCurveError(
-                "Locating a moving target on sidereally-tracked frames needs the positions it was "
-                "identified at on two or more frames."
-            )
         try:
             track = fit_target_track(self.samples)
         except ValueError as exc:

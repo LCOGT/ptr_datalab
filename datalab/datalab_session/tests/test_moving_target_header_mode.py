@@ -413,6 +413,21 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
                 self.assertTrue(0.0 <= measurement.x < width)
                 self.assertTrue(0.0 <= measurement.y < height)
 
+    def test_a_static_ephemeris_is_flagged_rather_than_measured_silently(self) -> None:
+        """
+            CAT-RA/CAT-DEC sit on sidereal frames too, unchanged across the series. Measuring at that
+            one position is silently wrong for anything that moves, so it has to be surfaced.
+        """
+        frames, _ = build_non_sidereal_frame_set(frame_count=5, ra_drift_arcsec_per_frame=0.0)
+        for frame in frames.values():
+            frame["header"]["CAT-RA"] = "06:40:00.000"
+            frame["header"]["CAT-DEC"] = "+20:00:00.00"
+        result = generate_light_curve(
+            self.write_frames(frames), aperture_radius=4.0, annulus_inner_radius=6.0,
+            annulus_outer_radius=9.0, locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
+        )
+        self.assertTrue(any("not tracking a moving target" in d for d in result.pipeline_diagnostics))
+
     def test_moving_target_excluded_from_comparisons(self) -> None:
         frames, _ = build_non_sidereal_frame_set(
             frame_count=6, ra_drift_arcsec_per_frame=8.0, include_target_in_catalog=True,

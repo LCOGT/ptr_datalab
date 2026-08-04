@@ -31,7 +31,7 @@ from datalab.datalab_session.utils.fits_metadata import (
     optional_float,
     world_to_pixel,
 )
-from datalab.datalab_session.utils.light_curve_errors import LightCurveError
+from datalab.datalab_session.exceptions import LightCurveError
 from datalab.datalab_session.utils.target_location import TargetLocator
 from datalab.datalab_session.utils.geometry import (
     angular_distance_arcsec,
@@ -51,8 +51,7 @@ SOURCE_CATALOG_RA_KEY = "ra"
 SOURCE_CATALOG_DEC_KEY = "dec"
 SOURCE_CATALOG_MAG_KEY = "mag"
 SOURCE_CATALOG_FLUX_KEY = "flux"
-# The only CAT columns the pipeline reads. CAT tables carry many more columns, and whole rows kept
-# per frame for the full run are a measurable share of operation memory on dense fields.
+# The only CAT columns the pipeline reads; keeping whole rows per frame is a real memory cost.
 SOURCE_CATALOG_COLUMNS = (
     "id",
     "name",
@@ -63,9 +62,7 @@ SOURCE_CATALOG_COLUMNS = (
 )
 EDGE_MARGIN_PX = 2.0
 TARGET_PROXIMITY_FACTOR = 2.0
-# A target recenter is accepted only if the centroid moves less than this many pixels from the
-# WCS-predicted position. Larger shifts (or a failed centroid) mean the centroid was pulled onto
-# a neighbour or host-galaxy structure.
+# A larger recenter than this means the centroid was pulled onto a neighbour or host galaxy.
 TARGET_RECENTER_MAX_SHIFT_PX = 6.0
 DEFAULT_CROSSMATCH_ARCSEC = 1.0
 DEFAULT_APERTURE_RADIUS = 7.64
@@ -73,21 +70,14 @@ DEFAULT_ANNULUS_INNER_RADIUS = 12.73
 DEFAULT_ANNULUS_OUTER_RADIUS = 19.10
 DEFAULT_MIN_COMPARISONS = 5
 DEFAULT_MAX_COMPARISONS = 10
-# Every candidate is measured on every frame it lands on, so cost runs as candidates x frames.
-# Bound that product rather than the pool: long series get a smaller pool, short ones are untouched.
-# Sized to clear an ordinary deep field, since trimming changes which stars are on offer.
+# Cost runs as candidates x frames, so bound that product. Sized to clear an ordinary deep field,
+# since trimming changes which stars are on offer.
 MAX_CANDIDATE_MEASUREMENTS = 200_000
 MIN_COMPARISON_CANDIDATES = 50
 class Phase(Enum):
     """
-        The phases of an aperture photometry run, in execution order.
-
-        The single declaration of this vocabulary, shared with the operations layer, which maps each
-        phase to a progress band. Order is part of the contract: a phase fills the band running from
-        the previous phase's end to its own. DOWNLOADING and SAVE bracket the pipeline and are
-        reported by the operation; the pipeline itself reports the five in between.
-
-        Deliberately Enum rather than StrEnum: CI runs Python 3.10, where StrEnum does not exist.
+        The phases of a run, in execution order, shared with the operations layer that maps each to a
+        progress band. DOWNLOADING and SAVE are reported by the operation, the rest by the pipeline.
     """
     DOWNLOADING = "downloading"
     VALIDATE = "validate"
@@ -106,11 +96,8 @@ ProgressCallback = Callable[[Phase, float], None]
 @dataclass(frozen=True)
 class FrameContext:
     """
-        Validated FITS frame metadata needed by the aperture photometry pipeline.
-
-        Deliberately holds no pixel data: full-resolution images are streamed through the pixel
-        pass one frame at a time (see _measure_frame_pixels), so peak memory stays flat no matter
-        how many frames are submitted.
+        Validated FITS frame metadata. Holds no pixel data: images are streamed one frame at a time,
+        so peak memory does not grow with the number of frames.
     """
     fits_path: str
     date_obs: datetime
@@ -121,14 +108,14 @@ class FrameContext:
 
     @classmethod
     def from_fits(cls, fits_path: str) -> "FrameContext":
-        """
-            Reads and validates one frame's metadata.
-
-            Reads only the SCI header and the CAT table, never SCI pixel data, so validation memory
-            and time stay flat regardless of frame count or sensor size. Raises LightCurveError if
-            the frame cannot be used.
-        """
+        """Reads the SCI header and CAT table only. Raises LightCurveError if the frame is unusable."""
         with fits.open(fits_path) as hdul:
+            for extension in ("SCI", "CAT"):
+                if extension not in hdul:
+                    raise LightCurveError(
+                        f"{os.path.basename(fits_path)} has no {extension} extension. Aperture "
+                        "photometry needs reduced frames carrying an image and a source catalog."
+                    )
             header = dict(hdul["SCI"].header)
             second_hdu_rows = tuple(_cat_rows(hdul["CAT"].data))
 
@@ -169,12 +156,8 @@ class FrameContext:
 @dataclass
 class CandidateCluster:
     """
-        One field star, as detected across frames: the cross-matched group of catalog rows that all
-        sit at the same sky position.
-
-        Mutable by design, unlike the frozen records elsewhere: cross-matching grows a cluster row by
-        row as it walks the frames. `ra_deg`/`dec_deg` stay the position of the first detection and
-        are what later rows are matched against; the emitted candidate averages the whole group.
+        One field star's detections across frames. Mutable because cross-matching grows it row by
+        row; ra_deg/dec_deg stay the first detection's position, which later rows are matched against.
     """
     ra_deg: float
     dec_deg: float
@@ -509,11 +492,8 @@ def _validated_frame_contexts(
     on_frame: Callable[[int, int], None] | None = None,
 ) -> list[FrameContext]:
     """
-        Reads every input path into a validated FrameContext, in observation order.
-
-        Frames that fail validation are ignored with a warning rather than aborting the run: one bad
-        file out of a submitted series should cost that file, not the light curve. on_frame, if
-        given, is called as on_frame(index, total) after each path, including rejected ones.
+        Every input path as a validated FrameContext, in observation order. A frame that fails
+        validation is skipped with a warning: one bad file should cost that file, not the run.
     """
     frames: list[FrameContext] = []
     for path_index, fits_path in enumerate(fits_paths, start=1):
@@ -529,7 +509,9 @@ def _validated_frame_contexts(
             on_frame(path_index, len(fits_paths))
 
     if not frames:
-        raise LightCurveError("Aperture photometry requires at least 1 valid input file.")
+        raise LightCurveError(
+            "Aperture photometry requires at least 1 valid input file with SCI and CAT extensions."
+        )
 
     frames = sorted(frames, key=lambda frame: frame.date_obs)
     log.info(
@@ -615,12 +597,8 @@ def _candidates_in_field(
     candidate_stars: Sequence[ComparisonStar],
 ) -> np.ndarray:
     """
-        Which candidates fall on this frame with room for their background annulus, by the same edge
-        criterion _build_field_star_catalog applies when the candidates are first collected.
-
-        A drifted non-sidereal field leaves most of the catalog off any given frame, and the evolving
-        strategy never drops a candidate permanently, so without this every candidate is centroided
-        on every frame. Positions that do not project return NaN, which fails every comparison below.
+        Which candidates fall on this frame with room for their annulus. A drifted field leaves most
+        of the catalog off any given frame, and the evolving strategy never drops one permanently.
     """
     if not candidate_stars:
         return np.zeros(0, dtype=bool)
@@ -640,11 +618,8 @@ def _within_frame_bounds(
     height: int,
 ) -> np.ndarray:
     """
-        Which positions sit on the frame with room for margin on every side.
-
-        The one definition of the frame-edge rule: the catalog builder rejects by its negation, and
-        the measurement pass skips by it directly. Positions that do not project are NaN, which
-        fails every comparison.
+        The one definition of the frame-edge rule: the catalog builder rejects by its negation, the
+        measurement pass uses it directly. Positions that do not project are NaN, which fails it.
     """
     return (
         (x_values - margin >= EDGE_MARGIN_PX)
@@ -730,15 +705,8 @@ def _measure_target(
     target_dec_deg: float,
 ) -> TargetMeasurement:
     """
-        Converts the target RA and Dec to pixel coordinates, centroids the source, and measures
-        aperture photometry. image is the frame's pixel data, passed separately from the metadata so
-        the streaming pixel pass controls how long it stays in memory. geometry carries the frame's
-        cached WCS and pixel-space aperture radii.
-
-        The target is never allowed to drop a frame: if centroiding fails or the refinement drifts
-        too far from the WCS position, it measures at the authoritative WCS position instead.
-
-        Returns the target measurement for a single frame.
+        The target is never allowed to drop a frame: if centroiding fails or drifts more than
+        TARGET_RECENTER_MAX_SHIFT_PX from the WCS position, it measures at the WCS position instead.
     """
     aperture_radius_px = geometry.aperture_radius_px
     annulus_inner_radius_px = geometry.annulus_inner_radius_px
@@ -831,13 +799,9 @@ def _build_field_star_catalog(
     on_frame: Callable[[int, int], None] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """
-        Builds comp star candidates from the source catalogs across valid frames.
-
-        Returns candidates detected in at least min_coverage_fraction of the frames that are not too
-        close to the target or the edge of the image. The target position is per frame (it moves for
-        a non-sidereal target), so the target-proximity rejection tracks the moving target and never
-        lets its own catalog entry become a comparison star. on_frame, if given, is called as
-        on_frame(index, total) after each frame's rows are cross-matched.
+        Comparison-star candidates cross-matched across frames, excluding those too close to the
+        target or the frame edge. The target position is per frame, so its own catalog entry never
+        becomes a comparison star even as it moves.
     """
     clusters: list[CandidateCluster] = []
     target_pixels = {
