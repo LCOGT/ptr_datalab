@@ -708,6 +708,8 @@ class TestAperturePhotometry(unittest.TestCase):
             measurements=[],
             target_measurement=target_full_res,
             aperture_radius=4.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=9.0,
         )
 
         rgb = np.asarray(Image.open(BytesIO(jpeg_bytes)).convert("RGB"))
@@ -725,6 +727,62 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertGreater(len(marker), 0)
         self.assertAlmostEqual(float(np.mean(orange[:, 1])), float(np.mean(marker[:, 1])), delta=5.0)
         self.assertAlmostEqual(float(np.mean(orange[:, 0])), float(np.mean(marker[:, 0])), delta=5.0)
+
+    def test_overlay_draws_target_aperture_and_annulus_at_input_radii(self) -> None:
+        from datalab.datalab_session.utils.photometry_diagnostics import candidate_overlay_jpeg_bytes
+
+        height, width = 600, 600
+        header = {
+            "CTYPE1": "RA---TAN",
+            "CTYPE2": "DEC--TAN",
+            "CUNIT1": "deg",
+            "CUNIT2": "deg",
+            "CRVAL1": 100.0,
+            "CRVAL2": 20.0,
+            "CRPIX1": 0.0,
+            "CRPIX2": 0.0,
+            "CD1_1": TEST_DEG_PER_PIXEL,
+            "CD1_2": 0.0,
+            "CD2_1": 0.0,
+            "CD2_2": TEST_DEG_PER_PIXEL,
+        }
+        frame = SimpleNamespace(fits_path="target.fits", header=header, width=width, height=height)
+        image_data = np.full((height, width), 100.0, dtype=np.float32)
+        # 1 arcsec per pixel, so the arcsecond inputs below are also the full-resolution radii.
+        aperture_radius, annulus_inner_radius, annulus_outer_radius = 4.0, 6.0, 9.0
+
+        jpeg_bytes = candidate_overlay_jpeg_bytes(
+            frame=frame,
+            image=image_data,
+            stars=[],
+            measurements=[],
+            target_measurement=SimpleNamespace(x=300.0, y=300.0),
+            aperture_radius=aperture_radius,
+            annulus_inner_radius=annulus_inner_radius,
+            annulus_outer_radius=annulus_outer_radius,
+        )
+
+        rgb = np.asarray(Image.open(BytesIO(jpeg_bytes)).convert("RGB"))
+        out_height, out_width = rgb.shape[:2]
+        orange = np.argwhere(
+            (rgb[:, :, 0] > 180) &
+            (rgb[:, :, 1] > 80) &
+            (rgb[:, :, 1] < 170) &
+            (rgb[:, :, 2] < 90)
+        )
+        self.assertGreater(len(orange), 0)
+        # The single target sits at the crop center, so distance from the image center is the
+        # drawn radius. Only the crop's resample scale converts full-resolution radii to output
+        # pixels, so all three circles must land on the operation's own aperture geometry.
+        center_y, center_x = (out_height - 1) / 2.0, (out_width - 1) / 2.0
+        distances = np.hypot(orange[:, 0] - center_y, orange[:, 1] - center_x)
+        # Crop is a square of side 2 * pad + 1 around the target (pad = 2 * max(aperture_px, 14)).
+        scale = out_width / (2.0 * 2.0 * 14.0 + 1.0)
+        for input_radius in (aperture_radius, annulus_inner_radius, annulus_outer_radius):
+            expected = input_radius * scale
+            on_ring = np.abs(distances - expected) <= 6.0
+            self.assertGreater(int(np.count_nonzero(on_ring)), 100, f"no ring at {input_radius} arcsec")
+        self.assertLessEqual(float(np.max(distances)), annulus_outer_radius * scale + 6.0)
 
     def test_default_fits_dependencies_read_sci_header_and_cat_rows(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set(frame_count=1)
