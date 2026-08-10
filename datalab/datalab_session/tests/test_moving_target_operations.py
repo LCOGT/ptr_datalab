@@ -98,6 +98,17 @@ class TestMovingTargetOperations(unittest.TestCase):
         with self.assertRaises(ClientAlertException):
             operation.operate(submitter=None)
 
+    def test_track_operation_rejects_a_single_sample(self) -> None:
+        operation = MovingTargetAperturePhotometry(
+            {
+                "input_files": [],
+                "aperture_radius": 5.0,
+                "target_positions": [{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}],
+            }
+        )
+        with self.assertRaises(ClientAlertException):
+            operation.operate(submitter=None)
+
     def test_track_operation_rejects_malformed_samples(self) -> None:
         operation = MovingTargetAperturePhotometry(
             {"input_files": [], "aperture_radius": 5.0, "target_positions": [{"mjd": 1.0, "ra": 2.0}]}

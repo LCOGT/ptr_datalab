@@ -6,7 +6,7 @@ constructs. Three rather than one with a mode, because each advertises different
 """
 import logging
 from abc import ABC
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 from django.contrib.auth.models import User
@@ -115,8 +115,51 @@ def shared_wizard_inputs() -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class ApertureParameters:
+    """The aperture geometry and comparison-count limits, as submitted."""
+    aperture_radius: float
+    annulus_inner_radius: float
+    annulus_outer_radius: float
+    min_comparisons: int
+    max_comparisons: int
+
+
 class AperturePhotometryOperation(BaseDataOperation, ABC):
     """Shared implementation for the aperture photometry operations."""
+
+    def _validate_target_positions(self, *, minimum: int, require_mjd: bool) -> tuple[TrackSample, ...]:
+        """The submitted target positions, parsed and sorted by time."""
+        raw = self.input_data.get('target_positions')
+        if raw is None:
+            # What the wizard sent before the target_positions input existed.
+            raw = self.input_data.get('source')
+        if raw is not None:
+            self.input_data['target_positions'] = [raw] if isinstance(raw, Mapping) else raw
+
+        try:
+            positions = self._validate_inputs('target_positions', minimum)
+            return TrackSample.from_input(positions, require_mjd=require_mjd)
+        except (TypeError, ValueError) as exc:
+            raise ClientAlertException(f'Operation {self.name()}: {exc}') from exc
+
+    def _submitted_target_name(self) -> str | None:
+        """Any name the wizard's lookup resolved, so the output can echo it back with the position."""
+        first = self.input_data['target_positions'][0]
+        return first.get('name') if isinstance(first, Mapping) else None
+
+    def _validate_aperture_parameters(self) -> ApertureParameters:
+        """The aperture radii and comparison-count limits, coerced from the submitted input."""
+        try:
+            return ApertureParameters(
+                aperture_radius=float(self.input_data['aperture_radius']),
+                annulus_inner_radius=float(self.input_data['annulus_inner_radius']),
+                annulus_outer_radius=float(self.input_data['annulus_outer_radius']),
+                min_comparisons=int(self.input_data.get('min_comparisons', DEFAULT_MIN_COMPARISONS)),
+                max_comparisons=int(self.input_data.get('max_comparisons', DEFAULT_MAX_COMPARISONS)),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ClientAlertException(f'Operation {self.name()} received invalid input.') from exc
 
     def _run_photometry(
         self,
@@ -129,13 +172,9 @@ class AperturePhotometryOperation(BaseDataOperation, ABC):
         """Runs the pipeline and publishes the output. output_data adds operation-specific keys."""
         input_files = self._validate_inputs('input_files', MINIMUM_NUMBER_OF_INPUTS)
         log.info(f"{self.name()} operation on {', '.join([image['basename'] for image in input_files])}")
+        parameters = self._validate_aperture_parameters()
 
         try:
-            aperture_radius = float(self.input_data['aperture_radius'])
-            annulus_inner_radius = float(self.input_data['annulus_inner_radius'])
-            annulus_outer_radius = float(self.input_data['annulus_outer_radius'])
-            min_comparisons = int(self.input_data.get('min_comparisons', DEFAULT_MIN_COMPARISONS))
-            max_comparisons = int(self.input_data.get('max_comparisons', DEFAULT_MAX_COMPARISONS))
             # Pixel data is loaded and released frame by frame inside generate_light_curve, so only
             # the paths are resolved here.
             file_cache = FileCache()
@@ -148,11 +187,11 @@ class AperturePhotometryOperation(BaseDataOperation, ABC):
                 fits_paths=fits_paths,
                 locator=locator,
                 comparison=comparison,
-                aperture_radius=aperture_radius,
-                annulus_inner_radius=annulus_inner_radius,
-                annulus_outer_radius=annulus_outer_radius,
-                min_comparisons=min_comparisons,
-                max_comparisons=max_comparisons,
+                aperture_radius=parameters.aperture_radius,
+                annulus_inner_radius=parameters.annulus_inner_radius,
+                annulus_outer_radius=parameters.annulus_outer_radius,
+                min_comparisons=parameters.min_comparisons,
+                max_comparisons=parameters.max_comparisons,
                 progress_callback=self._report_progress,
             )
         except LightCurveError as exc:
@@ -178,9 +217,9 @@ class AperturePhotometryOperation(BaseDataOperation, ABC):
         output = {
             'output_data': [
                 {
-                    'aperture_radius': aperture_radius,
-                    'annulus_inner_radius': annulus_inner_radius,
-                    'annulus_outer_radius': annulus_outer_radius,
+                    'aperture_radius': parameters.aperture_radius,
+                    'annulus_inner_radius': parameters.annulus_inner_radius,
+                    'annulus_outer_radius': parameters.annulus_outer_radius,
                     'filter': filter_value,
                     'light_curve': [asdict(row) for row in result.light_curve_rows],
                     'selected_comparison_stars': [
@@ -260,18 +299,11 @@ class AperturePhotometry(AperturePhotometryOperation):
         }
 
     def operate(self, submitter: User):
-        raw = self.input_data.get('target_positions') or self.input_data.get('source')
-        if isinstance(raw, Mapping):
-            raw = [raw]
-        try:
-            positions = TrackSample.from_input(raw, minimum=1, require_mjd=False)
-        except (TypeError, ValueError) as exc:
-            raise ClientAlertException(f'Invalid target position: {exc}') from exc
-
-        first = raw[0] if isinstance(raw[0], Mapping) else {}
+        positions = self._validate_target_positions(minimum=1, require_mjd=False)
         source = {'ra': positions[0].ra_deg, 'dec': positions[0].dec_deg}
-        if first.get('name'):
-            source['name'] = first['name']
+        name = self._submitted_target_name()
+        if name:
+            source['name'] = name
         self._run_photometry(
             submitter,
             locator=FixedPosition(ra_deg=source['ra'], dec_deg=source['dec']),
@@ -373,14 +405,15 @@ class MovingTargetAperturePhotometry(AperturePhotometryOperation):
         }
 
     def operate(self, submitter: User):
-        raw_track = self.input_data.get('target_positions')
+        track_samples = self._validate_target_positions(
+            minimum=MINIMUM_TRACK_SAMPLES, require_mjd=True
+        )
         try:
-            track_samples = TrackSample.from_input(raw_track)
             track_search_radius = float(
                 self.input_data.get('track_search_radius', DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC)
             )
         except (TypeError, ValueError) as exc:
-            raise ClientAlertException(f'Invalid target samples: {exc}') from exc
+            raise ClientAlertException(f'Operation {self.name()}: invalid target search radius.') from exc
 
         self._run_photometry(
             submitter,

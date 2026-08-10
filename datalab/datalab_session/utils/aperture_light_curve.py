@@ -289,7 +289,7 @@ def generate_light_curve(
         caller rather than to a mode flag here.
     """
     comparison = comparison or SharedEnsemble()
-    _validate_inputs(
+    _validate_light_curve_parameters(
         fits_paths=fits_paths,
         aperture_radius=aperture_radius,
         annulus_inner_radius=annulus_inner_radius,
@@ -466,7 +466,7 @@ def generate_light_curve(
     )
 
 
-def _validate_inputs(
+def _validate_light_curve_parameters(
     *,
     fits_paths: Sequence[str],
     aperture_radius: float,

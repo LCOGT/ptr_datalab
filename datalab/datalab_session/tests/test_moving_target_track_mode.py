@@ -263,10 +263,6 @@ class TestTrackSampleParsing(unittest.TestCase):
         self.assertEqual(samples[0].mjd, 60000.0)
         self.assertEqual(samples[1].ra_deg, 100.2)
 
-    def test_rejects_fewer_than_two_samples(self) -> None:
-        with self.assertRaises(ValueError):
-            TrackSample.from_input([{"mjd": 60000.0, "ra": 100.0, "dec": 20.0}])
-
     def test_rejects_a_sample_with_no_time(self) -> None:
         """Every sample needs an mjd: a track is positions *and* the times they were seen at."""
         with self.assertRaises(ValueError):

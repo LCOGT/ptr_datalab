@@ -26,23 +26,13 @@ class TrackSample:
     dec_deg: float
 
     @classmethod
-    def from_input(
-        cls,
-        raw_samples: Any,
-        *,
-        minimum: int = MINIMUM_TRACK_SAMPLES,
-        require_mjd: bool = True,
-    ) -> tuple["TrackSample", ...]:
+    def from_input(cls, raw_samples: Any, *, require_mjd: bool = True) -> tuple["TrackSample", ...]:
         """
             Parses submitted {mjd, ra, dec} positions into samples, sorted by time. require_mjd=False
             accepts an untimed position, for a fixed target, and records NaN.
         """
         if not isinstance(raw_samples, Sequence) or isinstance(raw_samples, (str, bytes)):
             raise ValueError("Target positions must be a list of {ra, dec} entries.")
-        if len(raw_samples) < minimum:
-            raise ValueError(
-                f"A target needs at least {minimum} position(s), got {len(raw_samples)}."
-            )
 
         samples: list[TrackSample] = []
         for index, raw_sample in enumerate(raw_samples):
