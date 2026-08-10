@@ -54,10 +54,10 @@ class FrameCalibration:
 @dataclass(frozen=True)
 class CalibrationInputs:
     """What a calibration strategy works from, threaded unchanged from the pipeline."""
-    frames: Sequence["FrameContext"]
+    frames: Sequence[FrameContext]
     candidate_stars: Sequence[ComparisonStar]
     measurements_by_candidate: Mapping[str, Mapping[str, ComparisonMeasurement]]
-    target_measurements: Mapping[str, "TargetMeasurement"]
+    target_measurements: Mapping[str, TargetMeasurement]
     min_comparisons: int
     max_comparisons: int
 
@@ -421,7 +421,7 @@ def _evolving_frame_calibration(
     matrix: ComparisonMatrix,
     *,
     fits_path: str,
-    target: "TargetMeasurement",
+    target: TargetMeasurement,
     active_ids: Sequence[str],
     zero_point: float,
     zp_sigma: float,
@@ -468,7 +468,7 @@ def _evolving_frame_calibration(
     return calibration, shortfall
 
 
-def relative_flux(target: "TargetMeasurement", ensemble_flux: float, ensemble_variance: float) -> tuple[float, float]:
+def relative_flux(target: TargetMeasurement, ensemble_flux: float, ensemble_variance: float) -> tuple[float, float]:
     """
         Target flux relative to the comparison ensemble, and its uncertainty from the target and
         ensemble photon errors. NaN sigma when the target has non-positive counts (measuring blank
@@ -522,7 +522,7 @@ def _empirical_error_floor(
     return float(np.median(per_star_rms))
 
 
-def _target_magnitude_proxy(measurements: Iterable["TargetMeasurement"]) -> float:
+def _target_magnitude_proxy(measurements: Iterable[TargetMeasurement]) -> float:
     """
         The target's own measured instrumental magnitude, median over frames. Comparison stars are
         ranked against this (not the target's catalog magnitude) so both sides share a zero point.

@@ -36,7 +36,7 @@ class TargetPositions:
 
 class TargetLocator(ABC):
     @abstractmethod
-    def locate(self, frames: Sequence["FrameContext"]) -> TargetPositions:
+    def locate(self, frames: Sequence[FrameContext]) -> TargetPositions:
         """
             RA/Dec per frame, keyed by fits_path. Raises LightCurveError only when the target cannot
             be located at all; a locator that is merely unsure returns its best positions and says so.
@@ -50,7 +50,7 @@ class FixedPosition(TargetLocator):
     ra_deg: float
     dec_deg: float
 
-    def locate(self, frames: Sequence["FrameContext"]) -> TargetPositions:
+    def locate(self, frames: Sequence[FrameContext]) -> TargetPositions:
         position = (float(self.ra_deg), float(self.dec_deg))
         return TargetPositions(by_frame={frame.fits_path: position for frame in frames})
 
@@ -62,7 +62,7 @@ class EphemerisHeaders(TargetLocator):
         missing them is fatal: interpolating from neighbours would invent an ephemeris.
     """
 
-    def locate(self, frames: Sequence["FrameContext"]) -> TargetPositions:
+    def locate(self, frames: Sequence[FrameContext]) -> TargetPositions:
         positions: dict[str, tuple[float, float]] = {}
         for frame in frames:
             try:
@@ -99,7 +99,7 @@ class FittedTrack(TargetLocator):
     samples: tuple[TrackSample, ...]
     search_radius_arcsec: float = DEFAULT_TRACK_SEARCH_RADIUS_ARCSEC
 
-    def locate(self, frames: Sequence["FrameContext"]) -> TargetPositions:
+    def locate(self, frames: Sequence[FrameContext]) -> TargetPositions:
         try:
             track = fit_target_track(self.samples)
         except ValueError as exc:

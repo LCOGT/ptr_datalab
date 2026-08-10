@@ -74,6 +74,8 @@ DEFAULT_MAX_COMPARISONS = 10
 # since trimming changes which stars are on offer.
 MAX_CANDIDATE_MEASUREMENTS = 200_000
 MIN_COMPARISON_CANDIDATES = 50
+
+
 class Phase(Enum):
     """
         The phases of a run, in execution order, shared with the operations layer that maps each to a
