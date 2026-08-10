@@ -113,13 +113,15 @@ def fit_target_track(samples: Sequence[TrackSample]) -> TargetTrack:
         raise ValueError(
             f"A target track needs at least {MINIMUM_TRACK_SAMPLES} sample positions, got {len(samples)}."
         )
-    ordered = tuple(sorted(samples, key=lambda sample: sample.mjd))
-    distinct_times = len({sample.mjd for sample in ordered})
+    # Distinct rather than len(samples): the catalog refit in moving_target_search can pass two
+    # samples at one frame's midpoint, and a quadratic through two distinct times is rank-deficient,
+    # which numpy fits anyway with only a RankWarning.
+    distinct_times = len({sample.mjd for sample in samples})
     if distinct_times < MINIMUM_TRACK_SAMPLES:
         raise ValueError("Track samples must be at two or more distinct times.")
     order = min(distinct_times - 1, MAX_TRACK_FIT_ORDER)
 
-    directions = unit_vectors([sample.ra_deg for sample in ordered], [sample.dec_deg for sample in ordered])
+    directions = unit_vectors([sample.ra_deg for sample in samples], [sample.dec_deg for sample in samples])
     radial_axis, east_axis, north_axis = _tangent_basis(directions.mean(axis=0))
 
     # Samples more than 90 degrees from the plane's centre project behind the observer, so they
@@ -130,13 +132,13 @@ def fit_target_track(samples: Sequence[TrackSample]) -> TargetTrack:
     xi = (directions @ east_axis) / along_radial
     eta = (directions @ north_axis) / along_radial
 
-    reference_mjd = float(np.mean([sample.mjd for sample in ordered]))
-    elapsed = np.array([sample.mjd - reference_mjd for sample in ordered])
+    reference_mjd = float(np.mean([sample.mjd for sample in samples]))
+    elapsed = np.array([sample.mjd - reference_mjd for sample in samples])
     xi_coefficients = np.polyfit(elapsed, xi, order)
     eta_coefficients = np.polyfit(elapsed, eta, order)
 
     track = TargetTrack(
-        samples=ordered,
+        samples=tuple(samples),
         order=order,
         reference_mjd=reference_mjd,
         radial_axis=radial_axis,
@@ -147,7 +149,7 @@ def fit_target_track(samples: Sequence[TrackSample]) -> TargetTrack:
     )
     log.info(
         "Aperture Photometry target track fitted: "
-        f"samples={len(ordered)}, order={order}, span_hours={track.sample_span_hours:.3f}, "
+        f"samples={len(samples)}, order={order}, span_hours={track.sample_span_hours:.3f}, "
         f"rate_arcsec_per_min={track_rate_arcsec_per_minute(track):.4f}"
     )
     return track

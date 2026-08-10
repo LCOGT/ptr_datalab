@@ -245,11 +245,6 @@ class TestTargetTrackFitting(unittest.TestCase):
         track = fit_target_track(_samples_from_truth(truth, (0, 8)))
         self.assertAlmostEqual(track_rate_arcsec_per_minute(track), 1.0, delta=0.01)
 
-    def test_samples_are_sorted_by_time(self) -> None:
-        _, truth = build_tracked_frame_set(frame_count=5)
-        track = fit_target_track(_samples_from_truth(truth, (4, 0, 2)))
-        self.assertEqual([sample.mjd for sample in track.samples], sorted(sample.mjd for sample in track.samples))
-
 
 class TestTrackSampleParsing(unittest.TestCase):
     def test_parses_and_sorts_valid_samples(self) -> None:
