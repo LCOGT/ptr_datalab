@@ -8,7 +8,7 @@ from datalab.datalab_session.utils.flux_to_mag import flux_to_mag, flux_to_mag_a
 from datalab.datalab_session.utils.geometry import angular_distance_arcsec, distance_pixels
 from datalab.datalab_session.utils.centroiding import BackgroundModel, _fit_plane
 from datalab.datalab_session.utils.photometry import fractional_pixel_overlap, measure_aperture
-from datalab.datalab_session.utils.catalog_utils import cross_match_one_to_one, cone_filter
+from datalab.datalab_session.utils.catalog_utils import cross_match_one_to_one, cone_filter, find_nearest_source
 from datalab.datalab_session.utils.gaia import GAIA_PARALLAX_ZERO_POINT_MAS, estimate_membership, gaia_cone_search
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
@@ -228,6 +228,38 @@ class CatalogUtilsTestClass(FileExtendedTestCase):
     in_cone = cone_filter(catalog['ra'], catalog['dec'], 150.0, 30.0, 1.0)
 
     self.assertEqual(in_cone.tolist(), [True, False])
+
+  def test_find_nearest_source_returns_closest_not_first(self):
+    # a neighbor is listed first, the real target second: catalogs are ordered by detection,
+    # not by distance from the target
+    catalog = self.catalog([3.0, 0.2])
+
+    nearest = find_nearest_source(catalog['ra'], catalog['dec'], 150.0, 30.0, 4.0)
+
+    self.assertEqual(nearest, 1)
+
+  def test_find_nearest_source_applies_radius_cut(self):
+    catalog = self.catalog([5.0])
+
+    self.assertIsNone(find_nearest_source(catalog['ra'], catalog['dec'], 150.0, 30.0, 4.0))
+
+  def test_find_nearest_source_handles_ra_wraparound(self):
+    # 3.55 arcsec apart across the 0/360 boundary, which a coordinate difference reads as 359.999
+    nearest = find_nearest_source(np.array([0.0005]), np.array([10.0]), 359.9995, 10.0, 4.0)
+
+    self.assertEqual(nearest, 0)
+
+  def test_find_nearest_source_tolerance_holds_at_high_declination(self):
+    # 3 arcsec away on sky, but 6 arcsec of RA coordinate at this declination
+    dec = 60.0
+    ra_offset = (3.0 / 3600.0) / np.cos(np.radians(dec))
+
+    nearest = find_nearest_source(np.array([150.0 + ra_offset]), np.array([dec]), 150.0, dec, 4.0)
+
+    self.assertEqual(nearest, 0)
+
+  def test_find_nearest_source_empty_catalog(self):
+    self.assertIsNone(find_nearest_source(np.array([]), np.array([]), 150.0, 30.0, 4.0))
 
 
 class GaiaUtilsTestClass(FileExtendedTestCase):

@@ -1,8 +1,11 @@
 from unittest import mock
 import json
+import os
+import tempfile
 from types import SimpleNamespace
 
 from astropy.io import fits
+from astropy.wcs import WCS
 from django.test import TestCase
 import numpy as np
 from numpy.testing import assert_almost_equal
@@ -72,6 +75,104 @@ class TestAnalysis(TestCase):
 
         self.assertAlmostEqual(output[0]['mag'], expected_mag)
         self.assertAlmostEqual(output[0]['magerr'], expected_magerr)
+
+    @staticmethod
+    def write_catalog_without_radec(path, ra, dec, celestial_wcs=True):
+        """ Writes a fits whose CAT HDU has no ra/dec columns, so source_catalog has to derive
+        them from the catalog x/y positions and the SCI WCS """
+        wcs = WCS(naxis=2)
+        if celestial_wcs:
+            wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN']
+            wcs.wcs.crval = [ra[0], dec[0]]
+            wcs.wcs.crpix = [100.0, 100.0]
+            wcs.wcs.cdelt = [-1.0 / 3600.0, 1.0 / 3600.0]
+            x, y = wcs.all_world2pix(np.asarray(ra), np.asarray(dec), 1)
+        else:
+            x = y = np.full(len(ra), 50.0)
+
+        sci_hdu = fits.ImageHDU(data=np.zeros((200, 200), dtype=np.float32), header=wcs.to_header(), name='SCI')
+        cat_hdu = fits.BinTableHDU.from_columns([
+            fits.Column(name='x', format='D', array=x),
+            fits.Column(name='y', format='D', array=y),
+            fits.Column(name='xwin', format='D', array=x),
+            fits.Column(name='ywin', format='D', array=y),
+            fits.Column(name='flux', format='D', array=np.full(len(x), 1000.0)),
+            fits.Column(name='fluxerr', format='D', array=np.full(len(x), 10.0)),
+        ], name='CAT')
+        fits.HDUList([fits.PrimaryHDU(), sci_hdu, cat_hdu]).writeto(path, overwrite=True)
+
+    @mock.patch('datalab.datalab_session.analysis.source_catalog.FileCache')
+    def test_source_catalog_computes_ra_dec_from_wcs(self, mock_file_cache):
+        ra = [150.0, 150.01]
+        dec = [30.0, 30.005]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fits_path = os.path.join(temp_dir, 'no_radec.fits')
+            self.write_catalog_without_radec(fits_path, ra, dec)
+            mock_file_cache.return_value.get_fits.return_value = fits_path
+
+            output = source_catalog.source_catalog({
+                'basename': 'no_radec',
+                'height': 200,
+                'width': 200,
+                'source': 'archive'
+                }, None)
+
+        self.assertEqual(len(output), 2)
+        for result, expected_ra, expected_dec in zip(output, ra, dec):
+            self.assertEqual(result['ra'], '%.6f' % expected_ra)
+            self.assertEqual(result['dec'], '%.6f' % expected_dec)
+
+    @mock.patch('datalab.datalab_session.analysis.source_catalog.FileCache')
+    def test_source_catalog_without_wcs_omits_ra_dec(self, mock_file_cache):
+        """ No ra/dec columns and no WCS to compute them still returns the x/y overlay """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fits_path = os.path.join(temp_dir, 'no_wcs.fits')
+            self.write_catalog_without_radec(fits_path, [150.0, 150.01], [30.0, 30.005], celestial_wcs=False)
+            mock_file_cache.return_value.get_fits.return_value = fits_path
+
+            output = source_catalog.source_catalog({
+                'basename': 'no_wcs',
+                'height': 200,
+                'width': 200,
+                'source': 'archive'
+                }, None)
+
+        self.assertEqual(len(output), 2)
+        for result in output:
+            self.assertNotIn('ra', result)
+            self.assertNotIn('dec', result)
+            self.assertIn('x', result)
+
+    @staticmethod
+    def cat_hdu(ra, dec):
+        columns = [
+            fits.Column(name='ra', format='D', array=np.asarray(ra)),
+            fits.Column(name='dec', format='D', array=np.asarray(dec)),
+            fits.Column(name='mag', format='D', array=np.arange(len(ra), dtype=float) + 15.0),
+            fits.Column(name='magerr', format='D', array=np.full(len(ra), 0.02)),
+        ]
+        return fits.BinTableHDU.from_columns(columns, name='CAT')
+
+    def test_find_target_source_returns_nearest_source(self):
+        # the 3 arcsec neighbour is listed first, the 0.2 arcsec target second
+        cat_hdu = self.cat_hdu([150.0, 150.0], [30.0 + 3.0 / 3600.0, 30.0 + 0.2 / 3600.0])
+
+        source = light_curve_module.find_target_source(cat_hdu, 150.0, 30.0)
+
+        self.assertIsNotNone(source)
+        self.assertAlmostEqual(source['mag'], 16.0)
+
+    def test_find_target_source_outside_match_radius(self):
+        cat_hdu = self.cat_hdu([150.0], [30.0 + 6.0 / 3600.0])
+
+        self.assertIsNone(light_curve_module.find_target_source(cat_hdu, 150.0, 30.0))
+
+    def test_find_target_source_without_ra_dec_columns(self):
+        cat_hdu = fits.BinTableHDU.from_columns(
+            [fits.Column(name='flux', format='D', array=np.array([1000.0]))], name='CAT')
+
+        self.assertIsNone(light_curve_module.find_target_source(cat_hdu, 150.0, 30.0))
 
     @mock.patch('datalab.datalab_session.data_operations.light_curve.find_target_source')
     @mock.patch('datalab.datalab_session.data_operations.light_curve.get_hdu')

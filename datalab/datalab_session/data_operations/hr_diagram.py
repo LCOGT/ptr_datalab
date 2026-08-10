@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from django.contrib.auth.models import User
 
-from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
+from datalab.datalab_session.data_operations.data_operation import BaseDataOperation, ProgressStep
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.utils.catalog_utils import (
   cone_filter,
@@ -20,8 +20,7 @@ log.setLevel(logging.INFO)
 
 
 class HRDiagram(BaseDataOperation):
-  # Fixed blue<->red match tolerance. Deliberately not a wizard input: every input is hashed
-  # into the cache key, so exposing it would fragment the cache and force full recomputes
+  # Fixed blue<->red match tolerance for matching stars between the two
   MATCH_RADIUS_ARCSEC = 2.0
   # Tighter tolerance for matching our stars to Gaia. Gaia DR3 positions are epoch 2016.0,
   # so 1 arcsec also tolerates ~a decade of <100 mas/yr proper motion
@@ -29,8 +28,6 @@ class HRDiagram(BaseDataOperation):
   # Keep only the brightest N matched stars to bound the output payload
   MAX_OUTPUT_SOURCES = 5000
   # Also emit up to this many of the brightest Gaia sources that did NOT match an image star
-  # (flagged gaia_only): the cluster's proper-motion clump and parallax peak stand out far
-  # better against the full Gaia field than against just the image-matched subset
   MAX_GAIA_ONLY_SOURCES = 5000
   DEFAULT_SEARCH_RADIUS_ARCMIN = 15.0
   # Disjoint blue/red filter options so the wizard can only produce valid, wavelength-ordered
@@ -41,12 +38,12 @@ class HRDiagram(BaseDataOperation):
   # utils/gaia.py for the ~0.03 mag SDSS<->PS1 caveat baked into their errors)
   GAIA_SYNTH_MAG = {'gp': 'g_sdss', 'rp': 'r_sdss', 'ip': 'i_sdss', 'zs': 'z_sdss'}
   PROGRESS_STEPS = {
-    'BLUE_CATALOG_DONE': 0.2,
-    'RED_CATALOG_DONE': 0.4,
-    'CROSS_MATCH_DONE': 0.5,
-    'GAIA_QUERY_DONE': 0.80,
-    'GAIA_MATCH_DONE': 0.95,
-    'OUTPUT_DONE': 1.0,
+    'blue_stars': ProgressStep('Finished cataloging blue image stars', 0.2),
+    'red_stars': ProgressStep('Finished cataloging red image stars', 0.4),
+    'crossmatch': ProgressStep('Finished crossmatching blue/red image stars', 0.5),
+    'gaia_query': ProgressStep('Finished querying Gaia catalog for field stars', 0.8),
+    'gaia_match': ProgressStep('Finished matching Gaia and Image stars', 0.95),
+    'done': ProgressStep('Finished operation', 1.0),
   }
 
   @staticmethod
@@ -142,9 +139,9 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
              f'{blue_image["basename"]} ({blue_filter}) and {red_image["basename"]} ({red_filter})')
 
     blue_catalog = self._band_catalog(blue_image, submitter)
-    self.set_operation_progress(HRDiagram.PROGRESS_STEPS['BLUE_CATALOG_DONE'])
+    self._report_progress('blue_stars')
     red_catalog = self._band_catalog(red_image, submitter)
-    self.set_operation_progress(HRDiagram.PROGRESS_STEPS['RED_CATALOG_DONE'])
+    self._report_progress('red_stars')
 
     # cheap pre-flight to catch mistyped coordinates before cross-matching
     if not wcs_contains_point(blue_catalog['fits_path'], cluster_ra, cluster_dec) \
@@ -156,7 +153,7 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
     if len(blue_indices) == 0:
       raise ClientAlertException('No stars matched between the two bands - '
                                  'check that both images cover the same field.')
-    self.set_operation_progress(HRDiagram.PROGRESS_STEPS['CROSS_MATCH_DONE'])
+    self._report_progress('crossmatch')
 
     # the red (y-axis) band positions are the canonical star positions
     ra = red_catalog['ra'][red_indices]
@@ -182,7 +179,7 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
     # A Gaia failure raises and fails the operation (re-runnable) rather than silently
     # caching a membership-less result for 30 days
     gaia_data = gaia_cone_search(cluster_ra, cluster_dec, search_radius_arcmin)
-    self.set_operation_progress(HRDiagram.PROGRESS_STEPS['GAIA_QUERY_DONE'])
+    self._report_progress('gaia_query')
     star_indices, gaia_indices = cross_match_one_to_one({'ra': ra, 'dec': dec}, gaia_data,
                                                         HRDiagram.GAIA_MATCH_RADIUS_ARCSEC)
     gaia_for_star = {int(star): int(gaia) for star, gaia in zip(star_indices, gaia_indices)}
@@ -205,7 +202,7 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
       gaia_data['r_lo_geo'][membership_pool],
       gaia_data['r_hi_geo'][membership_pool],
     )
-    self.set_operation_progress(HRDiagram.PROGRESS_STEPS['GAIA_MATCH_DONE'])
+    self._report_progress('gaia_match')
 
     def gaia_value(column, gaia_index):
       # non-finite (masked) Gaia values become None to stay JSON-safe
@@ -296,5 +293,9 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
              f'{len(star_indices)} Gaia matched, plus {len(gaia_only_indices)} Gaia-only stars')
 
     self.set_output(output, is_raw=True)
-    self.set_operation_progress(HRDiagram.PROGRESS_STEPS['OUTPUT_DONE'])
+    self._report_progress('done')
     self.set_status('COMPLETED')
+
+  def _report_progress(self, step):
+      self.set_operation_progress(HRDiagram.PROGRESS_STEPS[step].progress)
+      self.set_message(HRDiagram.PROGRESS_STEPS[step].message)

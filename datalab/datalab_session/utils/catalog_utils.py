@@ -6,7 +6,7 @@ from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 
 from datalab.datalab_session.exceptions import ClientAlertException
-from datalab.datalab_session.utils.file_utils import get_hdu
+from datalab.datalab_session.utils.file_utils import get_fits_header, get_hdu
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -35,21 +35,24 @@ def extract_calibrated_catalog(fits_path: str, basename: str = '') -> dict:
     ra = np.asarray(cat_data['ra'], dtype=float)
     dec = np.asarray(cat_data['dec'], dtype=float)
   else:
-    ra, dec = _ra_dec_from_wcs(fits_path, cat_data, basename)
+    ra, dec = ra_dec_from_wcs(fits_path, cat_data, basename)
 
   valid = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(mag) & np.isfinite(magerr)
   return {'ra': ra[valid], 'dec': dec[valid], 'mag': mag[valid], 'magerr': magerr[valid]}
 
 
-def _ra_dec_from_wcs(fits_path: str, cat_data, basename: str = ''):
+def ra_dec_from_wcs(fits_path: str, cat_data, basename: str = ''):
   """
   Fallback for CAT HDUs without ra/dec columns: compute them from the catalog x/y
   pixel positions and the SCI extension's WCS solution
+
+  Raises ClientAlertException when the catalog has no x/y columns or the image has no
+  celestial WCS, so callers that can still work without sky coordinates should catch it.
   """
   if 'x' not in cat_data.names or 'y' not in cat_data.names:
     raise ClientAlertException(f'{basename} catalog has no ra/dec or x/y columns to locate its sources')
 
-  sci_header = get_hdu(fits_path, 'SCI').header
+  sci_header = get_fits_header(fits_path, 'SCI')
   wcs = WCS(sci_header)
   if not wcs.has_celestial:
     raise ClientAlertException(f'{basename} catalog has no ra/dec columns and the image has no WCS solution to compute them')
@@ -91,6 +94,26 @@ def cross_match_one_to_one(catalog_a: dict, catalog_b: dict, match_radius_arcsec
   return a_indices, b_indices
 
 
+def find_nearest_source(ra, dec, target_ra: float, target_dec: float, radius_arcsec: float):
+  """
+  Returns the index of the (ra, dec) point source closest to the target, or None when the closest one
+  is further away than radius_arcsec. All coordinates in degrees.Matches on true angular separation
+  rather than a coordinate box, so the tolerance does not shrink with declination and RA wraparound
+  is handled.
+  """
+  ra = np.asarray(ra, dtype=float)
+  dec = np.asarray(dec, dtype=float)
+  if len(ra) == 0:
+    return None
+
+  target = SkyCoord(ra=float(target_ra) * u.deg, dec=float(target_dec) * u.deg)
+  sources = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
+  separations = target.separation(sources).arcsec
+
+  nearest = int(np.argmin(separations))
+  return nearest if separations[nearest] <= radius_arcsec else None
+
+
 def cone_filter(ra, dec, center_ra: float, center_dec: float, radius_arcmin: float):
   """
   Returns a boolean mask of the (ra, dec) points within radius_arcmin of the center point.
@@ -107,7 +130,7 @@ def wcs_contains_point(fits_path: str, ra: float, dec: float) -> bool:
   Returns True when the WCS is missing or unusable so an inconclusive check never blocks an operation.
   """
   try:
-    sci_header = get_hdu(fits_path, 'SCI').header
+    sci_header = get_fits_header(fits_path, 'SCI')
     wcs = WCS(sci_header)
     if not wcs.has_celestial:
       return True
