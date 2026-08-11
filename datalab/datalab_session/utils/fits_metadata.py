@@ -17,6 +17,8 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
 MJD_EPOCH = datetime(1858, 11, 17, tzinfo=timezone.utc)
+DEFAULT_GAIN = 1.0
+DEFAULT_READ_NOISE = 0.0
 
 
 def world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:
@@ -30,13 +32,11 @@ def target_radec_from_header(header: Mapping[str, Any]) -> tuple[float, float]:
         (sexagesimal hours) and CAT-DEC (sexagesimal degrees).
     """
     ra_raw, dec_raw = header.get("CAT-RA"), header.get("CAT-DEC")
-    if not str(ra_raw or "").strip() or not str(dec_raw or "").strip():
-        raise ValueError("Missing CAT-RA/CAT-DEC moving-target coordinates.")
     try:
         ra_deg = Angle(str(ra_raw), unit=u.hourangle).to(u.deg).value
         dec_deg = Angle(str(dec_raw), unit=u.deg).to(u.deg).value
     except Exception as exc:
-        raise ValueError(f"Unparseable moving-target coordinates: RA={ra_raw!r}, Dec={dec_raw!r}.") from exc
+        raise ValueError(f"Cannot read moving-target coordinates: RA={ra_raw!r}, Dec={dec_raw!r}.") from exc
     return float(ra_deg), float(dec_deg)
 
 
@@ -73,10 +73,6 @@ def optional_float(value: Any, default: float = math.nan) -> float:
     except (TypeError, ValueError):
         return default
     return result if math.isfinite(result) else default
-
-
-DEFAULT_GAIN = 1.0
-DEFAULT_READ_NOISE = 0.0
 
 
 def frame_gain(header: Mapping[str, Any]) -> float:
