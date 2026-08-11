@@ -128,10 +128,10 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
     return catalog
 
   def operate(self, submitter: User):
-    blue_image = self._validate_inputs(input_key='blue_filter_files')[0]
-    red_image = self._validate_inputs(input_key='red_filter_files')[0]
-    blue_filter = blue_image.get('filter', blue_image.get('primary_optical_element', '')) or ''
-    red_filter = red_image.get('filter', red_image.get('primary_optical_element', '')) or ''
+    blue_image = self._validate_file_inputs(input_key='blue_filter_files')[0]
+    red_image = self._validate_file_inputs(input_key='red_filter_files')[0]
+    blue_filter = blue_image.get('filter', blue_image.get('primary_optical_element'))
+    red_filter = red_image.get('filter', red_image.get('primary_optical_element'))
     cluster_name, cluster_ra, cluster_dec = self._validate_cluster()
     search_radius_arcmin = self._validate_search_radius()
 

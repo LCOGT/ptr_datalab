@@ -61,10 +61,7 @@ The output is the lightcurve and periodogram data for period stacking of the pho
         source = self.input_data.get("source")
         target_ra = source.get("ra")
         target_dec = source.get("dec")
-        input_files = self._validate_inputs(
-            input_key='input_files',
-            minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS
-        )
+        input_files = self._validate_file_inputs(input_key='input_files')
         comment= f'Datalab Variable Star analysis for target ra {target_ra}, dec {target_dec} on images: {", ".join([image["basename"] for image in input_files])}'
         log.info(comment)
 

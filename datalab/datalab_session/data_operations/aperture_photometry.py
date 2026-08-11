@@ -69,7 +69,6 @@ class AperturePhotometry(BaseDataOperation):
                     'type': Format.FITS,
                     'single_filter': True,
                     'filter_options': ['rp', 'ip', 'gp', 'zs'],
-                    'requires_filter': True,
                     'minimum': AperturePhotometry.MINIMUM_NUMBER_OF_INPUTS,
                     'maximum': AperturePhotometry.MAXIMUM_NUMBER_OF_INPUTS,
                 },
@@ -119,10 +118,7 @@ class AperturePhotometry(BaseDataOperation):
         if not source:
             raise ClientAlertException(f'Operation {self.name()} requires a source.')
 
-        input_files = self._validate_inputs(
-            input_key='input_files',
-            minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS
-        )
+        input_files = self._validate_file_inputs(input_key='input_files')
         log.info(f"Aperture Photometry operation on {', '.join([image['basename'] for image in input_files])}")
 
         try:

@@ -59,10 +59,7 @@ class LightCurve(BaseDataOperation):
     }
 
   def operate(self, submitter: User):
-    input_files = self._validate_inputs(
-      input_key="input_files",
-      minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS,
-    )
+    input_files = self._validate_file_inputs(input_key="input_files")
     source = self.input_data.get("source")
     if not source:
       raise ClientAlertException(f"Operation {self.name()} requires a source.")

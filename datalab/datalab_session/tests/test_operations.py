@@ -394,9 +394,24 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
         with self.assertRaisesRegex(ClientAlertException, 'received invalid input'):
             AperturePhotometry(input_data).operate(None)
 
-    def test_operate_allows_missing_filter(self):
+    def test_operate_requires_every_file_to_share_one_filter(self):
+        input_data = self.valid_input_data()
+        input_data['input_files'].append({'basename': 'fits_2', 'source': 'local', 'filter': 'ip'})
+
+        with self.assertRaisesRegex(ClientAlertException, 'same filter, but the input files use ip, rp'):
+            AperturePhotometry(input_data).operate(None)
+
+    def test_operate_requires_a_filter(self):
         input_data = self.valid_input_data()
         del input_data['input_files'][0]['filter']
+
+        with self.assertRaisesRegex(ClientAlertException, 'does not report a filter'):
+            AperturePhotometry(input_data).operate(None)
+
+    def test_operate_accepts_filter_from_primary_optical_element(self):
+        input_data = self.valid_input_data()
+        del input_data['input_files'][0]['filter']
+        input_data['input_files'][0]['primary_optical_element'] = 'ip'
 
         with mock.patch('datalab.datalab_session.data_operations.aperture_photometry.generate_light_curve') as mock_generate_light_curve, \
                 mock.patch('datalab.datalab_session.data_operations.aperture_photometry.FileCache') as mock_file_cache, \
@@ -415,7 +430,7 @@ class TestAperturePhotometryOperation(FileExtendedTestCase):
             AperturePhotometry(input_data).operate(None)
 
         output = mock_set_output.call_args.args[0]
-        self.assertEqual(output['output_data'][0]['filter'], 'None')
+        self.assertEqual(output['output_data'][0]['filter'], 'ip')
 
 
 class TestColorImageOperation(FileExtendedTestCase):
@@ -810,6 +825,31 @@ class TestHRDiagramOperation(FileExtendedTestCase):
         hr_diagram = HRDiagram(input_data)
 
         with self.assertRaises(ClientAlertException):
+            hr_diagram.operate(None)
+
+    def test_more_files_than_the_wizard_maximum_fails(self):
+        input_data = self.hr_input_data()
+        input_data['blue_filter_files'].append({'basename': 'second_blue_fits', 'source': 'local', 'filter': 'gp'})
+        hr_diagram = HRDiagram(input_data)
+
+        with self.assertRaisesRegex(ClientAlertException, 'at most 1'):
+            hr_diagram.operate(None)
+
+    def test_filter_outside_the_wizard_filter_options_fails(self):
+        input_data = self.hr_input_data()
+        input_data['red_filter_files'][0]['filter'] = 'gp'
+        hr_diagram = HRDiagram(input_data)
+
+        with self.assertRaisesRegex(ClientAlertException, 'but got gp'):
+            hr_diagram.operate(None)
+
+    def test_filter_from_primary_optical_element_is_validated(self):
+        input_data = self.hr_input_data()
+        del input_data['blue_filter_files'][0]['filter']
+        input_data['blue_filter_files'][0]['primary_optical_element'] = 'zs'
+        hr_diagram = HRDiagram(input_data)
+
+        with self.assertRaisesRegex(ClientAlertException, 'but got zs'):
             hr_diagram.operate(None)
 
 
