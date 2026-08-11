@@ -1,9 +1,12 @@
 import math
 import warnings
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 import numpy as np
+import astropy.units as u
+from astropy.coordinates import Angle
 from astropy.wcs import WCS, FITSFixedWarning
 from astropy.wcs.utils import proj_plane_pixel_scales
 
@@ -13,10 +16,47 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 # silence the category process-wide.
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
+MJD_EPOCH = datetime(1858, 11, 17, tzinfo=timezone.utc)
+DEFAULT_GAIN = 1.0
+DEFAULT_READ_NOISE = 0.0
+
 
 def world_to_pixel(header: Mapping[str, Any], ra_deg: float, dec_deg: float) -> tuple[float, float]:
     x, y = WCS(dict(header)).world_to_pixel_values(float(ra_deg), float(dec_deg))
     return float(x), float(y)
+
+
+def target_radec_from_header(header: Mapping[str, Any]) -> tuple[float, float]:
+    """
+        A moving target's per-frame RA/Dec in degrees, from the LCO ephemeris keywords CAT-RA
+        (sexagesimal hours) and CAT-DEC (sexagesimal degrees).
+    """
+    ra_raw, dec_raw = header.get("CAT-RA"), header.get("CAT-DEC")
+    try:
+        ra_deg = Angle(str(ra_raw), unit=u.hourangle).to(u.deg).value
+        dec_deg = Angle(str(dec_raw), unit=u.deg).to(u.deg).value
+    except Exception as exc:
+        raise ValueError(f"Cannot read moving-target coordinates: RA={ra_raw!r}, Dec={dec_raw!r}.") from exc
+    return float(ra_deg), float(dec_deg)
+
+
+def frame_midpoint_mjd(header: Mapping[str, Any], *, fallback_start: datetime | None = None) -> float:
+    """
+        MJD (UTC) of a frame's exposure midpoint.
+
+        MJD-OBS and DATE-OBS are the exposure start, but a moving target's measured position is where
+        it sat on average over the exposure, so interpolating a track at the start biases every
+        prediction by half an exposure of the object's motion.
+    """
+    if "MJD-OBS" in header:
+        start_mjd = float(header["MJD-OBS"])
+    elif fallback_start is not None:
+        start = fallback_start if fallback_start.tzinfo is not None else fallback_start.replace(tzinfo=timezone.utc)
+        start_mjd = (start - MJD_EPOCH).total_seconds() / 86400.0
+    else:
+        raise ValueError("Cannot determine an observation time: no MJD-OBS and no fallback start time.")
+    # An unusable EXPTIME means no midpoint correction, not a failed frame.
+    return start_mjd + max(0.0, optional_float(header.get("EXPTIME"), default=0.0)) / 2.0 / 86400.0
 
 
 def header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: float) -> float:
@@ -26,17 +66,13 @@ def header_float(header: Mapping[str, Any], keys: tuple[str, ...], default: floa
     return default
 
 
-def optional_float(value: Any) -> float:
-    """Coerce a (possibly missing/malformed) catalog or header value to float, NaN on failure."""
+def optional_float(value: Any, default: float = math.nan) -> float:
+    """Coerce a possibly missing or malformed value to float, returning default on failure."""
     try:
         result = float(value)
     except (TypeError, ValueError):
-        return math.nan
-    return result if math.isfinite(result) else math.nan
-
-
-DEFAULT_GAIN = 1.0
-DEFAULT_READ_NOISE = 0.0
+        return default
+    return result if math.isfinite(result) else default
 
 
 def frame_gain(header: Mapping[str, Any]) -> float:

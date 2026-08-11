@@ -12,7 +12,8 @@ def available_operations():
         module = import_module(f'{data_operations.__name__}.{module_name}')
         members = inspect.getmembers(module, inspect.isclass)
         for member in members:
-            if member[0] != 'BaseDataOperation' and issubclass(member[1], base_operation):
+            # Abstract subclasses are shared implementation, not operations to offer.
+            if issubclass(member[1], base_operation) and not inspect.isabstract(member[1]):
                 operations[member[1].name()] = member[1]
 
     return operations

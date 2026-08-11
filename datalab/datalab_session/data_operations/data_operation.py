@@ -62,7 +62,7 @@ class BaseDataOperation(ABC):
         """
         input_list = self.input_data.get(input_key, [])
         if not input_list or len(input_list) < minimum_inputs:
-            raise ClientAlertException(f'Operation {self.name()} requires at least {minimum_inputs} input file(s).')
+            raise ClientAlertException(f'Operation {self.name()} requires at least {minimum_inputs} input(s).')
         print(f'Validating inputs for {self.name()} operation: {input_list}')
         return input_list
 

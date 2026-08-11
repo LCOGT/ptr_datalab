@@ -7,5 +7,6 @@ class Format():
   FLOAT = 'float' # Floating point number data.
   INT = 'int' # Integer number data.
   SOURCE = 'source' # A source in the night sky, with associated coordinates
+  TARGET_POSITIONS = 'target_positions' # Target positions as {ra, dec}, optionally timed with an mjd
   # TABLE = 'table' # A table of data ex. future astro_source output
   # JSON = 'json' # Raw JSON data
