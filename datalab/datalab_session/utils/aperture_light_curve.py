@@ -34,7 +34,7 @@ from datalab.datalab_session.utils.fits_metadata import (
 from datalab.datalab_session.exceptions import LightCurveError
 from datalab.datalab_session.utils.target_location import TargetLocator
 from datalab.datalab_session.utils.geometry import (
-    angular_distance_arcsec,
+    angular_distances_arcsec,
     distance_pixels,
     minimum_neighbor_distances_arcsec,
 )
@@ -64,7 +64,8 @@ EDGE_MARGIN_PX = 2.0
 TARGET_PROXIMITY_FACTOR = 2.0
 # A larger recenter than this means the centroid was pulled onto a neighbour or host galaxy.
 TARGET_RECENTER_MAX_SHIFT_PX = 6.0
-DEFAULT_CROSSMATCH_ARCSEC = 1.0
+# Sized for the small astrometric spread between sites, not the tighter spread within one.
+DEFAULT_CROSSMATCH_ARCSEC = 2.5
 DEFAULT_APERTURE_RADIUS = 7.64
 DEFAULT_ANNULUS_INNER_RADIUS = 12.73
 DEFAULT_ANNULUS_OUTER_RADIUS = 19.10
@@ -159,7 +160,7 @@ class FrameContext:
 class CandidateCluster:
     """
         One field star's detections across frames. Mutable because cross-matching grows it row by
-        row; ra_deg/dec_deg stay the first detection's position, which later rows are matched against.
+        row; ra_deg/dec_deg are the mean of the rows so far, which later rows are matched against.
     """
     ra_deg: float
     dec_deg: float
@@ -167,13 +168,6 @@ class CandidateCluster:
     frame_paths: set[str] = field(default_factory=set)
     source_catalog_by_frame: dict[str, dict[str, Any]] = field(default_factory=dict)
     isolation_arcsec: float = math.inf
-
-    def matches(self, row: Mapping[str, Any]) -> bool:
-        """Whether a row is this same source, seen on another frame."""
-        return (
-            angular_distance_arcsec(row["ra_deg"], row["dec_deg"], self.ra_deg, self.dec_deg)
-            <= DEFAULT_CROSSMATCH_ARCSEC
-        )
 
     def add(self, row: Mapping[str, Any], fits_path: str) -> None:
         self.rows.append(row)
@@ -183,6 +177,22 @@ class CandidateCluster:
             "flux": row["flux"],
             "mag": row["mag"],
         }
+        # Incremental, since re-averaging every row per add costs the square of the series length.
+        self.ra_deg += (row["ra_deg"] - self.ra_deg) / len(self.rows)
+        self.dec_deg += (row["dec_deg"] - self.dec_deg) / len(self.rows)
+
+    def absorb(self, other: "CandidateCluster") -> None:
+        """
+            Takes over another cluster's detections. Where both hold the same frame the incumbent's
+            catalog entry stands, since the two describe one star.
+        """
+        total = len(self.rows) + len(other.rows)
+        self.ra_deg = (self.ra_deg * len(self.rows) + other.ra_deg * len(other.rows)) / total
+        self.dec_deg = (self.dec_deg * len(self.rows) + other.dec_deg * len(other.rows)) / total
+        self.rows.extend(other.rows)
+        self.frame_paths |= other.frame_paths
+        for fits_path, catalog_row in other.source_catalog_by_frame.items():
+            self.source_catalog_by_frame.setdefault(fits_path, catalog_row)
 
     @classmethod
     def started_by(cls, row: Mapping[str, Any], fits_path: str) -> "CandidateCluster":
@@ -859,19 +869,12 @@ def _build_field_star_catalog(
         rejected_for_target = int(np.count_nonzero(too_close_to_target_mask))
         rejected_for_edge = int(np.count_nonzero(~too_close_to_target_mask & too_close_to_edge_mask))
 
-        for row, target_rejected, edge_rejected in zip(rows, too_close_to_target_mask, too_close_to_edge_mask):
-            if target_rejected or edge_rejected:
-                continue
-            matched = False
-            for cluster in clusters:
-                if frame.fits_path in cluster.frame_paths:
-                    continue
-                if cluster.matches(row):
-                    cluster.add(row, frame.fits_path)
-                    matched = True
-                    break
-            if not matched:
-                clusters.append(CandidateCluster.started_by(row, frame.fits_path))
+        rejected_mask = too_close_to_target_mask | too_close_to_edge_mask
+        _assign_rows_to_clusters(
+            rows=[row for row, rejected in zip(rows, rejected_mask) if not rejected],
+            clusters=clusters,
+            fits_path=frame.fits_path,
+        )
         log.info(
             "Aperture Photometry comparison candidates processed: "
             f"frame={frame.fits_path}, extracted_rows={len(rows)}, "
@@ -882,11 +885,77 @@ def _build_field_star_catalog(
             on_frame(frame_index, len(frames))
 
     return _catalog_from_clusters(
-        clusters=clusters,
+        clusters=_merge_unresolvable_clusters(clusters, aperture_radius),
         target_pixels=target_pixels,
         frame_count=len(frames),
         min_coverage_fraction=min_coverage_fraction,
     )
+
+
+def _assign_rows_to_clusters(
+    *,
+    rows: Sequence[Mapping[str, Any]],
+    clusters: list[CandidateCluster],
+    fits_path: str,
+) -> None:
+    """
+        Adds one frame's catalog rows to the running clusters, each joining the nearest cluster
+        within DEFAULT_CROSSMATCH_ARCSEC, and starts a new cluster for every row left over. A
+        cluster takes at most one row per frame, holding one star's detections across frames.
+    """
+    cluster_ra = np.asarray([cluster.ra_deg for cluster in clusters], dtype=float)
+    cluster_dec = np.asarray([cluster.dec_deg for cluster in clusters], dtype=float)
+    claimed = np.zeros(cluster_ra.size, dtype=bool)
+    # One row at a time: the full row x cluster matrix runs to gigabytes on a dense field.
+    for row in rows:
+        nearest = -1
+        if cluster_ra.size:
+            separations = angular_distances_arcsec(row["ra_deg"], row["dec_deg"], cluster_ra, cluster_dec)
+            separations[claimed] = math.inf
+            closest = int(np.argmin(separations))
+            if separations[closest] <= DEFAULT_CROSSMATCH_ARCSEC:
+                nearest = closest
+        if nearest < 0:
+            clusters.append(CandidateCluster.started_by(row, fits_path))
+        else:
+            clusters[nearest].add(row, fits_path)
+            claimed[nearest] = True
+
+
+def _merge_unresolvable_clusters(
+    clusters: Sequence[CandidateCluster],
+    aperture_radius: float,
+) -> list[CandidateCluster]:
+    """
+        Merges clusters sitting closer together than one aperture radius. Centroiding searches an
+        aperture-radius box, so clusters that close all land on the same peak and report the same
+        counts; left separate they fill the ensemble with copies of one star.
+    """
+    ra = np.asarray([cluster.ra_deg for cluster in clusters], dtype=float)
+    dec = np.asarray([cluster.dec_deg for cluster in clusters], dtype=float)
+    # Union-find, so a chain of overlapping clusters merges as one. The lowest index wins every
+    # union, which keeps the result independent of sweep order.
+    parent = list(range(len(clusters)))
+
+    def anchor_of(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for index in range(len(clusters)):
+        separations = angular_distances_arcsec(float(ra[index]), float(dec[index]), ra, dec)
+        separations[index] = math.inf
+        for neighbor in np.flatnonzero(separations <= aperture_radius):
+            left, right = anchor_of(index), anchor_of(int(neighbor))
+            if left != right:
+                parent[max(left, right)] = min(left, right)
+
+    for index, cluster in enumerate(clusters):
+        anchor = anchor_of(index)
+        if anchor != index:
+            clusters[anchor].absorb(cluster)
+    return [cluster for index, cluster in enumerate(clusters) if anchor_of(index) == index]
 
 
 def _catalog_from_clusters(
