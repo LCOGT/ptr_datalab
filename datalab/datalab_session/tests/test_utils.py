@@ -8,8 +8,10 @@ from datalab.datalab_session.utils.flux_to_mag import flux_to_mag, flux_to_mag_a
 from datalab.datalab_session.utils.geometry import angular_distance_arcsec, distance_pixels
 from datalab.datalab_session.utils.centroiding import BackgroundModel, _fit_plane
 from datalab.datalab_session.utils.photometry import fractional_pixel_overlap, measure_aperture
-from datalab.datalab_session.utils.catalog_utils import cross_match_one_to_one, cone_filter, find_nearest_source
-from datalab.datalab_session.utils.gaia import GAIA_PARALLAX_ZERO_POINT_MAS, estimate_membership, gaia_cone_search
+from datalab.datalab_session.utils.catalog_utils import (cross_match_one_to_one, cone_filter, find_nearest_source,
+                                                         mean_observation_epoch, propagate_positions)
+from datalab.datalab_session.utils.gaia import (GAIA_EPOCH, GAIA_PARALLAX_ZERO_POINT_MAS, estimate_membership,
+                                                gaia_cone_search)
 from datalab.datalab_session.exceptions import ClientAlertException
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 
@@ -177,6 +179,12 @@ class FileUtilsTestClass(FileExtendedTestCase):
 
 class CatalogUtilsTestClass(FileExtendedTestCase):
 
+  epoch_test_path = 'datalab/datalab_session/tests/test_files/temp_epoch_{}.fits'
+
+  def tearDown(self):
+    self.clean_test_dir()
+    return super().tearDown()
+
   @staticmethod
   def catalog(dec_offsets_arcsec, ra=150.0, dec=30.0):
     """ Builds a minimal catalog dict of points offset north of (ra, dec) by arcseconds """
@@ -184,6 +192,46 @@ class CatalogUtilsTestClass(FileExtendedTestCase):
       'ra': np.full(len(dec_offsets_arcsec), ra),
       'dec': dec + np.array(dec_offsets_arcsec) / 3600.0,
     }
+
+  def write_dated_fits(self, path, date_obs):
+    sci_hdu = fits.ImageHDU(data=np.zeros((2, 2), dtype=np.float32), header=fits.Header({'DATE-OBS': date_obs}),
+                            name='SCI')
+    fits.HDUList([fits.PrimaryHDU(), sci_hdu]).writeto(path, overwrite=True)
+    return path
+
+  def test_mean_observation_epoch(self):
+    # midway between the two exposures, half a year into 2026
+    paths = [self.write_dated_fits(self.epoch_test_path.format(index), date_obs)
+             for index, date_obs in enumerate(['2026-01-01T00:00:00.000', '2027-01-01T00:00:00.000'])]
+
+    self.assertAlmostEqual(mean_observation_epoch(paths), 2026.5, places=3)
+    self.assertAlmostEqual(mean_observation_epoch(paths[:1]), 2026.0, places=3)
+
+  @staticmethod
+  def catalog_columns(*columns):
+    """ propagate_positions takes the float arrays a catalog is read into, as gaia.py returns """
+    return [np.array(column, dtype=float) for column in columns]
+
+  def test_propagate_positions_moves_stars_along_proper_motion(self):
+    # 3600 mas/yr for 10 years is exactly 36 arcsec of great-circle motion in each axis
+    columns = self.catalog_columns([150.0], [30.0], [3600.0], [3600.0])
+
+    ra, dec = propagate_positions(*columns, 2016.0, 2026.0)
+
+    self.assertAlmostEqual(dec[0], 30.0 + 36.0 / 3600.0, places=9)
+    # pmra is pmra*, so the same angle covers more degrees of RA away from the equator
+    self.assertAlmostEqual(ra[0], 150.0 + (36.0 / 3600.0) / np.cos(np.radians(30.0)), places=9)
+
+  def test_propagate_positions_keeps_stars_without_proper_motion(self):
+    columns = self.catalog_columns([150.0, 151.0], [30.0, 31.0], [np.nan, 100.0], [np.nan, np.nan])
+
+    ra, dec = propagate_positions(*columns, 2016.0, 2026.0)
+
+    self.assertAlmostEqual(ra[0], 150.0)
+    self.assertAlmostEqual(dec[0], 30.0)
+    # a partial solution still moves in the axis it has
+    self.assertGreater(ra[1], 151.0)
+    self.assertAlmostEqual(dec[1], 31.0)
 
   def test_cross_match_matches_within_radius(self):
     catalog_a = self.catalog([0.0, 10.0])
@@ -325,6 +373,46 @@ class GaiaUtilsTestClass(FileExtendedTestCase):
     with self.assertRaisesRegex(ClientAlertException, 'Gaia'):
       gaia_cone_search(33.3333, 44.4444, 10.0)
 
+  @staticmethod
+  def cluster_in_field(rng, cluster_pmra, cluster_pmdec, n_cluster=40, n_field=160):
+    """ A tight cluster clump in a broad field centered on zero proper motion, with the cluster
+    nearby (7.4 mas parallax, ~135 pc) and the field scattered behind it """
+    pmra = np.concatenate([rng.normal(cluster_pmra, 0.4, n_cluster), rng.normal(0.0, 4.0, n_field)])
+    pmdec = np.concatenate([rng.normal(cluster_pmdec, 0.4, n_cluster), rng.normal(0.0, 4.0, n_field)])
+    parallax = np.concatenate([rng.normal(7.4, 0.1, n_cluster), rng.uniform(0.1, 2.0, n_field)])
+    distance = np.concatenate([rng.normal(135.0, 5.0, n_cluster), rng.uniform(500.0, 3000.0, n_field)])
+    return pmra, pmdec, parallax, distance
+
+  def test_estimate_membership_finds_clump_far_from_field_median(self):
+    rng = np.random.default_rng(5)
+    # a Pleiades-like cluster moving at 49 mas/yr, and only a fifth of the pool - a fixed window
+    # around the field's median proper motion would bin it away entirely and lock onto the field
+    pmra, pmdec, parallax, distance = self.cluster_in_field(rng, 20.0, -45.0)
+
+    guess = estimate_membership(pmra, pmdec, parallax, distance, distance - 10.0, distance + 10.0)
+
+    self.assertIsNotNone(guess)
+    self.assertAlmostEqual(guess['pmra'], 20.0, delta=0.5)
+    self.assertAlmostEqual(guess['pmdec'], -45.0, delta=0.5)
+    # the windows follow the cluster, not the field it is embedded in
+    self.assertLess(guess['parallax_min'], 7.4)
+    self.assertGreater(guess['parallax_max'], 7.4)
+    self.assertLess(guess['distance_min'], 135.0)
+    self.assertGreater(guess['distance_max'], 135.0)
+
+  def test_estimate_membership_tolerates_high_proper_motion_stray(self):
+    rng = np.random.default_rng(5)
+    # one foreground star crossing the sky at 8 arcsec/yr must not stretch the histogram over it
+    pmra, pmdec, parallax, distance = self.cluster_in_field(rng, 20.0, -45.0)
+    pmra, pmdec = np.append(pmra, 8000.0), np.append(pmdec, -3000.0)
+    parallax, distance = np.append(parallax, 500.0), np.append(distance, 2.0)
+
+    guess = estimate_membership(pmra, pmdec, parallax, distance, distance - 10.0, distance + 10.0)
+
+    self.assertIsNotNone(guess)
+    self.assertAlmostEqual(guess['pmra'], 20.0, delta=0.5)
+    self.assertAlmostEqual(guess['pmdec'], -45.0, delta=0.5)
+
   def test_estimate_membership_finds_clump(self):
     rng = np.random.default_rng(42)
     # a 40 star cluster clump at (-5, 3) mas/yr among 20 spread out field stars
@@ -349,14 +437,15 @@ class GaiaUtilsTestClass(FileExtendedTestCase):
     self.assertGreater(guess['distance_max'], 800.0)
     self.assertGreaterEqual(guess['distance_min'], 0.0)
 
-  def test_estimate_membership_distance_window_optional(self):
+  def test_estimate_membership_without_member_distances(self):
     rng = np.random.default_rng(42)
     pmra = np.concatenate([rng.normal(-5.0, 0.3, 40), rng.uniform(-20.0, 20.0, 20)])
     pmdec = np.concatenate([rng.normal(3.0, 0.3, 40), rng.uniform(-20.0, 20.0, 20)])
     parallax = np.concatenate([rng.normal(1.25, 0.05, 40), rng.uniform(0.1, 2.0, 20)])
+    # no source has a Bailer-Jones distance - the distance window is left unset
+    distance = np.full(60, np.nan)
 
-    # no distances supplied - the distance window is left unset
-    guess = estimate_membership(pmra, pmdec, parallax)
+    guess = estimate_membership(pmra, pmdec, parallax, distance, distance, distance)
 
     self.assertIsNotNone(guess)
     self.assertIsNone(guess['distance_min'])
@@ -366,8 +455,9 @@ class GaiaUtilsTestClass(FileExtendedTestCase):
     pmra = np.full(5, -5.0)
     pmdec = np.full(5, 3.0)
     parallax = np.full(5, 1.25)
+    distance = np.full(5, 800.0)
 
-    self.assertIsNone(estimate_membership(pmra, pmdec, parallax))
+    self.assertIsNone(estimate_membership(pmra, pmdec, parallax, distance, distance - 40.0, distance + 40.0))
 
   def test_estimate_membership_no_clump(self):
     rng = np.random.default_rng(7)
@@ -375,16 +465,18 @@ class GaiaUtilsTestClass(FileExtendedTestCase):
     pmra = rng.uniform(-20.0, 20.0, 40)
     pmdec = rng.uniform(-20.0, 20.0, 40)
     parallax = rng.uniform(0.1, 2.0, 40)
+    distance = rng.uniform(100.0, 3000.0, 40)
 
-    self.assertIsNone(estimate_membership(pmra, pmdec, parallax))
+    self.assertIsNone(estimate_membership(pmra, pmdec, parallax, distance, distance - 40.0, distance + 40.0))
 
   def test_estimate_membership_tolerates_negative_parallax(self):
     rng = np.random.default_rng(11)
     pmra = rng.normal(0.0, 0.2, 15)
     pmdec = rng.normal(0.0, 0.2, 15)
     parallax = rng.normal(-0.05, 0.02, 15)  # a distant clump can measure slightly negative
+    distance = rng.normal(15000.0, 500.0, 15)
 
-    guess = estimate_membership(pmra, pmdec, parallax)
+    guess = estimate_membership(pmra, pmdec, parallax, distance, distance - 2000.0, distance + 2000.0)
 
     self.assertIsNotNone(guess)
     self.assertLess(guess['parallax_min'], 0.0)

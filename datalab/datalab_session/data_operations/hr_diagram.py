@@ -9,11 +9,13 @@ from datalab.datalab_session.utils.catalog_utils import (
   cone_filter,
   cross_match_one_to_one,
   extract_calibrated_catalog,
+  mean_observation_epoch,
+  propagate_positions,
   wcs_contains_point,
 )
 from datalab.datalab_session.utils.filecache import FileCache
 from datalab.datalab_session.utils.format import Format
-from datalab.datalab_session.utils.gaia import estimate_membership, gaia_cone_search
+from datalab.datalab_session.utils.gaia import GAIA_EPOCH, estimate_membership, gaia_cone_search
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -22,9 +24,8 @@ log.setLevel(logging.INFO)
 class HRDiagram(BaseDataOperation):
   # Fixed blue<->red match tolerance for matching stars between the two
   MATCH_RADIUS_ARCSEC = 2.0
-  # Tighter tolerance for matching our stars to Gaia. Gaia DR3 positions are epoch 2016.0,
-  # so 1 arcsec also tolerates ~a decade of <100 mas/yr proper motion
-  GAIA_MATCH_RADIUS_ARCSEC = 1.0
+  # Tolerance for matching stars with Gaia, after propagating gaia results to the epoch of the input images
+  GAIA_MATCH_RADIUS_ARCSEC = 0.5
   # Keep only the brightest N matched stars to bound the output payload
   MAX_OUTPUT_SOURCES = 5000
   # Also emit up to this many of the brightest Gaia sources that did NOT match an image star
@@ -176,11 +177,17 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
     red_mag, red_magerr = red_mag[in_cone][brightest], red_magerr[in_cone][brightest]
 
     # Gaia enrichment: proper motions + parallaxes for cluster membership selection.
-    # A Gaia failure raises and fails the operation (re-runnable) rather than silently
-    # caching a membership-less result for 30 days
+    # A Gaia failure raises and fails the operation
     gaia_data = gaia_cone_search(cluster_ra, cluster_dec, search_radius_arcmin)
     self._report_progress('gaia_query')
-    star_indices, gaia_indices = cross_match_one_to_one({'ra': ra, 'dec': dec}, gaia_data,
+
+    # Gaia positions are catalogued at epoch 2016.0, so drift them along their proper motions to
+    # when the input images were taken
+    match_epoch = mean_observation_epoch([blue_catalog['fits_path'], red_catalog['fits_path']])
+    gaia_ra, gaia_dec = propagate_positions(gaia_data['ra'], gaia_data['dec'],
+                                            gaia_data['pmra'], gaia_data['pmdec'], GAIA_EPOCH, match_epoch)
+    star_indices, gaia_indices = cross_match_one_to_one({'ra': ra, 'dec': dec},
+                                                        {'ra': gaia_ra, 'dec': gaia_dec},
                                                         HRDiagram.GAIA_MATCH_RADIUS_ARCSEC)
     gaia_for_star = {int(star): int(gaia) for star, gaia in zip(star_indices, gaia_indices)}
 
@@ -210,9 +217,6 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
       return round(value, 4) if np.isfinite(value) else None
 
     def gaia_astrometry(gaia_index):
-      # proper motion, parallax, Bailer-Jones geometric distance, and the gaia_match flag for a
-      # star (r_med_geo estimate + r_lo_geo/r_hi_geo 16th/84th percentile bounds.
-      # The astrometry fields are None when the star has no match.
       matched = gaia_index is not None
       def value(column):
         return gaia_value(column, gaia_index) if matched else None
@@ -230,7 +234,6 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
       }
 
     cmd_points = []
-    # Iterate over points found in our input images and fill in gaia extra details
     for i in range(len(ra)):
       point = {
         'ra': round(float(ra[i]), 6),
@@ -256,8 +259,9 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
       blue_err = gaia_value(f'{blue_synth}_mag_error', gaia_index)
       red_err = gaia_value(f'{red_synth}_mag_error', gaia_index)
       point = {
-        'ra': round(float(gaia_data['ra'][gaia_index]), 6),
-        'dec': round(float(gaia_data['dec'][gaia_index]), 6),
+        # propagated positions, so gaia-only stars share the image stars' epoch on sky plots
+        'ra': round(float(gaia_ra[gaia_index]), 6),
+        'dec': round(float(gaia_dec[gaia_index]), 6),
         'g_mag': gaia_value('phot_g_mean_mag', gaia_index),
         'mag': red_synth_mag,
         'magerr': red_err,
@@ -290,12 +294,13 @@ The calibrated photometry catalogs of the two images are cross-matched by sky po
       ]
     }
     log.info(f'HR Diagram output {n_image_stars} image stars from {len(blue_indices)} band matches, '
-             f'{len(star_indices)} Gaia matched, plus {len(gaia_only_indices)} Gaia-only stars')
+             f'{len(star_indices)} Gaia matched at epoch {match_epoch:.2f}, '
+             f'plus {len(gaia_only_indices)} Gaia-only stars')
 
     self.set_output(output, is_raw=True)
     self._report_progress('done')
     self.set_status('COMPLETED')
 
   def _report_progress(self, step):
-      self.set_operation_progress(HRDiagram.PROGRESS_STEPS[step].progress)
-      self.set_message(HRDiagram.PROGRESS_STEPS[step].message)
+    self.set_operation_progress(HRDiagram.PROGRESS_STEPS[step].progress)
+    self.set_message(HRDiagram.PROGRESS_STEPS[step].message)

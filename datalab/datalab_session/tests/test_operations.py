@@ -8,6 +8,7 @@ import math
 import os
 
 from astropy.io import fits
+from astropy.time import Time
 from astropy.wcs import WCS
 import numpy as np
 
@@ -22,6 +23,7 @@ from datalab.datalab_session.data_operations.stacking import Stack
 from datalab.datalab_session.tests.test_files.file_extended_test_case import FileExtendedTestCase
 from datalab.datalab_session.utils.format import Format
 from datalab.datalab_session.utils.aperture_light_curve import LightCurveRow
+from datalab.datalab_session.utils.gaia import GAIA_EPOCH
 
 wizard_description = {
             'name': 'SampleDataOperation',
@@ -487,26 +489,44 @@ class TestHRDiagramOperation(FileExtendedTestCase):
 
     CENTER_RA = 150.0
     CENTER_DEC = 30.0
+    # the two bands are observed a couple of nights apart; Gaia positions are propagated from
+    # epoch 2016.0 to the mean of the two
+    BLUE_DATE_OBS = '2026-04-01T10:00:00.000'
+    RED_DATE_OBS = '2026-04-03T10:00:00.000'
 
     def tearDown(self):
         self.clean_test_dir()
         return super().tearDown()
 
+    @classmethod
+    def match_epoch(cls):
+        return Time([cls.BLUE_DATE_OBS, cls.RED_DATE_OBS], scale='utc').jyear.mean()
+
     @staticmethod
-    def create_test_fits(path, center_ra, center_dec, ra, dec, mag, magerr, include_radec=True, include_mag=True):
+    def create_test_fits(path, center_ra, center_dec, ra, dec, mag, magerr, include_radec=True, include_mag=True,
+                         date_obs=BLUE_DATE_OBS, flag=None, peak=None, saturate=None):
         """ Writes a fits file with a WCS'd SCI HDU and a CAT HDU like a reduced image's catalog """
         wcs = WCS(naxis=2)
         wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN']
         wcs.wcs.crval = [center_ra, center_dec]
         wcs.wcs.crpix = [100.0, 100.0]
         wcs.wcs.cdelt = [-1.0 / 3600.0, 1.0 / 3600.0]
-        sci_hdu = fits.ImageHDU(data=np.zeros((200, 200), dtype=np.float32), header=wcs.to_header(), name='SCI')
+        sci_header = wcs.to_header()
+        sci_header['DATE-OBS'] = date_obs
+        if saturate is not None:
+            sci_header['SATURATE'] = saturate
+        sci_hdu = fits.ImageHDU(data=np.zeros((200, 200), dtype=np.float32), header=sci_header, name='SCI')
 
         x, y = wcs.all_world2pix(np.asarray(ra), np.asarray(dec), 1)
         columns = [
             fits.Column(name='x', format='D', array=x),
             fits.Column(name='y', format='D', array=y),
         ]
+        # the extraction quality columns a real CAT carries, omitted unless a test exercises them
+        if flag is not None:
+            columns.append(fits.Column(name='flag', format='K', array=np.asarray(flag)))
+        if peak is not None:
+            columns.append(fits.Column(name='peak', format='D', array=np.asarray(peak)))
         if include_radec:
             columns += [
                 fits.Column(name='ra', format='D', array=np.asarray(ra)),
@@ -592,7 +612,8 @@ class TestHRDiagramOperation(FileExtendedTestCase):
         self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC,
                               blue_ra, blue_dec, blue_mag, np.full(len(blue_mag), 0.02))
         self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC,
-                              red_ra, red_dec, red_mag, np.full(len(red_mag), 0.03))
+                              red_ra, red_dec, red_mag, np.full(len(red_mag), 0.03),
+                              date_obs=self.RED_DATE_OBS)
         self.mock_band_fits(mock_file_cache)
 
         # Gaia knows the four brightest cluster stars, plus a stray with no photometric counterpart
@@ -669,7 +690,7 @@ class TestHRDiagramOperation(FileExtendedTestCase):
         self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC,
                               star_ra, star_dec, red_mags + 0.5, np.full(2, 0.02))
         self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC,
-                              star_ra, star_dec, red_mags, np.full(2, 0.03))
+                              star_ra, star_dec, red_mags, np.full(2, 0.03), date_obs=self.RED_DATE_OBS)
         self.mock_band_fits(mock_file_cache)
 
         # five unmatched Gaia field stars: G mags shuffled, one with no G mag at all,
@@ -708,6 +729,49 @@ class TestHRDiagramOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
     @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_gaia_positions_propagated_to_image_epoch(self, mock_file_cache, mock_gaia_cone_search):
+        # one image star whose Gaia counterpart is a fast mover, and one fast moving Gaia stray
+        # with no image counterpart
+        star_ra = np.full(1, self.CENTER_RA)
+        star_dec = np.array([self.CENTER_DEC + 10.0 / 3600.0])
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC,
+                              star_ra, star_dec, [15.5], [0.02])
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC,
+                              star_ra, star_dec, [15.0], [0.03], date_obs=self.RED_DATE_OBS)
+        self.mock_band_fits(mock_file_cache)
+
+        years = self.match_epoch() - GAIA_EPOCH
+        # 300 mas/yr in dec leaves the counterpart's catalogued 2016.0 position arcseconds away,
+        # far outside the match radius until it is propagated to the images' epoch
+        matched_drift_deg = 300.0 * years / 1000.0 / 3600.0
+        self.assertGreater(matched_drift_deg * 3600.0, HRDiagram.GAIA_MATCH_RADIUS_ARCSEC)
+        # the stray moves in RA instead, a minute of arc south of the image star
+        stray_dec = self.CENTER_DEC - 60.0 / 3600.0
+        stray_drift_deg = 400.0 * years / 1000.0 / 3600.0 / np.cos(np.radians(stray_dec))
+        mock_gaia_cone_search.return_value = self.gaia_field(
+            ra=[self.CENTER_RA, self.CENTER_RA],
+            dec=[star_dec[0] - matched_drift_deg, stray_dec],
+            pmra=[0.0, 400.0],
+            pmdec=[300.0, 0.0],
+            parallax=[1.2, 1.3],
+        )
+
+        hr_diagram = HRDiagram(self.hr_input_data())
+        hr_diagram.operate(None)
+        output = hr_diagram.get_output()['output_data'][0]
+
+        # the fast mover matches once propagated forward onto the image star
+        self.assertEqual(output['n_gaia_matched'], 1)
+        self.assertAlmostEqual(output['cmd'][0]['pmdec'], 300.0)
+        # the image star keeps its own measured position
+        self.assertAlmostEqual(output['cmd'][0]['dec'], star_dec[0], places=6)
+        # the gaia-only stray is emitted at its propagated position, not its 2016.0 one
+        self.assertEqual(output['n_gaia_only'], 1)
+        self.assertAlmostEqual(output['cmd'][1]['ra'], self.CENTER_RA + stray_drift_deg, places=5)
+        self.assertAlmostEqual(output['cmd'][1]['dec'], stray_dec, places=6)
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
     def test_cone_filter_excludes_far_stars(self, mock_file_cache, mock_gaia_cone_search):
         # two stars near the center and one 3 arcmin away, with a 1 arcmin search radius
         ra = np.full(3, self.CENTER_RA)
@@ -716,7 +780,8 @@ class TestHRDiagramOperation(FileExtendedTestCase):
         magerr = np.full(3, 0.02)
 
         self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag + 0.5, magerr)
-        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr,
+                              date_obs=self.RED_DATE_OBS)
         self.mock_band_fits(mock_file_cache)
         mock_gaia_cone_search.return_value = self.empty_gaia_data()
 
@@ -732,6 +797,49 @@ class TestHRDiagramOperation(FileExtendedTestCase):
 
     @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
     @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_flagged_and_saturated_sources_are_dropped(self, mock_file_cache, mock_gaia_cone_search):
+        # four stars in both bands: a clean one, one flagged as a blend in the blue image, one whose
+        # red peak is saturated, and one whose red peak is just under the saturation level
+        ra = np.full(4, self.CENTER_RA)
+        dec = self.CENTER_DEC + np.array([10.0, 20.0, 30.0, 40.0]) / 3600.0
+        mag = np.array([15.0, 16.0, 17.0, 18.0])
+        magerr = np.full(4, 0.02)
+
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag + 0.5, magerr,
+                              flag=[0, 1, 0, 0], peak=np.full(4, 1000.0), saturate=65000.0)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr,
+                              date_obs=self.RED_DATE_OBS,
+                              flag=[0, 0, 0, 0], peak=[1000.0, 1000.0, 70000.0, 64999.0], saturate=65000.0)
+        self.mock_band_fits(mock_file_cache)
+        mock_gaia_cone_search.return_value = self.empty_gaia_data()
+
+        hr_diagram = HRDiagram(self.hr_input_data())
+        hr_diagram.operate(None)
+        output = hr_diagram.get_output()['output_data'][0]
+
+        # only the clean star and the just-under-saturation one survive both bands' cuts
+        self.assertEqual(output['n_stars'], 2)
+        self.assertEqual([point['mag'] for point in output['cmd']], [15.0, 18.0])
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
+    def test_all_sources_flagged_fails(self, mock_file_cache):
+        ra = np.full(2, self.CENTER_RA)
+        dec = self.CENTER_DEC + np.array([10.0, 20.0]) / 3600.0
+        mag = np.array([15.0, 16.0])
+        magerr = np.full(2, 0.02)
+
+        self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag + 0.5, magerr,
+                              flag=[2, 8])
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr,
+                              date_obs=self.RED_DATE_OBS)
+        self.mock_band_fits(mock_file_cache)
+
+        hr_diagram = HRDiagram(self.hr_input_data())
+        with self.assertRaisesRegex(ClientAlertException, 'No calibrated sources'):
+            hr_diagram.operate(None)
+
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.gaia_cone_search')
+    @mock.patch('datalab.datalab_session.data_operations.hr_diagram.FileCache')
     def test_radec_from_wcs_fallback(self, mock_file_cache, mock_gaia_cone_search):
         # the blue catalog has no ra/dec columns, so they are computed from its x/y and WCS
         ra = np.full(3, self.CENTER_RA)
@@ -741,7 +849,8 @@ class TestHRDiagramOperation(FileExtendedTestCase):
 
         self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag + 0.5, magerr,
                               include_radec=False)
-        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr,
+                              date_obs=self.RED_DATE_OBS)
         self.mock_band_fits(mock_file_cache)
         mock_gaia_cone_search.return_value = self.empty_gaia_data()
 
@@ -764,7 +873,8 @@ class TestHRDiagramOperation(FileExtendedTestCase):
         magerr = np.full(2, 0.02)
 
         self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag + 0.5, magerr)
-        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr,
+                              date_obs=self.RED_DATE_OBS)
         self.mock_band_fits(mock_file_cache)
         mock_gaia_cone_search.side_effect = ClientAlertException('Could not fetch Gaia data for the cluster field')
 
@@ -781,7 +891,8 @@ class TestHRDiagramOperation(FileExtendedTestCase):
 
         self.create_test_fits(self.temp_blue_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr,
                               include_mag=False)
-        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr)
+        self.create_test_fits(self.temp_red_path, self.CENTER_RA, self.CENTER_DEC, ra, dec, mag, magerr,
+                              date_obs=self.RED_DATE_OBS)
         self.mock_band_fits(mock_file_cache)
 
         hr_diagram = HRDiagram(self.hr_input_data())

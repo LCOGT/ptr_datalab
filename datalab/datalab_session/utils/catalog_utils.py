@@ -3,6 +3,7 @@ import logging
 import numpy as np
 from astropy import units as u
 from astropy.coordinates import SkyCoord
+from astropy.time import Time
 from astropy.wcs import WCS
 
 from datalab.datalab_session.exceptions import ClientAlertException
@@ -20,7 +21,8 @@ def extract_calibrated_catalog(fits_path: str, basename: str = '') -> dict:
   - Requires calibrated mag/magerr columns, there is no instrumental flux fallback
     since an un-zero-pointed magnitude makes a color meaningless
   - Computes ra/dec from the x/y columns and the SCI WCS when the CAT lacks them
-  - Drops rows with non-finite values in any returned column
+  - Drops rows with non-finite values in any returned column, and rows whose photometry
+    the extraction itself flagged as unreliable (see reliable_photometry)
   """
   cat_data = get_hdu(fits_path, 'CAT').data
 
@@ -37,8 +39,33 @@ def extract_calibrated_catalog(fits_path: str, basename: str = '') -> dict:
   else:
     ra, dec = ra_dec_from_wcs(fits_path, cat_data, basename)
 
-  valid = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(mag) & np.isfinite(magerr)
+  finite = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(mag) & np.isfinite(magerr)
+  valid = finite & reliable_photometry(fits_path, cat_data)
+  log.info(f'{basename} catalog: {int(valid.sum())} usable sources of {len(mag)} '
+           f'({int((finite & ~valid).sum())} dropped as unreliable photometry)')
   return {'ra': ra[valid], 'dec': dec[valid], 'mag': mag[valid], 'magerr': magerr[valid]}
+
+
+def reliable_photometry(fits_path: str, cat_data) -> np.ndarray:
+  """
+  Boolean mask of the catalog rows whose magnitude can be trusted.
+
+  Two cuts, both on sources whose measured flux is systematically low:
+  - a non-zero extraction flag: the source was deblended, truncated by an image edge or had its
+    aperture corrupted.
+  - a peak pixel at or above the detector's saturation level, where the stellar profile is clipped
+  """
+  reliable = np.ones(len(cat_data), dtype=bool)
+
+  if 'flag' in cat_data.names:
+    reliable &= np.asarray(cat_data['flag'], dtype=int) == 0
+
+  if 'peak' in cat_data.names:
+    saturate = get_fits_header(fits_path, 'SCI').get('SATURATE')
+    if saturate:
+      reliable &= np.asarray(cat_data['peak'], dtype=float) < float(saturate)
+
+  return reliable
 
 
 def ra_dec_from_wcs(fits_path: str, cat_data, basename: str = ''):
@@ -60,6 +87,32 @@ def ra_dec_from_wcs(fits_path: str, cat_data, basename: str = ''):
   # origin=1: source extractor catalog x/y positions use the FITS 1-based convention
   ra, dec = wcs.all_pix2world(cat_data['x'], cat_data['y'], 1)
   return np.asarray(ra, dtype=float), np.asarray(dec, dtype=float)
+
+
+def mean_observation_epoch(fits_paths: list) -> float:
+  """
+  The mean DATE-OBS of the given images as a Julian year (e.g. 2026.25), for propagating an
+  external catalog's positions to the epoch the images were actually taken.
+  """
+  epochs = [Time(get_fits_header(fits_path, 'SCI')['DATE-OBS'], scale='utc').jyear for fits_path in fits_paths]
+  return float(np.mean(epochs))
+
+
+def propagate_positions(ra, dec, pmra, pmdec, from_epoch: float, to_epoch: float):
+  """
+  Propagates catalog positions (float arrays of degrees) from from_epoch to to_epoch (Julian
+  years) along their proper motions (float arrays of mas/yr).
+
+  Sources without a proper motion (nan) keep their catalog positions.
+
+  Returns (ra, dec) arrays in degrees.
+  """
+  years = to_epoch - from_epoch
+  degrees_per_mas = 1.0 / (3600.0 * 1000.0)
+  delta_ra = pmra * years * degrees_per_mas / np.cos(np.radians(dec))
+  delta_dec = pmdec * years * degrees_per_mas
+  # a source with no proper motion solution has nan pmra/pmdec, and stays at its catalog position
+  return ra + np.where(np.isnan(delta_ra), 0.0, delta_ra), dec + np.where(np.isnan(delta_dec), 0.0, delta_dec)
 
 
 def cross_match_one_to_one(catalog_a: dict, catalog_b: dict, match_radius_arcsec: float):
@@ -97,9 +150,7 @@ def cross_match_one_to_one(catalog_a: dict, catalog_b: dict, match_radius_arcsec
 def find_nearest_source(ra, dec, target_ra: float, target_dec: float, radius_arcsec: float):
   """
   Returns the index of the (ra, dec) point source closest to the target, or None when the closest one
-  is further away than radius_arcsec. All coordinates in degrees.Matches on true angular separation
-  rather than a coordinate box, so the tolerance does not shrink with declination and RA wraparound
-  is handled.
+  is further away than radius_arcsec. All coordinates in degrees. Matches on true angular separation.
   """
   ra = np.asarray(ra, dtype=float)
   dec = np.asarray(dec, dtype=float)

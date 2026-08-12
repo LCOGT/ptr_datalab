@@ -11,13 +11,9 @@ log.setLevel(logging.INFO)
 GAIA_TABLE = 'gaiadr3.gaia_source'
 GAIA_SYNTH_TABLE = 'gaiadr3.synthetic_photometry_gspc'
 # Bailer-Jones et al. (2021) geometric distances (external.gaiaedr3_distance): a Bayesian
-# posterior with a direction-dependent distance prior, so the estimate is always positive and
-# well behaved even where the parallax is negative or low-significance.
-# r_med_geo is the point estimate (parsecs); r_lo_geo / r_hi_geo are the 16th / 84th
-# percentiles (asymmetric, 1-sigma-like bounds). source_ids match gaiadr3.gaia_source.
-# Photogeometric columns (r_med_photogeo,...) are sharper where BP/RP photometry is good but bake in a Galactic CMD population model;
-# geometric is the robust default and assumes nothing photometric about the sources.
+# posterior with a direction-dependent distance prior, so the estimate is always positive.
 GAIA_DISTANCE_TABLE = 'external.gaiaedr3_distance'
+# r_med_geo is the point estimate (parsecs); r_lo_geo / r_hi_geo are the 16th / 84th
 GAIA_DISTANCE_COLUMNS = ['r_med_geo', 'r_lo_geo', 'r_hi_geo']
 GAIA_SOURCE_COLUMNS = ['ra', 'dec', 'pmra', 'pmra_error', 'pmdec', 'pmdec_error', 'parallax', 'parallax_error',
                        'phot_g_mean_mag']
@@ -32,6 +28,8 @@ GAIA_COLUMNS = GAIA_SOURCE_COLUMNS + GAIA_DISTANCE_COLUMNS + [f'{band}_mag' for 
 GAIA_SYNTH_MAG_ERROR_FLOOR = 0.03
 # RUWE < 1.4 is the standard threshold for well behaved astrometric solutions from Lindegren's Gaia astrometry notes
 GAIA_RUWE_LIMIT = 1.4
+# The J2016.0 Epoch Gaia data is reported in
+GAIA_EPOCH = 2016.0
 # Mean Gaia DR3 parallax zero-point offset (Lindegren et al. 2021): observed parallaxes
 # run ~17 microarcsec too small, so add it back
 GAIA_PARALLAX_ZERO_POINT_MAS = 0.017
@@ -41,10 +39,25 @@ GAIA_CACHE_DURATION = 60 * 60 * 24 * 30  # 30 days
 
 # membership_guess tuning
 MIN_GAIA_MATCHES_FOR_GUESS = 10  # too few matched stars to call a clump
-PM_HISTOGRAM_HALF_WIDTH = 25.0   # mas/yr searched around the median proper motion
 PM_HISTOGRAM_BIN = 1.0           # mas/yr cell size, ~cluster clump scale
+# PM Histogram sizes the half width from the 1st-99th percentile spread
+PM_HISTOGRAM_PERCENTILES = (1.0, 99.0)
+# PM Histogram upper/lower bounds for clustering
+PM_HISTOGRAM_HALF_WIDTH_BOUNDS = (25.0, 150.0)  # mas/yr
 MIN_CLUMP_COUNT = 5              # peak cells below this are noise, not a cluster
 PM_RADIUS_BOUNDS = (0.5, 5.0)    # mas/yr allowed range for the suggested clump radius
+# a clump straddling bin edges would be split below MIN_CLUMP_COUNT, so it is judged (and its
+# center refined) from the stars within this many bins of the peak cell
+CLUMP_NEIGHBORHOOD_BINS = 2.0
+# scales a median absolute deviation to the equivalent gaussian sigma
+MAD_TO_SIGMA = 1.4826
+# each suggested window (pm radius, parallax, distance) reaches this many sigma from its center
+WINDOW_SIGMAS = 3.0
+# with fewer members carrying a measured parallax / distance, that window is left unset
+MIN_MEMBERS_FOR_WINDOW = 3
+# floor on the parallax scatter (mas), so a clump of near-identical parallaxes still gets a
+# window wide enough to select with
+MIN_PARALLAX_SIGMA_MAS = 0.05
 
 
 def gaia_cone_search(center_ra: float, center_dec: float, radius_arcmin: float) -> dict:
@@ -87,10 +100,7 @@ def _query_gaia(center_ra: float, center_dec: float, radius_arcmin: float) -> di
     AND g.ruwe < {GAIA_RUWE_LIMIT}
   """
   try:
-    # This launches off an async query to the GAIA service
     job = Gaia.launch_job_async(query, verbose=False)
-    # This waits synchronously for the results of the GAIA query, which is fine since this operation happens in a worker.
-    # If this takes longer than the timeout limit of the worker task (1 hour), this task will die.
     table = job.get_results()
   except Exception as e:
     log.error(f'Gaia cone search failed for ({center_ra}, {center_dec}) r={radius_arcmin}\': {e}')
@@ -98,11 +108,10 @@ def _query_gaia(center_ra: float, center_dec: float, radius_arcmin: float) -> di
                                'be temporarily unavailable, try re-running the operation later.')
 
   def column_values(name):
-    # Get rid of nans from the returned data
+    # Set missing data to NaN value
     return np.ma.filled(np.ma.masked_invalid(table[name].data), np.nan).astype(float)
 
   gaia_data = {column: column_values(column) for column in GAIA_COLUMNS}
-  # Adjust the parallax by the adjustment factor
   gaia_data['parallax'] = gaia_data['parallax'] + GAIA_PARALLAX_ZERO_POINT_MAS
   # propagate synthetic flux errors to magnitude errors, on a systematic floor
   for band in GAIA_SYNTH_BANDS:
@@ -120,15 +129,13 @@ def _query_gaia(center_ra: float, center_dec: float, radius_arcmin: float) -> di
 def _member_distance_window(distance, distance_lo, distance_hi, finite_pm, members):
   """
   Builds a (distance_min, distance_max) parsec window from the clump members' Bailer-Jones
-  distances, or (None, None) when distances weren't supplied or too few members have one.
+  distances, or (None, None) when too few members have one.
 
-  Members scatter around the true cluster distance from both real depth and measurement error,
-  so the half-window is 3x the larger of the robust scatter of the r_med_geo point estimates and
-  the members' typical per-star uncertainty (median (r_hi_geo - r_lo_geo) / 2). distance_min is
-  clamped non-negative since Bailer-Jones distances are always positive.
+  Members scatter around the true cluster distance from both real depth and measurement error, so
+  the half-window is WINDOW_SIGMAS times the larger of the robust scatter of the r_med_geo point
+  estimates and the members' typical per-star uncertainty (median (r_hi_geo - r_lo_geo) / 2).
+  distance_min is clamped non-negative since Bailer-Jones distances are always positive.
   """
-  if distance is None:
-    return None, None
   distance = np.asarray(distance, dtype=float)
   distance_lo = np.asarray(distance_lo, dtype=float)
   distance_hi = np.asarray(distance_hi, dtype=float)
@@ -137,24 +144,36 @@ def _member_distance_window(distance, distance_lo, distance_hi, finite_pm, membe
   member_lo = distance_lo[finite_pm][members]
   member_hi = distance_hi[finite_pm][members]
   has_distance = np.isfinite(member_distance) & (member_distance > 0)
-  if has_distance.sum() < 3:
+  if has_distance.sum() < MIN_MEMBERS_FOR_WINDOW:
     return None, None
 
   distances = member_distance[has_distance]
   distance_median = np.median(distances)
-  robust_scatter = 1.4826 * np.median(np.abs(distances - distance_median))
+  robust_scatter = MAD_TO_SIGMA * np.median(np.abs(distances - distance_median))
   # per-star measurement uncertainty floor, using the asymmetric lo/hi bounds where present
   half_widths = (member_hi[has_distance] - member_lo[has_distance]) / 2.0
   half_widths = half_widths[np.isfinite(half_widths) & (half_widths > 0)]
   per_star_sigma = np.median(half_widths) if len(half_widths) else 0.0
   distance_sigma = max(robust_scatter, per_star_sigma)
 
-  distance_min = round(float(max(distance_median - 3.0 * distance_sigma, 0.0)), 1)
-  distance_max = round(float(distance_median + 3.0 * distance_sigma), 1)
+  distance_min = round(float(max(distance_median - WINDOW_SIGMAS * distance_sigma, 0.0)), 1)
+  distance_max = round(float(distance_median + WINDOW_SIGMAS * distance_sigma), 1)
   return distance_min, distance_max
 
 
-def estimate_membership(pmra, pmdec, parallax, distance=None, distance_lo=None, distance_hi=None):
+def _pm_histogram_bins(pm_values):
+  """
+  Bin edges (mas/yr) for one proper motion axis: centered on the median so a minority cluster
+  can't drag the window off the field, and wide enough to reach whichever of the two is further
+  out.
+  """
+  median = np.median(pm_values)
+  low, high = np.percentile(pm_values, PM_HISTOGRAM_PERCENTILES)
+  half_width = float(np.clip(max(median - low, high - median), *PM_HISTOGRAM_HALF_WIDTH_BOUNDS))
+  return np.arange(median - half_width, median + half_width + PM_HISTOGRAM_BIN, PM_HISTOGRAM_BIN)
+
+
+def estimate_membership(pmra, pmdec, parallax, distance, distance_lo, distance_hi):
   """
   Suggests a default cluster membership selection from the proper motions, parallaxes, and
   Bailer-Jones distances of the Gaia-matched stars: the dominant proper-motion clump (2D
@@ -162,8 +181,8 @@ def estimate_membership(pmra, pmdec, parallax, distance=None, distance_lo=None, 
   distance windows around the clump members.
 
   distance / distance_lo / distance_hi are the Bailer-Jones r_med_geo point estimate and its
-  r_lo_geo / r_hi_geo 16th / 84th percentile bounds (parsecs); pass them to also get a distance
-  window. When omitted (or too few members have a distance) the distance window is left None.
+  r_lo_geo / r_hi_geo 16th / 84th percentile bounds (parsecs). When too few members have a
+  distance the distance window is left None.
 
   Returns {'pmra', 'pmdec', 'pm_radius', 'parallax_min', 'parallax_max', 'distance_min',
   'distance_max'} in mas(/yr) and parsecs, or None when there are too few stars or no clear
@@ -179,17 +198,18 @@ def estimate_membership(pmra, pmdec, parallax, distance=None, distance_lo=None, 
   pmra_finite = pmra[finite_pm]
   pmdec_finite = pmdec[finite_pm]
 
-  # histogram the proper motions around their median and take the densest cell as the clump
-  bins = np.arange(-PM_HISTOGRAM_HALF_WIDTH, PM_HISTOGRAM_HALF_WIDTH + PM_HISTOGRAM_BIN, PM_HISTOGRAM_BIN)
-  median_pmra, median_pmdec = np.median(pmra_finite), np.median(pmdec_finite)
-  histogram, pmra_edges, pmdec_edges = np.histogram2d(pmra_finite - median_pmra, pmdec_finite - median_pmdec, bins=(bins, bins))
+  # histogram the proper motions and take the densest cell as the clump
+  histogram, pmra_edges, pmdec_edges = np.histogram2d(pmra_finite, pmdec_finite,
+                                                      bins=(_pm_histogram_bins(pmra_finite),
+                                                            _pm_histogram_bins(pmdec_finite)))
   peak_index = np.unravel_index(np.argmax(histogram), histogram.shape)
-  peak_pmra = median_pmra + (pmra_edges[peak_index[0]] + pmra_edges[peak_index[0] + 1]) / 2.0
-  peak_pmdec = median_pmdec + (pmdec_edges[peak_index[1]] + pmdec_edges[peak_index[1] + 1]) / 2.0
+  peak_pmra = (pmra_edges[peak_index[0]] + pmra_edges[peak_index[0] + 1]) / 2.0
+  peak_pmdec = (pmdec_edges[peak_index[1]] + pmdec_edges[peak_index[1] + 1]) / 2.0
 
   # judge the clump by the stars within a small neighborhood of the peak cell rather than the
   # single cell count, so a clump straddling bin edges isn't split below the threshold
-  near_peak = np.hypot(pmra_finite - peak_pmra, pmdec_finite - peak_pmdec) <= 2.0 * PM_HISTOGRAM_BIN
+  near_peak = (np.hypot(pmra_finite - peak_pmra, pmdec_finite - peak_pmdec)
+               <= CLUMP_NEIGHBORHOOD_BINS * PM_HISTOGRAM_BIN)
   if near_peak.sum() < MIN_CLUMP_COUNT:
     return None
 
@@ -197,18 +217,19 @@ def estimate_membership(pmra, pmdec, parallax, distance=None, distance_lo=None, 
   clump_pmra = float(np.median(pmra_finite[near_peak]))
   clump_pmdec = float(np.median(pmdec_finite[near_peak]))
   clump_distances = np.hypot(pmra_finite[near_peak] - clump_pmra, pmdec_finite[near_peak] - clump_pmdec)
-  robust_sigma = 1.4826 * np.median(np.abs(clump_distances - np.median(clump_distances)))
-  pm_radius = float(np.clip(3.0 * max(robust_sigma, np.median(clump_distances)), *PM_RADIUS_BOUNDS))
+  robust_sigma = MAD_TO_SIGMA * np.median(np.abs(clump_distances - np.median(clump_distances)))
+  pm_radius = float(np.clip(WINDOW_SIGMAS * max(robust_sigma, np.median(clump_distances)), *PM_RADIUS_BOUNDS))
 
   # parallax window from the clump members with measured parallaxes
   members = np.hypot(pmra_finite - clump_pmra, pmdec_finite - clump_pmdec) <= pm_radius
   member_parallaxes = parallax[finite_pm][members]
   member_parallaxes = member_parallaxes[np.isfinite(member_parallaxes)]
-  if len(member_parallaxes) >= 3:
+  if len(member_parallaxes) >= MIN_MEMBERS_FOR_WINDOW:
     parallax_median = np.median(member_parallaxes)
-    parallax_sigma = max(1.4826 * np.median(np.abs(member_parallaxes - parallax_median)), 0.05)
-    parallax_min = round(float(parallax_median - 3.0 * parallax_sigma), 4)
-    parallax_max = round(float(parallax_median + 3.0 * parallax_sigma), 4)
+    parallax_sigma = max(MAD_TO_SIGMA * np.median(np.abs(member_parallaxes - parallax_median)),
+                         MIN_PARALLAX_SIGMA_MAS)
+    parallax_min = round(float(parallax_median - WINDOW_SIGMAS * parallax_sigma), 4)
+    parallax_max = round(float(parallax_median + WINDOW_SIGMAS * parallax_sigma), 4)
   else:
     parallax_min = None
     parallax_max = None
