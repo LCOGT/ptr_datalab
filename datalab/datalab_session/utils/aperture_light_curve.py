@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
+import astropy.units as u
+from astropy.coordinates import SkyCoord, search_around_sky
 from astropy.io import fits
 from astropy.wcs import WCS
 from dateutil.parser import ParserError, parse as parse_date
@@ -931,8 +933,8 @@ def _merge_unresolvable_clusters(
         aperture-radius box, so clusters that close all land on the same peak and report the same
         counts; left separate they fill the ensemble with copies of one star.
     """
-    ra = np.asarray([cluster.ra_deg for cluster in clusters], dtype=float)
-    dec = np.asarray([cluster.dec_deg for cluster in clusters], dtype=float)
+    if not clusters:
+        return []
     # Union-find, so a chain of overlapping clusters merges as one. The lowest index wins every
     # union, which keeps the result independent of sweep order.
     parent = list(range(len(clusters)))
@@ -943,13 +945,17 @@ def _merge_unresolvable_clusters(
             index = parent[index]
         return index
 
-    for index in range(len(clusters)):
-        separations = angular_distances_arcsec(float(ra[index]), float(dec[index]), ra, dec)
-        separations[index] = math.inf
-        for neighbor in np.flatnonzero(separations <= aperture_radius):
-            left, right = anchor_of(index), anchor_of(int(neighbor))
-            if left != right:
-                parent[max(left, right)] = min(left, right)
+    coordinates = SkyCoord(
+        ra=[cluster.ra_deg for cluster in clusters] * u.deg,
+        dec=[cluster.dec_deg for cluster in clusters] * u.deg,
+    )
+    # search_around_sky walks a KD-tree; sweeping every cluster against every other is the same
+    # answer but quadratic, which costs seconds once a dense field runs to tens of thousands.
+    first_index, second_index, _, _ = search_around_sky(coordinates, coordinates, aperture_radius * u.arcsec)
+    for first, second in zip(first_index, second_index):
+        left, right = anchor_of(int(first)), anchor_of(int(second))
+        if left != right:
+            parent[max(left, right)] = min(left, right)
 
     for index, cluster in enumerate(clusters):
         anchor = anchor_of(index)

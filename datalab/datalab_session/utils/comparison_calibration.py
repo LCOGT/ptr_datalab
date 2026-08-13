@@ -265,7 +265,7 @@ def calibrate(
 
 def _extrapolated_target_diagnostic(frame_calibrations: Mapping[str, FrameCalibration]) -> str | None:
     """
-        Says so when the target falls outside the comparison stars' magnitude range, where its
+        Reports when the target falls outside the comparison stars' magnitude range, where its
         calibrated magnitude is extrapolated from the zero point rather than interpolated within it.
     """
     target_mags = [
