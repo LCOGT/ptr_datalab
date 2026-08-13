@@ -566,6 +566,72 @@ class TestAperturePhotometry(unittest.TestCase):
         self.assertNotIn("cand-blended", kept_ids)
         self.assertEqual(len(kept), 5)
 
+    def test_catalog_astrometry_offset_does_not_split_stars_into_duplicate_candidates(self) -> None:
+        # A frame whose catalog positions sit a couple of arcsec off the rest, as happens between
+        # sites, must not turn every star into a second candidate that centroids back onto the first.
+        frames, (target_ra, target_dec) = build_frame_set()
+        offset_deg = 1.5 * TEST_DEG_PER_PIXEL
+        for row in frames["frame_2.fits"]["second_hdu"]:
+            row["ra"] += offset_deg
+            row["dec"] += offset_deg
+        fits_paths = self.write_frames(frames)
+
+        result = generate_light_curve(
+            fits_paths,
+            locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec),
+            aperture_radius=4.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=9.0,
+        )
+
+        positions = [
+            (measurement.x, measurement.y)
+            for measurement in result.frames[0].comparison_measurements
+        ]
+        for index, (x, y) in enumerate(positions):
+            for other_x, other_y in positions[index + 1:]:
+                self.assertGreater(math.hypot(x - other_x, y - other_y), 4.0)
+        # The offset frame's rows joined the stars they belong to rather than starting new clusters.
+        for star in result.selected_comparison_stars:
+            self.assertEqual(len(star.source_catalog_by_frame), len(fits_paths))
+
+    def test_target_outside_the_comparison_magnitude_range_is_reported(self) -> None:
+        # The zero point is only pinned where the comparison stars are, so a target beyond them is
+        # extrapolated. Nothing in the numbers says so, hence the diagnostic.
+        frames, (target_ra, target_dec) = build_frame_set()
+        for frame in frames.values():
+            target_x, target_y = world_to_pixel(frame["header"], target_ra, target_dec)
+            gaussian_star(frame["image"], target_x, target_y, flux=20000.0, sigma=1.05)
+        fits_paths = self.write_frames(frames)
+
+        result = generate_light_curve(
+            fits_paths,
+            locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec),
+            aperture_radius=4.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=9.0,
+        )
+
+        extrapolation = [
+            diagnostic for diagnostic in result.pipeline_diagnostics if "extrapolated" in diagnostic
+        ]
+        self.assertEqual(len(extrapolation), 1)
+        self.assertIn("brighter than every comparison star", extrapolation[0])
+
+    def test_target_inside_the_comparison_magnitude_range_is_not_reported(self) -> None:
+        frames, (target_ra, target_dec) = build_frame_set()
+        fits_paths = self.write_frames(frames)
+
+        result = generate_light_curve(
+            fits_paths,
+            locator=FixedPosition(ra_deg=target_ra, dec_deg=target_dec),
+            aperture_radius=4.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=9.0,
+        )
+
+        self.assertFalse([d for d in result.pipeline_diagnostics if "extrapolated" in d])
+
     def test_diagnostic_images_include_candidate_overlay_jpegs(self) -> None:
         frames, (target_ra, target_dec) = build_frame_set()
         fits_paths = self.write_frames(frames)

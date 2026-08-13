@@ -28,6 +28,8 @@ log = logging.getLogger(__name__)
 # Requiring presence on every frame collapses the pool: catalog detection near the limiting
 # magnitude is noisy and multi-telescope sets rarely catalog the same star throughout.
 SHARED_FRAME_COVERAGE_FRACTION = 0.8
+# An overshoot smaller than this is not worth reporting: it says nothing about the calibration.
+TARGET_EXTRAPOLATION_TOLERANCE_MAG = 0.1
 # Evolving self-calibration solve controls.
 EVOLVING_SOLVE_ITERATIONS = 50
 EVOLVING_SOLVE_TOLERANCE_MAG = 1e-6
@@ -254,7 +256,45 @@ def calibrate(
             f"Applied a {floor * 1000.0:.1f} mmag empirical error floor (comparison-star "
             "frame-to-frame reproducibility) in quadrature to each point's uncertainty."
         ]
+
+    extrapolation = _extrapolated_target_diagnostic(frame_calibrations)
+    if extrapolation is not None:
+        diagnostics = list(diagnostics) + [extrapolation]
     return replace(outcome, frame_calibrations=frame_calibrations, diagnostics=diagnostics)
+
+
+def _extrapolated_target_diagnostic(frame_calibrations: Mapping[str, FrameCalibration]) -> str | None:
+    """
+        Says so when the target falls outside the comparison stars' magnitude range, where its
+        calibrated magnitude is extrapolated from the zero point rather than interpolated within it.
+    """
+    target_mags = [
+        calibration.calibrated_mag
+        for calibration in frame_calibrations.values()
+        if math.isfinite(calibration.calibrated_mag)
+    ]
+    reference_mags = [
+        star.reference_magnitude
+        for calibration in frame_calibrations.values()
+        for star in calibration.stars
+        if math.isfinite(star.reference_magnitude)
+    ]
+    if not target_mags or not reference_mags:
+        return None
+
+    target_mag = float(np.median(target_mags))
+    brightest, faintest = min(reference_mags), max(reference_mags)
+    if target_mag < brightest - TARGET_EXTRAPOLATION_TOLERANCE_MAG:
+        offset, direction = brightest - target_mag, "brighter"
+    elif target_mag > faintest + TARGET_EXTRAPOLATION_TOLERANCE_MAG:
+        offset, direction = target_mag - faintest, "fainter"
+    else:
+        return None
+    return (
+        f"The target ({target_mag:.2f} mag) is {direction} than every comparison star: the ensemble "
+        f"spans {brightest:.2f} to {faintest:.2f} mag, so the target's magnitude is extrapolated "
+        f"{offset:.2f} mag beyond it."
+    )
 
 
 def _calibrate_shared(inputs: CalibrationInputs) -> CalibrationOutcome:
