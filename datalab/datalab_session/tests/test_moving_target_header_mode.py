@@ -222,6 +222,28 @@ class TestNonSiderealAperturePhotometry(unittest.TestCase):
                 locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
             )
 
+    def test_sidereally_tracked_frames_are_refused(self) -> None:
+        # SRCTYPE says how the mount tracked. On a sidereal one CAT-RA/CAT-DEC is only the pointing,
+        # so a moving target drifts off it and the header cannot locate anything.
+        frames, _ = build_non_sidereal_frame_set(frame_count=3)
+        for frame in frames.values():
+            frame["header"]["SRCTYPE"] = "EXTRASOLAR"
+        with self.assertRaisesRegex(LightCurveError, "Moving Target Aperture Photometry"):
+            generate_light_curve(
+                self.write_frames(frames), aperture_radius=4.0, annulus_inner_radius=6.0,
+                annulus_outer_radius=9.0, locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
+            )
+
+    def test_ephemeris_tracked_frames_are_accepted(self) -> None:
+        frames, _ = build_non_sidereal_frame_set(frame_count=6, ra_drift_arcsec_per_frame=8.0)
+        for frame in frames.values():
+            frame["header"]["SRCTYPE"] = "MINORPLANET"
+        result = generate_light_curve(
+            self.write_frames(frames), aperture_radius=4.0, annulus_inner_radius=6.0,
+            annulus_outer_radius=9.0, locator=EphemerisHeaders(), comparison=SharedThenEvolving(),
+        )
+        self.assertEqual(len(self._finite_rows(result)), 6)
+
     # ------------------------------------------------------------ target locating
 
     def test_header_target_is_measured_at_moving_position(self) -> None:
