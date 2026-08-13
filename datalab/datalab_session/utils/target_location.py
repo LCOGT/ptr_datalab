@@ -26,8 +26,6 @@ if TYPE_CHECKING:  # avoid a runtime import cycle with aperture_light_curve
 
 log = logging.getLogger(__name__)
 
-SIDEREALLY_TRACKED_SOURCE_TYPE = "EXTRASOLAR"
-
 
 @dataclass(frozen=True)
 class TargetPositions:
@@ -61,12 +59,10 @@ class FixedPosition(TargetLocator):
 class EphemerisHeaders(TargetLocator):
     """
         A target whose mount tracked it, so each frame's CAT-RA/CAT-DEC record where it was. A frame
-        missing them is fatal: interpolating from neighbours would invent an ephemeris. Frames the
-        mount tracked sidereally are refused, since their CAT-RA/CAT-DEC records no such thing.
+        missing them is fatal: interpolating from neighbours would invent an ephemeris.
     """
 
     def locate(self, frames: Sequence[FrameContext]) -> TargetPositions:
-        _reject_sidereally_tracked(frames)
         positions: dict[str, tuple[float, float]] = {}
         for frame in frames:
             try:
@@ -87,19 +83,6 @@ class EphemerisHeaders(TargetLocator):
                 "Moving Target Aperture Photometry and mark it on two or more frames instead."
             )
         return TargetPositions(by_frame=positions, diagnostics=diagnostics)
-
-
-def _reject_sidereally_tracked(frames: Sequence[FrameContext]) -> None:
-    """Refuses frames whose mount tracked the stars, leaving CAT-RA/CAT-DEC as the pointing alone."""
-    if any(
-        str(frame.header.get("SRCTYPE", "")).strip().upper() == SIDEREALLY_TRACKED_SOURCE_TYPE
-        for frame in frames
-    ):
-        raise LightCurveError(
-            f"These frames were tracked sidereally (SRCTYPE={SIDEREALLY_TRACKED_SOURCE_TYPE}), so "
-            "CAT-RA/CAT-DEC is not the target's position. Use Moving Target Aperture Photometry and "
-            "mark the object on two or more frames."
-        )
 
 
 @dataclass(frozen=True)
