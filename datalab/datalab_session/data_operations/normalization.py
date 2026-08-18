@@ -51,7 +51,7 @@ The output is a normalized image. This operation is commonly used as a precursor
         }
 
     def operate(self, submitter: User):
-        input_list = self._validate_inputs(input_key='input_files', minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS)
+        input_list = self._validate_file_inputs(input_key='input_files')
         log.info(f'Normalization operation on {len(input_list)} file(s)')
         self.set_operation_progress(Normalization.PROGRESS_STEPS['INPUT_PROCESSING_PERCENTAGE_COMPLETION'])
 

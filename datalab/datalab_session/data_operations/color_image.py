@@ -101,7 +101,7 @@ class Color_Image(BaseDataOperation):
         return aligned_images
 
     def operate(self, submitter: User):
-        color_inputs = self._validate_inputs(input_key='color_channels', minimum_inputs=1)
+        color_inputs = self._validate_file_inputs(input_key='color_channels')
         log.info(f"Color image operation on {', '.join([image['basename'] for image in color_inputs])}")
 
         input_dicts = self._process_inputs(submitter, color_inputs)

@@ -57,13 +57,46 @@ class BaseDataOperation(ABC):
             for the frontend to create custom input widgets for it in a wizard
         """
 
-    def _validate_inputs(self, input_key='input_files', minimum_inputs=1):
-        """ The input_key is the key in the input_files dictionary in the wizard_description that contains the list of inputs.
+    def _validate_file_inputs(self, input_key='input_files'):
+        """ The input_key is the key in the input_files dictionary in the wizard_description that contains the list of file inputs.
+            Uses the `minimum`, `maximum`, `single_filter`, and `filter_options` the input declares in the wizard_description
+            to test for the input provided and ensure compliance.
         """
         input_list = self.input_data.get(input_key, [])
-        if not input_list or len(input_list) < minimum_inputs:
-            raise ClientAlertException(f'Operation {self.name()} requires at least {minimum_inputs} input(s).')
-        print(f'Validating inputs for {self.name()} operation: {input_list}')
+        input_schema = self.wizard_description().get('inputs', {}).get(input_key, {})
+        input_name = input_schema.get('name', input_key)
+
+        minimum = input_schema.get('minimum', 1)
+        if not input_list or len(input_list) < minimum:
+            raise ClientAlertException(f'Operation {self.name()} requires at least {minimum} {input_name} input file(s).')
+
+        maximum = input_schema.get('maximum')
+        if maximum is not None and len(input_list) > maximum:
+            raise ClientAlertException(f'Operation {self.name()} accepts at most {maximum} {input_name} input file(s).')
+
+        unique_filters = {input_file.get('filter', input_file.get('primary_optical_element', '')) or '' for input_file in input_list}
+
+        filter_options = input_schema.get('filter_options')
+        if filter_options:
+            if '' in unique_filters:
+                raise ClientAlertException(
+                    f'Operation {self.name()} requires every {input_name} to specify the filter it was taken in, '
+                    'but at least one of them does not report a filter.'
+                )
+
+            unsupported_filters = sorted(unique_filters - set(filter_options))
+            if unsupported_filters:
+                raise ClientAlertException(
+                    f'Operation {self.name()} requires the {input_name} to be taken in one of the '
+                    f'{", ".join(filter_options)} filters, but got {", ".join(unsupported_filters)}.'
+                )
+
+        if input_schema.get('single_filter'):
+            if len(unique_filters) > 1:
+                raise ClientAlertException(
+                    f'Operation {self.name()} requires every {input_name} to be taken in the same filter, '
+                    f'but the input files use {", ".join(sorted(unique_filters))}.'
+                )
         return input_list
 
     @abstractmethod

@@ -50,7 +50,7 @@ The output is a median image for the n input images. This operation is commonly 
         }
     
     def operate(self, submitter: User):
-        input_list = self._validate_inputs(input_key='input_files', minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS)
+        input_list = self._validate_file_inputs(input_key='input_files')
         comment = f'Datalab Median on {", ".join([image["basename"] for image in input_list])}'
         log.info(comment)
 
