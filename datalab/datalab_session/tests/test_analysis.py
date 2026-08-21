@@ -7,7 +7,7 @@ from django.test import TestCase
 import numpy as np
 from numpy.testing import assert_almost_equal
 
-from datalab.datalab_session.analysis import centroiding, line_profile, source_catalog
+from datalab.datalab_session.analysis import centroiding, line_profile, source_catalog, target_position
 from datalab.datalab_session.data_operations import light_curve as light_curve_module
 
 
@@ -72,6 +72,20 @@ class TestAnalysis(TestCase):
 
         self.assertAlmostEqual(output[0]['mag'], expected_mag)
         self.assertAlmostEqual(output[0]['magerr'], expected_magerr)
+
+    @mock.patch('datalab.datalab_session.analysis.target_position.get_fits_header')
+    @mock.patch('datalab.datalab_session.analysis.target_position.FileCache')
+    def test_target_position(self, mock_file_cache, mock_get_fits_header):
+        mock_file_cache.return_value.get_fits.return_value = self.analysis_fits_1_path
+        mock_get_fits_header.return_value = {"CAT-RA": "18:07:23.824", "CAT-DEC": "-07:28:36.39"}
+
+        output = target_position.target_position({
+            'basename': 'fits_1',
+            'source': 'archive'
+        }, None)
+
+        self.assertAlmostEqual(output['ra'], 271.84927, places=4)
+        self.assertAlmostEqual(output['dec'], -7.47677, places=4)
 
     @mock.patch('datalab.datalab_session.data_operations.light_curve.find_target_source')
     @mock.patch('datalab.datalab_session.data_operations.light_curve.get_hdu')
