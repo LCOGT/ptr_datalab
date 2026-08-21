@@ -12,6 +12,7 @@ from datalab.datalab_session.analysis.get_tif import get_tif
 from datalab.datalab_session.analysis.get_jpg import get_jpg
 from datalab.datalab_session.analysis.raw_data import raw_data
 from datalab.datalab_session.analysis.wcs import wcs
+from datalab.datalab_session.analysis.target_position import target_position
 from datalab.datalab_session.exceptions import ClientAlertException
 
 log = logging.getLogger()
@@ -38,7 +39,8 @@ class AnalysisView(RetrieveAPIView):
         "get-tif": get_tif,
         "get-jpg": get_jpg,
         "raw-data": raw_data,
-        "wcs": wcs
+        "wcs": wcs,
+        "target-position": target_position,
     }
 
     def post(self, request, action):
