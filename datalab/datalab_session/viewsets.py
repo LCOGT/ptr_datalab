@@ -50,5 +50,14 @@ class DataSessionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return DataSession.objects.filter(user=self.request.user).prefetch_related('operations')
 
+    def get_serializer(self, *args, **kwargs):
+        ''' A `response_fields` query param limits the response to those fields,
+            e.g. ?response_fields=id,persist. Without it the full DataSession is returned.
+        '''
+        response_fields = self.request.query_params.get('response_fields')
+        if response_fields:
+            kwargs['response_fields'] = [field.strip() for field in response_fields.split(',') if field.strip()]
+        return super().get_serializer(*args, **kwargs)
+
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
