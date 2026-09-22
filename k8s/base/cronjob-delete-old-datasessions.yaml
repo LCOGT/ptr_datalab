@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/master-standalone/cronjob-batch-v1.json
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: delete-old-datasessions
+  labels:
+    app.kubernetes.io/component: delete-old-datasessions
+spec:
+  # Daily at 08:00 in the kube-controller-manager's timezone
+  schedule: "0 8 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: delete-old-datasessions
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: default
+              image: datalab
+              command:
+                - python
+                - manage.py
+                - delete_old_datasessions
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                runAsGroup: 1000
+                readOnlyRootFilesystem: true
+              env:
+                - name: CONTAINER_TYPE
+                  value: "delete-old-datasessions"
+              envFrom:
+                - configMapRef:
+                    name: env
+                    optional: false
+                - secretRef:
+                    name: env
+                    optional: false

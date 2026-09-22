@@ -1,0 +1,45 @@
+# Skaffold derives its rebuild-watch list from this Dockerfile's COPY instructions,
+# and the final `COPY ./ ./` is the whole directory minus whatever is listed here.
+# Anything not excluded below will trigger an image rebuild when it changes.
+
+# Version control: .git/index, FETCH_HEAD, refs, etc. are rewritten by nearly
+# every git command (even `git status`), which caused spurious rebuilds.
+.git
+.gitignore
+.github
+
+# Python bytecode / test caches: regenerated on every test or manage.py run
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+*.egg-info
+.pytest_cache
+.mypy_cache
+.coverage
+.coverage.*
+htmlcov
+
+# Deploy config: changing a manifest should redeploy, not rebuild the image
+k8s
+skaffold.yaml
+local-cluster.yaml
+local-registry.yaml
+local-kubeconfig
+
+# Local dev environment, not used inside the image
+flake.nix
+flake.lock
+.devenv
+.venv
+venv
+.env
+.vscode
+.idea
+.pre-commit-config.yaml
+
+# Scratch / stray output
+tmp
+MagicMock
+dump.rdb
+*.log
+db.sqlite3
