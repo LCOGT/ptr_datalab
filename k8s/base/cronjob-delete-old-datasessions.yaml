@@ -7,8 +7,7 @@ metadata:
   labels:
     app.kubernetes.io/component: delete-old-datasessions
 spec:
-  # Daily at 08:00 in the kube-controller-manager's timezone, which is UTC on our clusters.
-  # The spec.timeZone field would pin this explicitly but needs k8s >= 1.24, and the local kind cluster is 1.23.
+  # Daily at 08:00 in the kube-controller-manager's timezone
   schedule: "0 8 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
