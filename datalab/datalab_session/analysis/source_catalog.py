@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.utils.catalog_utils import ra_dec_from_wcs
 from datalab.datalab_session.utils.file_utils import get_fits_dimensions, get_hdu, scale_points
 from datalab.datalab_session.utils.filecache import FileCache
 from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
@@ -58,9 +59,13 @@ def source_catalog(input: dict, user: User):
     ra = cat_hdu.data["ra"][:MAX_SOURCE_CATALOG_SIZE]
     dec = cat_hdu.data["dec"][:MAX_SOURCE_CATALOG_SIZE]
   else:
-    # TODO: implement a fallback way to calculate ra, dec from x, y and WCS
-    ra = None
-    dec = None
+    try:
+      ra, dec = ra_dec_from_wcs(file_path, cat_hdu.data[:MAX_SOURCE_CATALOG_SIZE], input['basename'])
+    except ClientAlertException:
+      # The overlay is still useful without sky coordinates, so a catalog with no x/y columns or
+      # an image with no WCS solution drops ra/dec instead of failing the whole analysis
+      ra = None
+      dec = None
 
   # scale the x_points and y_points from the fits pixel coords to the jpg coords
   # Shape comes from the SCI header: touching sci_hdu.data would decompress the whole image

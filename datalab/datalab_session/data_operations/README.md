@@ -97,7 +97,6 @@ from datalab.datalab_session.exceptions import ClientAlertException
             }
         }
 ```
-**Note** As of Jun 2025 we only support the `fits` input type, to add things like strings, numbers, or more custom inputs you'll need to create the format in `format.py` and then handle that format in the `datalab-ui` repo. The UI reads the wizard description to build the input fields you'll have to define what that will look like. 
 
 1. Now we can start writing the `operate()` method, we'll fetch all the input with the names we defined in our wizard description
 ```

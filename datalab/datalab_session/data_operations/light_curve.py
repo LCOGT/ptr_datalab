@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 
 from datalab.datalab_session.data_operations.data_operation import BaseDataOperation
 from datalab.datalab_session.exceptions import ClientAlertException
+from datalab.datalab_session.utils.catalog_utils import find_nearest_source
 from datalab.datalab_session.utils.format import Format
 from datalab.datalab_session.utils.file_utils import get_hdu
 from datalab.datalab_session.utils.filecache import FileCache
@@ -12,6 +13,9 @@ from datalab.datalab_session.utils.flux_to_mag import flux_to_mag
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+# How close a catalog source must be to the requested coordinates to be treated as the target.
+MATCH_RADIUS_ARCSEC = 4.0
 
 
 class LightCurve(BaseDataOperation):
@@ -55,10 +59,7 @@ class LightCurve(BaseDataOperation):
     }
 
   def operate(self, submitter: User):
-    input_files = self._validate_inputs(
-      input_key="input_files",
-      minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS,
-    )
+    input_files = self._validate_file_inputs(input_key="input_files")
     source = self.input_data.get("source")
     if not source:
       raise ClientAlertException(f"Operation {self.name()} requires a source.")
@@ -150,20 +151,16 @@ def light_curve(input: dict, user: User, allow_flux_fallback=True, progress_call
 
 def find_target_source(cat_hdu, target_ra, target_dec):
   """
-  Find the source in the catalog relative to the target coordinates.
+  Find the catalog source closest to the target coordinates, within MATCH_RADIUS_ARCSEC.
+
+  Returns the nearest source rather than the first one within tolerance.
   """
   cat_data = cat_hdu.data
-  match_precision = 0.001
 
   if "ra" not in cat_data.names or "dec" not in cat_data.names:
     log.warning("CAT data does not have ra or dec names!")
     return None
 
-  target_ra = float(target_ra)
-  target_dec = float(target_dec)
+  nearest = find_nearest_source(cat_data["ra"], cat_data["dec"], target_ra, target_dec, MATCH_RADIUS_ARCSEC)
 
-  for source in cat_data:
-    if abs(source["ra"] - target_ra) <= match_precision and abs(source["dec"] - target_dec) <= match_precision:
-      return source
-
-  return None
+  return None if nearest is None else cat_data[nearest]

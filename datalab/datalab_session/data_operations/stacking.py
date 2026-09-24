@@ -181,10 +181,7 @@ The output is a stacked image for the n input images. This operation is commonly
 
     def operate(self, submitter: User):
         stacking_mode = self.input_data.get("stacking_mode")
-        input_files = self._validate_inputs(
-            input_key='input_files',
-            minimum_inputs=self.MINIMUM_NUMBER_OF_INPUTS
-        )
+        input_files = self._validate_file_inputs(input_key='input_files')
         comment= f'Datalab Stacking on {", ".join([image["basename"] for image in input_files])}'
         log.info(comment)
 

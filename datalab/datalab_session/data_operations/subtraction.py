@@ -59,15 +59,8 @@ class Subtraction(BaseDataOperation):
         }
 
     def operate(self, submitter: User):
-        input_files = self._validate_inputs(
-            input_key='input_files',
-            minimum_inputs=self.MINIMUM_NUMBER_OF_INPUT_FILES
-        )
-
-        subtraction_file_input = self._validate_inputs(
-            input_key='subtraction_file',
-            minimum_inputs=self.NUMBER_OF_SUBTRACTION_FILES
-        )
+        input_files = self._validate_file_inputs(input_key='input_files')
+        subtraction_file_input = self._validate_file_inputs(input_key='subtraction_file')
 
         log.info(f'Subtraction operation on {len(input_files)} files')
 

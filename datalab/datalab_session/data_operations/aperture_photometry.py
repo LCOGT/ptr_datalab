@@ -75,7 +75,6 @@ def shared_wizard_inputs() -> dict[str, Any]:
             'type': Format.FITS,
             'single_filter': True,
             'filter_options': ['rp', 'ip', 'gp', 'zs'],
-            'requires_filter': True,
             'minimum': MINIMUM_NUMBER_OF_INPUTS,
             'maximum': MAXIMUM_NUMBER_OF_INPUTS,
         },
@@ -137,11 +136,12 @@ class AperturePhotometryOperation(BaseDataOperation, ABC):
         if raw is not None:
             self.input_data['target_positions'] = [raw] if isinstance(raw, Mapping) else raw
 
-        try:
-            positions = self._validate_inputs('target_positions', minimum)
-            return TrackSample.from_input(positions, require_mjd=require_mjd)
-        except (TypeError, ValueError) as exc:
-            raise ClientAlertException(f'Operation {self.name()}: {exc}') from exc
+        positions = self.input_data.get('target_positions', [])
+        if not positions or len(positions) < minimum:
+            raise ClientAlertException(f'Operation {self.name()} requires at least {minimum} target_positions')
+
+        return TrackSample.from_input(positions, require_mjd=require_mjd)
+
 
     def _submitted_target_name(self) -> str | None:
         """Any name the wizard's lookup resolved, so the output can echo it back with the position."""
@@ -170,7 +170,7 @@ class AperturePhotometryOperation(BaseDataOperation, ABC):
         output_data: dict[str, Any] | None = None,
     ) -> None:
         """Runs the pipeline and publishes the output. output_data adds operation-specific keys."""
-        input_files = self._validate_inputs('input_files', MINIMUM_NUMBER_OF_INPUTS)
+        input_files = self._validate_file_inputs('input_files')
         log.info(f"{self.name()} operation on {', '.join([image['basename'] for image in input_files])}")
         parameters = self._validate_aperture_parameters()
 
