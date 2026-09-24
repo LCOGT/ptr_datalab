@@ -65,9 +65,9 @@ TARGET_PROXIMITY_FACTOR = 2.0
 # A larger recenter than this means the centroid was pulled onto a neighbour or host galaxy.
 TARGET_RECENTER_MAX_SHIFT_PX = 6.0
 DEFAULT_CROSSMATCH_ARCSEC = 1.0
-DEFAULT_APERTURE_RADIUS = 7.64
-DEFAULT_ANNULUS_INNER_RADIUS = 12.73
-DEFAULT_ANNULUS_OUTER_RADIUS = 19.10
+DEFAULT_APERTURE_RADIUS = 35.64
+DEFAULT_ANNULUS_INNER_RADIUS = 62.73
+DEFAULT_ANNULUS_OUTER_RADIUS = 89.10
 DEFAULT_MIN_COMPARISONS = 5
 DEFAULT_MAX_COMPARISONS = 10
 # Cost runs as candidates x frames, so bound that product. Sized to clear an ordinary deep field,
