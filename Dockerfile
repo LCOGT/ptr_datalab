@@ -1,4 +1,4 @@
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 LABEL maintainer="jnation@lco.global"
 
 # use bash
@@ -34,7 +34,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1
 # usefull for running tests in docker container
 # this won't be included in the final image
 # e.g. docker build --target dev .
-FROM base as dev
+FROM base AS dev
 
 RUN pip install -r <(poetry export --dev)
 
@@ -42,7 +42,7 @@ ENTRYPOINT ["bash"]
 
 
 # final image
-FROM base as prod
+FROM base AS prod
 
 # add a non-root user to run the app
 RUN useradd appuser

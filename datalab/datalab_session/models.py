@@ -21,6 +21,10 @@ class DataSession(models.Model):
         help_text='List of input Data objects for this session in serialized format'
     )
 
+    persist = models.BooleanField(default=False,
+        verbose_name='Persist this datasession beyond 30 days'
+    )
+
     created = models.DateTimeField(
         auto_now_add=True,
         help_text='Time when this DataSession was created'
