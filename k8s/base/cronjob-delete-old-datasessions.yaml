@@ -22,6 +22,10 @@ spec:
             app.kubernetes.io/component: delete-old-datasessions
         spec:
           restartPolicy: Never
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
           containers:
             - name: default
               image: datalab
@@ -34,6 +38,10 @@ spec:
                 runAsUser: 1000
                 runAsGroup: 1000
                 readOnlyRootFilesystem: true
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                  readOnly: false
               env:
                 - name: CONTAINER_TYPE
                   value: "delete-old-datasessions"
